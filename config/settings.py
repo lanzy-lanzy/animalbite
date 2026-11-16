@@ -8,12 +8,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-dev-key-change-in-production')
 DEBUG = config('DEBUG', default=not bool(os.environ.get('RENDER')), cast=bool)
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*', cast=lambda value: [host.strip() for host in value.split(',') if host.strip()])
+
+CSRF_TRUSTED_ORIGINS = config(
+    'CSRF_TRUSTED_ORIGINS', default='',
+    cast=lambda value: [origin.strip() for origin in value.split(',') if origin.strip()],
+)
 
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
-    CSRF_TRUSTED_ORIGINS = [f"https://{RENDER_EXTERNAL_HOSTNAME}"]
+    CSRF_TRUSTED_ORIGINS.append(f"https://{RENDER_EXTERNAL_HOSTNAME}")
 
 # Canonical public origin baked into printed QR codes (e.g. https://app.onrender.com).
 # Leave blank for local/dev: QRs then carry host-independent tokens that the
@@ -171,7 +176,7 @@ STORAGES = {
 }
 
 MEDIA_URL = "media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(config('MEDIA_ROOT', default=str(BASE_DIR / 'media')))
 
 LOGIN_URL = "accounts:login"
 LOGIN_REDIRECT_URL = "dashboard:index"
@@ -184,7 +189,7 @@ X_FRAME_OPTIONS = "SAMEORIGIN"
 # also should not opt all sibling subdomains into HSTS or browser preload.
 SILENCED_SYSTEM_CHECKS = ["security.W005", "security.W019", "security.W021"]
 
-if os.environ.get('RENDER'):
+if os.environ.get('RENDER') or config('BEHIND_HTTPS_PROXY', default=False, cast=bool):
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True

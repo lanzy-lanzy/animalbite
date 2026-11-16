@@ -15,15 +15,11 @@ dependencies = [
     { name = "mysqlclient" },
     { name = "openpyxl" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "python-decouple" },
     { name = "qrcode" },
     { name = "reportlab" },
     { name = "requests" },
     { name = "whitenoise", extra = ["brotli"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "python-decouple" },
 ]
 
 [package.metadata]
@@ -36,6 +32,7 @@ requires-dist = [
     { name = "mysqlclient", specifier = ">=2.2.0" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.9" },
+    { name = "python-decouple", specifier = ">=3.8" },
     { name = "qrcode", specifier = ">=8.2" },
     { name = "reportlab", specifier = ">=5.0.0" },
     { name = "requests", specifier = ">=2.34.2" },
@@ -43,7 +40,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "python-decouple", specifier = ">=3.8" }]
+dev = []
 
 [[package]]
 name = "asgiref"
