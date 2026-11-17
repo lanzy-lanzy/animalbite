@@ -8,7 +8,7 @@ from django.db.models import Count, Exists, OuterRef
 from django.utils import timezone
 
 from .models import SMSLog, VaccineDose
-from .sms import gateway_outcome, normalize_ph_number, safe_gateway_response, send_semaphore_sms
+from .sms import build_missed_reminder_message, gateway_outcome, normalize_ph_number, safe_gateway_response, send_semaphore_sms
 
 MISSED_REMINDER_TYPE = 'missed_appointment'
 MISSED_REMINDER_MAX_ATTEMPTS = 3
@@ -150,12 +150,7 @@ def missed_dose_counts_by_patient(today=None, now=None):
 
 
 def missed_reminder_message(dose):
-    return (
-        'RHU Dumingag ABTC: You missed your scheduled '
-        f'{dose.number_label} on {dose.scheduled_date:%B %d, %Y}. '
-        'Please visit or contact RHU Dumingag as soon as possible to arrange '
-        'your next vaccination appointment. Thank you.'
-    )
+    return build_missed_reminder_message(dose)
 
 
 def _unsubmitted_pending(log):

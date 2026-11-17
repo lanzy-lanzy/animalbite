@@ -21,6 +21,9 @@ def run_due_check(state_path, now=None):
         return "already_checked"
     close_old_connections()
     try:
+        # Select missed appointments explicitly: their shared SMS formatter
+        # includes 'missed', the actual dose number and that appointment's date.
+        # Never substitute the on_day template for an overdue appointment.
         # The existing command enforces consent, seven-day recovery, backlog
         # review and durable duplicate protection. Never enable force/retries.
         # Its per-patient output must not enter public infrastructure logs.

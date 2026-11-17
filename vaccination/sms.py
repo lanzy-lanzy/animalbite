@@ -27,6 +27,16 @@ def normalize_ph_number(raw: str) -> str | None:
     return res
 
 
+def build_missed_reminder_message(dose) -> str:
+    """Name the missed appointment and its saved date, without patient details."""
+    return (
+        'RHU Dumingag ABTC: You missed your scheduled '
+        f'{dose.number_label} on {dose.scheduled_date:%B %d, %Y}. '
+        'Please visit or contact RHU Dumingag as soon as possible to arrange '
+        'your next vaccination appointment. Thank you.'
+    )
+
+
 def build_reminder_message(patient, case, dose, reminder_type: str, custom_note: str = "") -> str:
     """
     Build Filipino/English friendly SMS for vaccination.
@@ -34,6 +44,9 @@ def build_reminder_message(patient, case, dose, reminder_type: str, custom_note:
     manual ('manual_2days_before', 'manual_1day_before', 'manual_custom').
     Keep under 160 chars per segment if possible, but Semaphore auto-splits.
     """
+    if reminder_type == "missed_appointment" or dose.dose_status == "missed":
+        return build_missed_reminder_message(dose)
+
     patient_name = getattr(patient, "full_name", lambda: str(patient))()
     if callable(patient_name):
         patient_name = patient_name
@@ -46,6 +59,10 @@ def build_reminder_message(patient, case, dose, reminder_type: str, custom_note:
 
     dose_label = dose.dose_label
     display_dose = getattr(dose, "number_label", None) or dose_label
+    # Use the dose's actual position in its plan, not the protocol day offset.
+    # For example, 'Day 3' is normally Dose 2, not Dose 3.
+    ordinal = re.fullmatch(r"(\d+)(?:st|nd|rd|th) Dose", display_dose)
+    scheduled_dose = f"Dose {ordinal.group(1)}" if ordinal else display_dose
     sched_date = dose.scheduled_date.strftime("%b %d, %Y (%a)")
     case_no = case.case_number
 
@@ -53,16 +70,16 @@ def build_reminder_message(patient, case, dose, reminder_type: str, custom_note:
     if reminder_type == "schedule_set":
         return (
             f"ABTC Dumingag: {patient_name} ({case_no}), naitala ang vaccine schedule mo sa "
-            f"{sched_date} ({dose_label}). Pumunta sa RHU sa araw na ito. Dalhin ang card. Salamat! -ABTC Dumingag"
+            f"{sched_date} ({scheduled_dose}). Pumunta sa RHU sa araw na ito. Dalhin ang card. Salamat! -ABTC Dumingag"
         ).strip()
     elif reminder_type == "3days_before":
         return (
             f"ABTC Dumingag: Paalala, {patient_name} ({case_no}) may vaccine schedule sa {sched_date} "
-            f"({dose_label}). Mangyaring pumunta sa RHU 3 araw mula ngayon. Dalhin ang card. Salamat! -ABTC Dumingag"
+            f"({scheduled_dose}). Mangyaring pumunta sa RHU 3 araw mula ngayon. Dalhin ang card. Salamat! -ABTC Dumingag"
         ).strip()
     elif reminder_type == "on_day":
         return (
-            f"ABTC Dumingag: Ngayon na ang vaccine schedule ni {patient_name} ({case_no}) - {dose_label} "
+            f"ABTC Dumingag: Ngayon na ang vaccine schedule ni {patient_name} ({case_no}) - {scheduled_dose} "
             f"ngayong {sched_date}. Pumunta sa RHU ngayong araw. Dalhin ang vaccination card. -ABTC Dumingag"
         ).strip()
     elif reminder_type == "manual_immediate":
