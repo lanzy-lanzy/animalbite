@@ -1109,7 +1109,7 @@ def _vaccination_followup_report(request, kind):
     }
     descriptions = {
         'missed': 'Patients with overdue scheduled vaccine doses that were not administered.',
-        'completed': 'Patients with successfully administered and recorded vaccine doses.',
+        'completed': 'Patients who have completed every required dose in their vaccination schedule.',
         'treatment': 'Patients with active vaccination treatment plans and remaining scheduled doses.',
     }
     badge_classes = {
@@ -1173,6 +1173,11 @@ def _vaccination_followup_report(request, kind):
                     and item.actual_date is not None
                     for item in course_doses
                 )
+                # A completed individual dose does not mean the patient has
+                # finished treatment. Check the entire plan, outside the period
+                # filter, including required doses not yet scheduled.
+                if not course_completed:
+                    continue
                 vaccine = dose.vaccine_brand or '—'
                 administered_by = (
                     dose.administered_by.get_full_name()
@@ -1185,7 +1190,7 @@ def _vaccination_followup_report(request, kind):
                     scheduled.strftime('%b %d, %Y') if scheduled else '—',
                     dose.actual_date.strftime('%b %d, %Y'),
                     administered_by,
-                    'Treatment Course Completed' if course_completed else status,
+                    'Treatment Course Completed',
                 ]
                 search_values = cells + _date_search_values(scheduled)
                 search_values += _date_search_values(dose.actual_date)

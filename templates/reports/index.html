@@ -471,7 +471,7 @@
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5-5v6c0 5-3.5 8-8 10-4.5-2-8-5-8-10V5l8-3 8 3z"/></svg>
             </span>
             <h3 class="rep-card__title">Completed Vaccinations</h3>
-            <p class="rep-card__desc">Patients with successfully administered and recorded vaccine doses.</p>
+            <p class="rep-card__desc">Patients who have completed every required dose in their vaccination schedule.</p>
             <span class="rep-card__link">View Report →</span>
         </a>
         <a href="{% url 'reports:under_treatment_report' %}?type={{ report_type }}{% if q %}&q={{ q|urlencode }}{% endif %}" class="rep-card rep-card--yellow group">

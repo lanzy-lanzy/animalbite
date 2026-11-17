@@ -10,6 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Figtree:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{% static 'css/output.css' %}">
+    {% if request.resolver_match.app_name == 'reports' %}<link rel="stylesheet" href="{% static 'css/reports.css' %}">{% endif %}
     {% if request.user.role == 'patient' %}<link rel="stylesheet" href="{% static 'css/patient_portal.css' %}">{% endif %}
     <script src="{% static 'vendor/htmx.min.js' %}"></script>
     <script defer src="{% static 'vendor/alpine.min.js' %}"></script>
@@ -319,8 +320,11 @@
                 <a href="{% url 'vaccination:patient_schedule_list' %}" class="sidebar-link {% if url_name == 'patient_schedule_list' %}active{% endif %}">
                     <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 13h2l.5 2.5-1.5 1.5-1.5-1.5L11 13z"/></svg>
                     <span class="truncate">Administer Vaccine</span>
+                    {% if vaccines_due_today_total %}
+                    <span class="inline-flex shrink-0 items-center justify-center rounded-full font-bold" style="margin-left:auto;background:#FEF3C7;color:#92400E;min-width:1.35rem;height:1.35rem;padding:0 .4rem;font-size:11px;line-height:1;" title="Vaccines due today" aria-label="{{ vaccines_due_today_total }} vaccination dose{{ vaccines_due_today_total|pluralize }} due today">{{ vaccines_due_today_total }}</span>
+                    {% endif %}
                     {% if missed_dose_total %}
-                    <span class="inline-flex shrink-0 items-center justify-center rounded-full font-bold text-white" style="margin-left:auto;background:#DC3545;min-width:1.35rem;height:1.35rem;padding:0 .4rem;font-size:11px;line-height:1;" aria-label="{{ missed_dose_total }} missed vaccination dose{{ missed_dose_total|pluralize }}">{{ missed_dose_total }}</span>
+                    <span class="inline-flex shrink-0 items-center justify-center rounded-full font-bold text-white" style="margin-left:{% if vaccines_due_today_total %}.25rem{% else %}auto{% endif %};background:#DC3545;min-width:1.35rem;height:1.35rem;padding:0 .4rem;font-size:11px;line-height:1;" title="Missed vaccination doses" aria-label="{{ missed_dose_total }} missed vaccination dose{{ missed_dose_total|pluralize }}">{{ missed_dose_total }}</span>
                     {% endif %}
                 </a>
                 <a href="{% url 'vaccination:sms_log_list' %}" class="sidebar-link {% if url_name == 'sms_log_list' or url_name == 'sms_log_detail' %}active{% endif %}">

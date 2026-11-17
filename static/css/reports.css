@@ -1,0 +1,21 @@
+/* Larger type in Reports only; retain horizontal scrolling for wide tables. */
+.app-canvas { font-size: 1rem; line-height: 1.6; }
+.app-canvas .text-xs { font-size: .875rem; line-height: 1.5; }
+.app-canvas .text-sm,
+.app-canvas .table-header,
+.app-canvas .table-cell,
+.app-canvas table th,
+.app-canvas table td { font-size: 1rem; line-height: 1.5; }
+.app-canvas .status-badge { font-size: .875rem; line-height: 1.5; white-space: normal; }
+.app-canvas .rep-card__title { font-size: 1.25rem; line-height: 1.4; }
+.app-canvas .rep-card__desc { font-size: 1rem; line-height: 1.6; }
+.app-canvas .rep-card__link { font-size: .875rem; }
+.app-canvas input,
+.app-canvas select,
+.app-canvas button { font-size: 1rem; }
+
+/* Report print previews share these rules with browser print output. */
+.abtc-report .abtc-table th,
+.abtc-report .abtc-table td { font-size: 10.5pt; line-height: 1.4; overflow-wrap: anywhere; }
+.abtc-report .abtc-note,
+.abtc-report .abtc-summary { font-size: 11pt; line-height: 1.5; }

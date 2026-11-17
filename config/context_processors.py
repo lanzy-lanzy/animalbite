@@ -63,10 +63,22 @@ def inventory_notifications(request):
 
 
 def missed_vaccination_notifications(request):
-    """Red Administer Vaccine badge: overdue unadministered dose count (Nurse)."""
+    """Nurse Administer Vaccine badges: overdue and due-today dose counts."""
     user = getattr(request, 'user', None)
     if not (user and user.is_authenticated and getattr(user, 'role', '') == 'nurse'):
         return {}
     from vaccination.missed_appointments import missed_dose_count
+    from vaccination.models import VaccineDose
+    from django.utils import timezone
 
-    return {'missed_dose_total': missed_dose_count()}
+    due_today = VaccineDose.objects.filter(
+        scheduled_date=timezone.localdate(),
+        actual_date__isnull=True, actual_time__isnull=True,
+        dose_status__in=('scheduled', 'rescheduled', 'missed'),
+        schedule__bite_case__case_status__in=('new', 'under_treatment', 'missed'),
+        schedule__bite_case__patient__is_archived=False,
+    ).count()
+    return {
+        'missed_dose_total': missed_dose_count(),
+        'vaccines_due_today_total': due_today,
+    }

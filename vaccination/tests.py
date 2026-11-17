@@ -3545,6 +3545,29 @@ class NurseMissedDoseBadgeTests(TestCase):
         self.assertIn("background:#DC3545", content)
         self.assertIn('aria-label="3 missed vaccination doses"', content)
 
+    def test_sidebar_counts_due_today_separately_from_missed_doses(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(self.dashboard_url)
+        self.assertEqual(response.context['vaccines_due_today_total'], 2)
+        self.assertContains(response, 'aria-label="2 vaccination doses due today"')
+        self.assertEqual(response.context['missed_dose_total'], 3)
+        today_dose = self.schedule_a.doses.get(scheduled_date=self.today)
+        self._complete(today_dose)
+        response = self.client.get(self.dashboard_url)
+        self.assertEqual(response.context['vaccines_due_today_total'], 1)
+        self.assertContains(response, 'aria-label="1 vaccination dose due today"')
+
+    def test_due_today_badge_excludes_inactive_and_administered_doses(self):
+        self.client.force_login(self.nurse)
+        self.case_a.case_status = 'completed'
+        self.case_a.save(update_fields=['case_status'])
+        today_dose = self.schedule_c.doses.get(scheduled_date=self.today)
+        today_dose.actual_time = datetime.time(9, 0)
+        today_dose.save(update_fields=['actual_time'])
+        response = self.client.get(self.dashboard_url)
+        self.assertEqual(response.context['vaccines_due_today_total'], 0)
+        self.assertNotContains(response, 'title="Vaccines due today"')
+
     def test_single_missed_dose_shows_badge_1(self):
         self._complete(self.b_missed1)
         self._complete(self.b_missed2)

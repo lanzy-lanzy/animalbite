@@ -616,93 +616,75 @@ class FollowUpReportTests(TestCase):
         self.assertNotContains(printed, 'ABC-FU0001')
 
     def test_completed_search_matches_all_nine_columns(self):
-        searches = (
-            ('1', {'ABC-FU0001'}),
-            ('Juan', {
-                'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003', 'ABC-FU0004',
-            }),
-            ('ABC-FU0002', {'ABC-FU0002'}),
-            ('Verorab', {'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003'}),
-            ('2nd Dose', {'ABC-FU0001'}),
-            ('Nov 10, 2026', {'ABC-FU0001'}),
-            ('11/10/2026', {'ABC-FU0001'}),
-            ('2026-11-10', {'ABC-FU0001'}),
-            ('Nov 11, 2026', {'ABC-FU0001'}),
-            ('11/11/2026', {'ABC-FU0001'}),
-            ('2026-11-11', {'ABC-FU0001'}),
-            ('followup.nurse', {
-                'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003',
-            }),
-            ('Completed', {
-                'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003', 'ABC-FU0004',
-            }),
-        )
-        for keyword, expected_cases in searches:
+        for keyword in ('Juan', 'ABC-FU0003', 'Verorab', '1st Dose',
+                        'followup.nurse', 'Completed'):
             with self.subTest(keyword=keyword):
-                response = self._report('completed_vaccinations', {
-                    'type': 'all', 'q': keyword,
-                })
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.context['total'], len(expected_cases))
-                rows = list(response.context['rows'])
-                self.assertEqual(
-                    {row['cells'][2] for row in rows}, expected_cases)
+                response = self._report('completed_vaccinations', {'type': 'all', 'q': keyword})
+                self.assertEqual(response.context['total'], 1)
+                self.assertEqual(list(response.context['rows'])[0]['cells'][2], 'ABC-FU0003')
+        response = self._report('completed_vaccinations', {'type': 'all', 'q': 'ABC-FU0001'})
+        self.assertEqual(response.context['total'], 0)
 
     def test_completed_search_paginates_and_prints_matching_period_records(self):
-        for index in range(22):
+        schedule = self.complete_case.vaccination_schedule
+        for index in range(26):
             VaccineDose.objects.create(
-                schedule=self.late_schedule,
-                dose_label=f'Extra Dose {index + 1}',
-                dose_status='completed',
-                scheduled_date=self.today,
-                actual_date=self.today,
-                administered_by=self.nurse,
-                vaccine_brand='Rabies Vaccine',
-            )
-
-        before = list(VaccineDose.objects.values_list(
-            'pk', 'dose_status', 'actual_date'))
-        all_rows = self._report('completed_vaccinations', {
-            'type': 'all', 'page': 2,
-        })
-        self.assertEqual(all_rows.context['total'], 26)
-        expected_26 = list(all_rows.context['rows'])[0]['cells']
-
-        row_search = self._report('completed_vaccinations', {
-            'type': 'all', 'q': '26',
-        })
-        self.assertEqual(row_search.context['total'], 1)
-        self.assertEqual(
-            list(row_search.context['rows'])[0]['cells'], expected_26)
-        self.assertEqual(expected_26[2], 'ABC-FU0003')
-
-        monthly_brand_search = self._report('completed_vaccinations', {
-            'type': 'monthly', 'q': 'Rabies',
-        })
-        self.assertEqual(monthly_brand_search.context['total'], 22)
-
-        printed = self._report('completed_vaccinations', {
-            'type': 'all', 'q': 'ABC-FU0002', 'export': 'print',
-        })
-        self.assertEqual(printed.status_code, 200)
-        self.assertContains(printed, 'ABC-FU0002')
+                schedule=schedule, dose_label=f'Extra Dose {index + 1}',
+                dose_status='completed', scheduled_date=self.today,
+                actual_date=self.today, administered_by=self.nurse,
+                vaccine_brand='Rabies Vaccine')
+        before = list(VaccineDose.objects.values_list('pk', 'dose_status', 'actual_date'))
+        response = self._report('completed_vaccinations', {'type': 'all', 'page': 2})
+        self.assertEqual(response.context['total'], 27)
+        self.assertEqual(len(list(response.context['rows'])), 2)
+        matching = self._report('completed_vaccinations', {'type': 'monthly', 'q': 'Rabies'})
+        self.assertEqual(matching.context['total'], 26)
+        printed = self._report('completed_vaccinations', {'type': 'all', 'export': 'print'})
+        self.assertContains(printed, 'ABC-FU0003')
         self.assertNotContains(printed, 'ABC-FU0001')
-        self.assertEqual(before, list(VaccineDose.objects.values_list(
-            'pk', 'dose_status', 'actual_date')))
+        self.assertEqual(before, list(VaccineDose.objects.values_list('pk', 'dose_status', 'actual_date')))
 
     def test_completed_report_uses_actual_dates_and_preserves_dose_numbers(self):
         response = self._report('completed_vaccinations', {'type': 'all'})
+        self.assertEqual(response.context['total'], 1)
+        row = list(response.context['rows'])[0]['cells']
+        self.assertEqual(row[2], 'ABC-FU0003')
+        self.assertEqual(row[4], '1st Dose')
+        self.assertEqual(row[8], 'Treatment Course Completed')
+        # A case-status flag alone cannot complete outstanding required doses.
+        self.case.case_status = 'completed'
+        self.case.save(update_fields=['case_status'])
+        response = self._report('completed_vaccinations', {'type': 'all'})
+        self.assertEqual(response.context['total'], 1)
+        # A completed flag without a recorded administration date is insufficient.
+        dose = self.complete_case.vaccination_schedule.doses.first()
+        dose.actual_date = None
+        dose.save(update_fields=['actual_date'])
+        response = self._report('completed_vaccinations', {'type': 'all'})
+        self.assertEqual(response.context['total'], 0)
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context['total'], 4)
-        rows = list(response.context['rows'])
-        row_cells = [row['cells'] for row in rows]
-        self.assertEqual({row[2] for row in row_cells}, {
-            'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003', 'ABC-FU0004',
-        })
-        self.assertIn('2nd Dose', [row[4] for row in row_cells])
-        self.assertIn('Treatment Course Completed', [row[8] for row in row_cells])
-        self.assertContains(response, 'Completed')
+    def test_completed_excludes_unscheduled_required_doses(self):
+        schedule = self.complete_case.vaccination_schedule
+        pending = VaccineDose.objects.create(
+            schedule=schedule, dose_label='Dose 2', dose_status='pending')
+        response = self._report('completed_vaccinations', {'type': 'all'})
+        self.assertEqual(response.context['total'], 0)
+        pending.dose_status = 'cancelled'
+        pending.save(update_fields=['dose_status'])
+        response = self._report('completed_vaccinations', {'type': 'all'})
+        self.assertEqual(response.context['total'], 1)
+
+    def test_completed_checks_doses_outside_the_selected_period(self):
+        # One dose falls today, but another required dose is still pending.
+        response = self._report('completed_vaccinations', {'type': 'daily'})
+        self.assertEqual(response.context['total'], 0)
+        outstanding = self.late_schedule.doses.exclude(pk=self.administered_late.pk).get()
+        outstanding.dose_status = 'completed'
+        outstanding.actual_date = self.today - datetime.timedelta(days=1)
+        outstanding.save(update_fields=['dose_status', 'actual_date'])
+        response = self._report('completed_vaccinations', {'type': 'daily'})
+        self.assertEqual(response.context['total'], 1)
+        self.assertEqual(list(response.context['rows'])[0]['cells'][2], 'ABC-FU0002')
 
     def test_under_treatment_counts_remaining_doses_per_case(self):
         response = self._report('under_treatment_report', {'type': 'all'})
@@ -718,27 +700,16 @@ class FollowUpReportTests(TestCase):
         self.assertEqual(cases['ABC-FU0004'][4:7], [2, 1, 1])
 
     def test_search_period_and_print_use_all_matching_records(self):
-        search = self._report('completed_vaccinations', {
-            'type': 'all', 'q': 'ABC-FU0002',
-        })
-        self.assertEqual(search.context['total'], 1)
-        self.assertContains(search, 'ABC-FU0002')
-        self.assertNotContains(search, 'ABC-FU0001')
-
-        today_only = self._report('completed_vaccinations', {
-            'type': 'daily',
-        })
-        self.assertEqual(today_only.context['total'], 1)
-        self.assertContains(today_only, 'ABC-FU0002')
-
-        printed = self._report('completed_vaccinations', {
-            'type': 'all', 'export': 'print',
-        })
-        self.assertEqual(printed.status_code, 200)
-        self.assertContains(printed, 'ABC-FU0001')
-        self.assertContains(printed, 'ABC-FU0002')
-        self.assertContains(printed, 'ABC-FU0003')
-        self.assertContains(printed, 'Municipal Health Office')
+        response = self._report('completed_vaccinations', {'type': 'all', 'q': 'ABC-FU0002'})
+        self.assertEqual(response.context['total'], 0)
+        today_only = self._report('completed_vaccinations', {'type': 'daily'})
+        self.assertEqual(today_only.context['total'], 0)
+        for export in ('print', 'csv'):
+            response = self._report('completed_vaccinations', {'type': 'all', 'export': export})
+            self.assertContains(response, 'ABC-FU0003')
+            for incomplete in ('ABC-FU0001', 'ABC-FU0002', 'ABC-FU0004'):
+                self.assertNotContains(response, incomplete)
+        self.assertContains(self._report('completed_vaccinations', {'type': 'all', 'export': 'print'}), 'Municipal Health Office')
 
     def test_report_cards_and_each_detail_page_are_available(self):
         index = self.client.get(reverse('reports:reports_index'))
