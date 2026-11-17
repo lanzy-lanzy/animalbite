@@ -15,6 +15,7 @@ node_modules/
 
 # Database
 db.sqlite3
+.missed_sms_scheduler.*
 
 # Environment
 .env

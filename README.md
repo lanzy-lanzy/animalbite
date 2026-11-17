@@ -4,6 +4,18 @@ Django application for managing animal bite cases.
 
 ### Seenode deployment accounts
 
+The Seenode startup also supervises a daily missed-dose scheduler in the same
+container and database, at 09:00 Asia/Manila. It checks once each day after 09:00
+(including a late start), and requires both `SEMAPHORE_ENABLED=True` and a
+configured `SEMAPHORE_API_KEY`. No extra worker service is needed. Use
+`MISSED_SMS_SCHEDULER_ENABLED=False` to stop this scheduler. Do not run an external
+scheduler against the same deployment as well. It sends missed reminders only,
+with existing consent, contact validation, seven-day recovery, backlog-review,
+and duplicate/unknown-outcome protections. Failures require staff review, without
+automatic retries. Inspect staff SMS history for results; patient details are
+suppressed from the infrastructure scheduler logs. The service must be running
+and its SQLite records intact. Losing the SQLite file also loses SMS history.
+
 Use `sh start_seenode.sh` as the Seenode start command. It applies migrations,
 creates configured accounts, then starts Gunicorn on port 80.
 
