@@ -2,6 +2,30 @@
 
 Django application for managing animal bite cases.
 
+### Seenode deployment accounts
+
+Use `sh start_seenode.sh` as the Seenode start command. It applies migrations,
+creates configured accounts, then starts Gunicorn on port 80.
+
+In Seenode **Envs**, set `SEED_ADMIN_USERNAME`, `SEED_ADMIN_PASSWORD`,
+`SEED_DOCTOR_USERNAME`, `SEED_DOCTOR_PASSWORD`, `SEED_NURSE_USERNAME`, and
+`SEED_NURSE_PASSWORD`. Mark each password as **Secret** and enter it directly
+in Seenode. Optional email keys use the same prefixes with `_EMAIL`.
+Save the environment variables to restart the service. Unconfigured roles are
+skipped; each configured role needs both username and password. Use different
+usernames and strong passwords. Only the admin receives Django staff/superuser
+privileges. No sample patients or default passwords are created.
+
+The command never prints passwords or usernames. Repeated starts leave existing
+accounts unchanged, including passwords and disabled status; it refuses a
+username already assigned to another role. Change an existing account password
+through the application's normal password flow. Validation failures stop startup
+and roll back all accounts created by that run.
+
+The current SQLite deployment has no persistent volume. A replacement container
+can lose its records; configured seed accounts will be recreated from these
+variables on the new database, but patient records are not restored.
+
 ## Frontend (Tailwind CSS v4)
 
 ```bash
