@@ -4,6 +4,25 @@ Django application for managing animal bite cases.
 
 ### Seenode deployment accounts
 
+Missed schedule alerts support both Semaphore SMS and the patient's in-app
+dashboard. When the appointment date has arrived and staff explicitly saves a
+dose as `missed`, the notification runs after commit. The background scheduler
+also checks today's explicitly missed doses every minute (covering bulk updates).
+Unmarked incomplete doses remain eligible for the next-morning check, not a
+premature same-day missed alert. Future, administered, cancelled and inactive
+appointments are excluded. Neither alert changes the clinical dose status.
+
+The `notifications` app stores one in-app notice per patient account, dose and
+appointment date, with effective `status`, `recorded_status`, appointment ID,
+dose label and scheduled date in its payload. The patient portal reads only the
+signed-in patient's notices. Patients without a linked login can still receive
+consented SMS, but have no in-app destination. SMS and in-app content explicitly
+includes "missed" and "schedule". Existing SMS event claims prevent a second
+submission during polling, repeated saves or the next daily run. Failed and
+unknown submissions still require review; no automatic retry is enabled.
+Run `python manage.py migrate` when deploying the new notification table; the
+Seenode startup script already runs migrations.
+
 The Seenode startup also supervises a daily missed-dose scheduler in the same
 container and database, at 09:00 Asia/Manila. It checks once each day after 09:00
 (including a late start), and requires both `SEMAPHORE_ENABLED=True` and a

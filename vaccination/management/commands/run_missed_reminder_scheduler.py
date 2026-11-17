@@ -29,6 +29,10 @@ class Command(BaseCommand):
             self.stdout.flush()
             while not stop.is_set():
                 try:
+                    from notifications.utils import dispatch_marked_missed_schedules
+                    # Explicit missed status changes must not wait until tomorrow
+                    # or be blocked by the daily run's already-checked marker.
+                    dispatch_marked_missed_schedules()
                     result = run_due_check(state)
                     if result == "checked":
                         self.stdout.write("Daily missed-dose check completed; review SMS history for outcomes.")

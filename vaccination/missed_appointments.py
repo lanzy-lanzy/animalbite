@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Exists, OuterRef
+from django.db.models import Count, Exists, OuterRef, Q
 from django.utils import timezone
 
 from .models import SMSLog, VaccineDose
@@ -63,6 +63,8 @@ def missed_appointment_is_due(dose, today=None, now=None):
         return True
     if dose.scheduled_date > local_today:
         return False
+    if dose.dose_status == 'missed':
+        return True
 
     cutoff = _appointment_cutoff()
     return cutoff is not None and local_now.time() >= cutoff
@@ -72,7 +74,10 @@ def missed_reminder_is_due(dose, today=None, now=None):
     if not _unadministered_and_active(dose):
         return False
     local_today = today or _local_now(now).date()
-    return local_today - timedelta(days=MISSED_REMINDER_LOOKBACK_DAYS) <= dose.scheduled_date < local_today
+    return (
+        local_today - timedelta(days=MISSED_REMINDER_LOOKBACK_DAYS) <= dose.scheduled_date < local_today
+        or (dose.scheduled_date == local_today and dose.dose_status == 'missed')
+    )
 
 
 def missed_reminder_doses(today=None, now=None):
@@ -83,12 +88,14 @@ def missed_reminder_doses(today=None, now=None):
     )
     return VaccineDose.objects.filter(
         scheduled_date__gte=local_today - timedelta(days=MISSED_REMINDER_LOOKBACK_DAYS),
-        scheduled_date__lt=local_today,
+        scheduled_date__lte=local_today,
         actual_date__isnull=True,
         actual_time__isnull=True,
         dose_status__in=('scheduled', 'rescheduled', 'missed'),
         schedule__bite_case__case_status__in=ACTIVE_CASE_STATUSES,
         schedule__bite_case__patient__is_archived=False,
+    ).filter(
+        Q(scheduled_date__lt=local_today) | Q(dose_status='missed'),
     ).filter(~Exists(blocked_events)).select_related(
         'schedule__bite_case__patient',
         'schedule__bite_case',

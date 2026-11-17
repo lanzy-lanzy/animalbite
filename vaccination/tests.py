@@ -130,7 +130,7 @@ class MissedAppointmentSmsTests(_MissedAppointmentFixture, TestCase):
         self.assertEqual(log.patient, self.patient)
         self.assertEqual(log.bite_case, self.case)
         self.assertEqual(log.message, missed_reminder_message(self.dose))
-        self.assertIn("scheduled 2nd Dose on November 11, 2026", log.message)
+        self.assertIn("schedule for 2nd Dose on November 11, 2026", log.message)
         self.assertEqual(log.attempt_count, 0)
         self.assertIn("queued", log.api_response.lower())
         self.assertEqual(
@@ -177,8 +177,8 @@ class MissedAppointmentSmsTests(_MissedAppointmentFixture, TestCase):
             self.assertEqual(regular_gateway.call_count, 2)
             missed_gateway.assert_called_once_with(
                 '639173334444',
-                'RHU Dumingag ABTC: You missed your scheduled 2nd Dose on November 12, 2026. '
-                'Please visit or contact RHU Dumingag as soon as possible to arrange '
+            'RHU Dumingag ABTC: You have missed your schedule for 2nd Dose on November 12, 2026. '
+            'Status: Missed. Please visit or contact RHU Dumingag as soon as possible to arrange '
                 'your next vaccination appointment. Thank you.')
         self.assertEqual(set(SMSLog.objects.exclude(pk=previous.pk).values_list(
             'dose_id', 'reminder_type', 'status')), {
@@ -349,8 +349,8 @@ class MissedAppointmentSmsTests(_MissedAppointmentFixture, TestCase):
     def test_message_uses_actual_ordinal_number(self):
         self.assertEqual(
             missed_reminder_message(self.dose),
-            "RHU Dumingag ABTC: You missed your scheduled 2nd Dose "
-            "on November 11, 2026. Please visit or contact RHU Dumingag "
+            "RHU Dumingag ABTC: You have missed your schedule for 2nd Dose "
+            "on November 11, 2026. Status: Missed. Please visit or contact RHU Dumingag "
             "as soon as possible to arrange your next vaccination appointment. Thank you.",
         )
         self.assertIn("1st Dose", missed_reminder_message(self.first))
@@ -436,6 +436,7 @@ class MissedAppointmentContractTests(_MissedAppointmentFixture, TestCase):
             ("scheduled", -1, None, True),
             ("rescheduled", -1, None, True),
             ("missed", -1, None, True),
+            ("missed", 0, None, True),
             ("scheduled", 0, None, False),
             ("rescheduled", 2, None, False),
             ("missed", 2, None, False),
@@ -476,7 +477,7 @@ class MissedAppointmentContractTests(_MissedAppointmentFixture, TestCase):
                         self.assertIsNone(log)
                         self.assertTrue(result["skipped"])
                         self.assertFalse(SMSLog.objects.filter(dose=dose).exists())
-            self.assertEqual(gateway.call_count, 5)
+        self.assertEqual(gateway.call_count, sum(scenario[3] for scenario in scenarios))
 
     def test_inactive_cases_never_attempt_delivery(self):
         with patch("vaccination.missed_appointments.send_semaphore_sms") as gateway:
@@ -3590,7 +3591,7 @@ class NurseMissedDoseBadgeTests(TestCase):
         response = self.client.get(self.dashboard_url)
         self.assertEqual(response.context["missed_dose_total"], 0)
         content = response.content.decode()
-        self.assertNotIn("background:#DC3545", content)
+        self.assertNotIn('title="Missed vaccination doses"', content)
         self.assertNotIn("missed vaccination dose", content)
 
     def test_badge_consistent_across_nurse_pages(self):

@@ -30,9 +30,9 @@ def normalize_ph_number(raw: str) -> str | None:
 def build_missed_reminder_message(dose) -> str:
     """Name the missed appointment and its saved date, without patient details."""
     return (
-        'RHU Dumingag ABTC: You missed your scheduled '
+        'RHU Dumingag ABTC: You have missed your schedule for '
         f'{dose.number_label} on {dose.scheduled_date:%B %d, %Y}. '
-        'Please visit or contact RHU Dumingag as soon as possible to arrange '
+        'Status: Missed. Please visit or contact RHU Dumingag as soon as possible to arrange '
         'your next vaccination appointment. Thank you.'
     )
 

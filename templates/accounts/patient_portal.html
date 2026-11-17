@@ -13,6 +13,17 @@
         </a>
     </div>
 
+    {% if appointment_notifications %}
+    <section class="pp-info-card mb-4" aria-label="Appointment notifications">
+        <h2 class="text-lg font-bold">Appointment notifications</h2>
+        {% for notification in appointment_notifications %}
+        <article class="border-b border-line py-3">
+            <p>{{ notification.message }}</p>
+            <p class="text-sm text-muted">Status at notification: {{ notification.payload.status|title }} · Current status: {{ notification.dose.effective_status }}</p>
+        </article>
+        {% endfor %}
+    </section>
+    {% endif %}
     <div class="pp-dash-grid">
         <section class="pp-info-card" aria-label="Patient information">
             {% if patient %}

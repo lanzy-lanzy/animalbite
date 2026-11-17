@@ -1,0 +1,69 @@
+/* Shared read-only assessment / nurse findings form layout. */
+@media screen {
+  .ad-field,
+  .doctor-findings-form .info-tile > .min-w-0 {
+    display: grid;
+    grid-template-columns: 152px minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: baseline;
+    min-width: 0;
+  }
+  .ad-label,
+  .doctor-findings-form .info-label {
+    margin: 0;
+    color: #476762;
+    font-size: 13.5px;
+    font-weight: 500;
+    line-height: 1.45;
+  }
+  .ad-value,
+  .doctor-findings-form .info-value {
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: #08291F;
+    font-size: 14.5px;
+    font-weight: 600;
+    line-height: 1.55;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+  }
+  .doctor-findings-form {
+    max-width: 1040px;
+    padding: 18px 20px 48px;
+    background: #fff;
+    border: 1px solid #E7DFCF;
+    border-radius: 16px;
+    color: #08291F;
+  }
+  .doctor-findings-form .record-hero {
+    padding: 18px 22px;
+    border: 1px solid #E7DFCF;
+    border-left: 3px solid #B08A2E;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: none;
+  }
+  .doctor-findings-form .record-hero__waves,
+  .doctor-findings-form .record-hero__avatar,
+  .doctor-findings-form .record-hero__divider { display: none; }
+  .doctor-findings-form .record-hero__name { color: #08291F; font-size: clamp(20px, 2.6vw, 26px); }
+  .doctor-findings-form .record-hero__eyebrow { color: #B08A2E; }
+  .doctor-findings-form .record-hero__meta { background: #fff; border-color: #E7DFCF; }
+  .doctor-findings-form .hero-meta-label { color: #476762; }
+  .doctor-findings-form .hero-meta-value { color: #08291F; }
+  .doctor-findings-form .badge-hero { box-shadow: none; }
+  .doctor-findings-form .badge-hero--final { background: #ECFDF5; border-color: #A7F3D0; color: #065F46; }
+  .doctor-findings-form .badge-hero--view { background: #fff; border-color: #E3D9C2; color: #435F55; }
+  .doctor-findings-form .section-body { padding: 18px 22px; }
+  .doctor-findings-form .section-body > .space-y-4 > div > .grid { column-gap: 44px; row-gap: 12px; }
+  @media (max-width: 640px) {
+    .ad-field,
+    .doctor-findings-form .info-tile > .min-w-0 { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+    .doctor-findings-form { padding: 12px; }
+  }
+}

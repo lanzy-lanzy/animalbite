@@ -154,7 +154,8 @@ class Command(BaseCommand):
             catch_up_count = missed_doses.filter(scheduled_date__lt=yesterday).count()
             self.stdout.write(
                 f"Found {missed_doses.count()} recent unadministered doses "
-                f"({today - timedelta(days=MISSED_REMINDER_LOOKBACK_DAYS)} through {yesterday}); "
+                f"({today - timedelta(days=MISSED_REMINDER_LOOKBACK_DAYS)} through {today}; "
+                "today requires an explicit missed status); "
                 f"catch-up candidates={catch_up_count}"
             )
             if catch_up_count > MISSED_CATCH_UP_REVIEW_LIMIT and not options['approve_missed_backlog']:
@@ -194,10 +195,17 @@ class Command(BaseCommand):
                     sent += 1
                     continue
                 try:
-                    log, result = send_missed_appointment_reminder(
-                        dose.pk, today=today, retry_failed=options['retry_failed'],
-                        expected_scheduled_date=dose.scheduled_date,
-                    )
+                    if options['retry_failed']:
+                        # Staff-reviewed retries retain the existing explicit path.
+                        log, result = send_missed_appointment_reminder(
+                            dose.pk, today=today, retry_failed=True,
+                            expected_scheduled_date=dose.scheduled_date,
+                        )
+                    else:
+                        from notifications.utils import dispatch_missed_schedule
+                        _, log, result = dispatch_missed_schedule(
+                            dose.pk, today=today, expected_date=dose.scheduled_date,
+                        )
                 except Exception as exc:
                     failed += 1
                     self.stdout.write(self.style.ERROR(

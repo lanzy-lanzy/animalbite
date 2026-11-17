@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "patients",
     "bite_cases",
     "vaccination",
+    "notifications",
     "inventory",
     "reports",
     "settings_app",

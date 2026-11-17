@@ -97,6 +97,7 @@ def patient_portal(request):
         return redirect('dashboard:index')
 
     from django.utils import timezone
+    from notifications.models import Notification
 
     patient = getattr(request.user, 'patient_profile', None)
     patient_age = None
@@ -107,6 +108,11 @@ def patient_portal(request):
     return render(request, 'accounts/patient_portal.html', {
         'patient': patient,
         'patient_age': patient_age,
+        'appointment_notifications': Notification.objects.filter(
+            recipient=request.user,
+            dose__schedule__bite_case__patient__account=request.user,
+            dose__schedule__bite_case__patient__is_archived=False,
+        ).select_related('dose').order_by('-created_at')[:20],
     })
 
 

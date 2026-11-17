@@ -93,7 +93,7 @@ class VaccineDose(models.Model):
         if not self.scheduled_date:
             return 'pending'
         today = today or timezone.localdate(timezone=ZoneInfo('Asia/Manila'))
-        if self.scheduled_date < today:
+        if self.scheduled_date < today or (self.scheduled_date == today and self.dose_status == 'missed'):
             return 'missed'
         return 'rescheduled' if self.dose_status == 'rescheduled' else 'scheduled'
 

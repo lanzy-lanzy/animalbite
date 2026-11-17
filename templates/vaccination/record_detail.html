@@ -526,6 +526,7 @@
     .abtc-footer { margin-top: 14px; }
   }
 </style>
+{% if nurse_view and assessment_only %}<link rel="stylesheet" href="{% static 'css/assessment_fields.css' %}">{% endif %}
 {% endblock %}
 {% block content %}
 <div class="max-w-[1000px] mx-auto record-sheet{% if nurse_view and assessment_only %} doctor-findings-form{% endif %}">
