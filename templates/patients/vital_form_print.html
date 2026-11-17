@@ -6,44 +6,525 @@
   <title>{{ patient.patient_number }} — Patient Vital Signs Form</title>
   <link rel="stylesheet" href="{% static 'css/print_official.css' %}">
   <style>
-    @page { size: A4 portrait; margin: 15mm; }
+    @page { size: A4 portrait; margin: 8mm; }
 
-    /* Writable recording fields — blank boxes sized for pen-and-paper entry. */
-    .vf-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px 12px; }
-    .vf-field { min-width: 0; break-inside: avoid; page-break-inside: avoid; }
-    .vf-field--span2 { grid-column: span 2; }
-    .vf-field--full { grid-column: 1 / -1; }
-    .vf-label { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; margin: 0 0 5px; font-size: 9pt; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--abtc-ink); }
-    .vf-unit { font-size: 8pt; font-weight: 600; letter-spacing: .01em; text-transform: none; color: var(--abtc-subtitle); white-space: nowrap; }
-    .vf-box { border: 1px solid var(--abtc-table-grid); border-radius: 6px; background: #FFFFFF; min-height: 42px; }
-    .vf-box--tall { min-height: 74px; }
-    .vf-bp { display: flex; align-items: center; gap: 8px; }
-    .vf-bp__cell { flex: 1 1 0; min-width: 0; }
-    .vf-bp__cell .vf-box { width: 100%; }
-    .vf-bp__slash { font-size: 16pt; font-weight: 800; color: var(--abtc-subtitle); line-height: 1; }
-    .vf-hint { display: block; margin-top: 3px; font-size: 7.5pt; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--abtc-subtitle); text-align: center; }
-    .vf-checks { display: flex; flex-wrap: wrap; gap: 7px 16px; margin-top: 8px; }
-    .vf-check { display: inline-flex; align-items: center; gap: 6px; font-size: 9.5pt; font-weight: 700; color: var(--abtc-body); }
-    .vf-check__box { width: 13px; height: 13px; border: 1.5px solid var(--abtc-ink); border-radius: 3px; background: #FFFFFF; flex: 0 0 auto; }
-    .vf-other { margin-top: 8px; border-bottom: 1px solid var(--abtc-table-grid); min-height: 22px; }
-    .vf-assess-line { display: inline-block; min-width: 240px; height: 1.15em; border-bottom: 1px solid var(--abtc-ink); }
-    .vf-sign { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; break-inside: avoid; page-break-inside: avoid; }
-    .vf-sign__line { height: 1.5px; background: var(--abtc-ink); margin: 30px 0 6px; }
-    .vf-sign__label { font-size: 9.5pt; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--abtc-ink); }
-    .vf-sign__sub { margin-top: 2px; font-size: 8.5pt; font-weight: 500; color: var(--abtc-subtitle); }
-
-    @media (max-width: 640px) {
-      .vf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .vf-sign { grid-template-columns: 1fr; gap: 16px; }
+    :root {
+      --vf-ink: #08291F;
+      --vf-dark: #0D382C;
+      --vf-accent: #8BB86A;
+      --vf-pale: #EAF3EC;
+      --vf-grid: #5E7A6D;
+      --vf-box-line: #3C4A43;
+      --vf-muted: #496458;
     }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body.abtc-print-body.vf-print {
+      margin: 0;
+      background: #EEF1ED;
+      color: #1F2A25;
+      font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+      font-size: 9.2pt;
+      line-height: 1.3;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .abtc-toolbar { max-width: 210mm; }
+
+    .print-form {
+      width: 210mm;
+      max-width: 100%;
+      margin: 0 auto;
+      padding: 7mm 8mm;
+      background: #FFFFFF;
+      border: 1.5px solid var(--vf-ink);
+      box-shadow: 0 10px 30px rgba(8, 41, 31, .12);
+    }
+
+    /* ---------- Official header ---------- */
+    .vf-head {
+      display: flex;
+      align-items: center;
+    }
+
+    .vf-logo {
+      width: 90px;
+      height: 90px;
+      flex: 0 0 90px;
+      object-fit: contain;
+    }
+
+    .vf-head__divider {
+      width: 2px;
+      height: 96px;
+      flex: 0 0 2px;
+      margin: 0 22px 0 40px;
+      background: var(--vf-ink);
+    }
+
+    .vf-head__body {
+      flex: 1 1 auto;
+      min-width: 0;
+      margin-right: 28px;
+      text-align: center;
+    }
+
+    .vf-org {
+      margin: 0;
+      font-size: 18pt;
+      font-weight: 800;
+      line-height: 1.08;
+      letter-spacing: .01em;
+      color: var(--vf-ink);
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .vf-office {
+      margin: 2px 0 0;
+      font-size: 12.5pt;
+      font-weight: 500;
+      line-height: 1.2;
+      color: #1F2A25;
+    }
+
+    .vf-banner {
+      position: relative;
+      overflow: hidden;
+      margin: 8px 0 0;
+      padding: 6px 46px;
+      background: var(--vf-ink);
+      color: #FFFFFF;
+      text-align: center;
+      font-size: 17pt;
+      font-weight: 800;
+      line-height: 1.12;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .vf-banner > span {
+      position: relative;
+      z-index: 1;
+    }
+
+    .vf-banner::before,
+    .vf-banner::after {
+      content: "";
+      position: absolute;
+      top: -5px;
+      bottom: -5px;
+      width: 28px;
+      background: repeating-linear-gradient(90deg, var(--vf-accent) 0 6px, transparent 6px 11px);
+      transform: skewX(-20deg);
+    }
+
+    .vf-banner::before { left: 9px; }
+    .vf-banner::after { right: 9px; }
+
+    .vf-head-rule {
+      height: 2px;
+      margin: 8px 0 0;
+      background: var(--vf-ink);
+    }
+
+    .vf-printed {
+      margin: 0;
+      padding: 5px 0 6px;
+      font-size: 10pt;
+      font-weight: 700;
+      color: #111111;
+    }
+
+    /* ---------- Section bars ---------- */
+    .vf-block { margin: 8px 0 0; }
+
+    .vf-bar {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 12px;
+      background: var(--vf-dark);
+      color: #FFFFFF;
+      font-size: 12pt;
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .vf-ico {
+      width: 12px;
+      height: 12px;
+      flex: 0 0 auto;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .vf-bar .vf-ico {
+      width: 18px;
+      height: 18px;
+    }
+
+    .vf-sprite {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+
+    /* ---------- Patient information table ---------- */
+    .vf-info {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    .vf-info th,
+    .vf-info td {
+      border: 1px solid var(--vf-grid);
+      padding: 6px 10px;
+      font-size: 10pt;
+      line-height: 1.2;
+      vertical-align: middle;
+    }
+
+    .vf-info th {
+      background: var(--vf-pale);
+      color: #111111;
+      font-weight: 700;
+      text-align: left;
+    }
+
+    .vf-info td {
+      background: #FFFFFF;
+      color: #111111;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    .vf-assess-line {
+      display: block;
+      height: 1.05em;
+      border-bottom: 1px solid #333333;
+    }
+
+    /* ---------- Vital signs grid ---------- */
+    .vf-vitals {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    .vf-vitals td {
+      border: 1px solid var(--vf-grid);
+      padding: 7px 10px 8px;
+      background: #FFFFFF;
+      vertical-align: top;
+    }
+
+    .vf-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0 0 5px;
+      font-size: 7.6pt;
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      color: #111111;
+    }
+
+    .vf-label__text { min-width: 0; }
+
+    .vf-unit {
+      margin-left: auto;
+      font-size: 7.2pt;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: none;
+      color: #111111;
+      white-space: nowrap;
+    }
+
+    .vf-o2 {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 13px;
+      height: 13px;
+      flex: 0 0 auto;
+      border: 1px solid var(--vf-ink);
+      border-radius: 50%;
+      font-size: 5.4pt;
+      font-weight: 800;
+      line-height: 1;
+      color: var(--vf-ink);
+    }
+
+    .vf-box {
+      display: flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 2px 8px;
+      border: 1px solid var(--vf-box-line);
+      border-radius: 5px;
+      background: #FFFFFF;
+      color: #111111;
+      font-size: 9.6pt;
+      font-weight: 600;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+
+    .vf-box--write { min-height: 44px; align-items: flex-start; }
+    .vf-box--notes { min-height: 72px; align-items: flex-start; padding-top: 4px; }
+
+    .vf-bp {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .vf-bp__cell { flex: 1 1 0; min-width: 0; }
+    .vf-bp__cell .vf-box { justify-content: center; }
+
+    .vf-bp__slash {
+      padding-top: 6px;
+      font-size: 13pt;
+      font-weight: 600;
+      line-height: 1;
+      color: #111111;
+    }
+
+    .vf-hint {
+      display: block;
+      margin-top: 3px;
+      text-align: center;
+      font-size: 7pt;
+      font-weight: 700;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      color: #111111;
+    }
+
+    .vf-checks {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px 18px;
+      min-height: 28px;
+      padding: 2px 0;
+    }
+
+    .vf-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 9pt;
+      font-weight: 600;
+      color: #111111;
+    }
+
+    .vf-check__box {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      flex: 0 0 auto;
+      border: 1.5px solid #1F2A25;
+      border-radius: 2px;
+      background: #FFFFFF;
+    }
+
+    .vf-check__box--on { background: var(--vf-pale); }
+
+    .vf-check__mark {
+      width: 10px;
+      height: 10px;
+      fill: none;
+      stroke: var(--vf-ink);
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* ---------- Signature ---------- */
+    .vf-sign {
+      position: relative;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      margin: 20px 0 0;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+
+    .vf-sign::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background: #C9D3CC;
+    }
+
+    .vf-sign__col { padding: 0 13mm; }
+
+    .vf-sign__name {
+      min-height: 34px;
+      margin: 0 0 2px;
+      font-size: 8pt;
+      font-weight: 600;
+      color: var(--vf-muted);
+    }
+
+    .vf-sign__line { border-top: 1.5px solid #1F2A25; }
+
+    .vf-sign__label {
+      margin: 5px 0 0;
+      text-align: center;
+      font-size: 9.5pt;
+      font-weight: 800;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+      color: #111111;
+    }
+
+    .vf-sign__sub {
+      margin: 1px 0 0;
+      text-align: center;
+      font-size: 8.4pt;
+      color: #111111;
+    }
+
+    /* ---------- Footer ---------- */
+    .abtc-footer.vf-footer {
+      position: relative;
+      overflow: hidden;
+      margin: 16px 0 0;
+      padding: 8px 52px;
+      border: 1px solid var(--vf-dark);
+      background: var(--vf-pale);
+      color: var(--vf-dark);
+      text-align: center;
+      font-size: 9pt;
+      line-height: 1.35;
+    }
+
+    .abtc-footer.vf-footer p { margin: 0; }
+
+    .abtc-footer.vf-footer::before,
+    .abtc-footer.vf-footer::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 52px;
+      background: linear-gradient(115deg, var(--vf-dark) 0 22px, var(--vf-accent) 22px 29px, transparent 29px);
+    }
+
+    .vf-footer::before { left: 0; }
+    .vf-footer::after { right: 0; transform: scaleX(-1); }
+
+    .vf-footer__org {
+      font-size: 10pt;
+      font-weight: 800;
+    }
+
+    .vf-footer__meta {
+      font-size: 9pt;
+      font-style: italic;
+      font-weight: 600;
+    }
+
+    /* ---------- Small screens ---------- */
+    @media screen and (max-width: 640px) {
+      .print-form { padding: 12px; }
+
+      .vf-logo {
+        width: 58px;
+        height: 58px;
+        flex-basis: 58px;
+      }
+
+      .vf-head__divider {
+        height: 54px;
+        margin: 0 8px;
+      }
+
+      .vf-head__body { margin-right: 0; }
+
+      .vf-org {
+        font-size: 11pt;
+        white-space: normal;
+      }
+
+      .vf-office { font-size: 8.5pt; }
+
+      .vf-banner {
+        padding: 5px 28px;
+        font-size: 10.5pt;
+      }
+
+      .vf-info th,
+      .vf-info td {
+        padding: 4px 5px;
+        font-size: 8pt;
+      }
+
+      .vf-label {
+        flex-wrap: wrap;
+        row-gap: 1px;
+      }
+
+      .vf-unit { white-space: normal; }
+
+      .vf-sign {
+        grid-template-columns: 1fr;
+        row-gap: 14px;
+      }
+
+      .vf-sign::after { display: none; }
+      .vf-sign__col { padding: 0 4mm; }
+    }
+
+    /* ---------- Print ---------- */
     @media print {
-      .vf-grid { gap: 11px 10px; }
-      .vf-box { min-height: 40px; }
-      .vf-box--tall { min-height: 70px; }
+      body.abtc-print-body.vf-print { background: #FFFFFF !important; }
+
+      .no-print { display: none !important; }
+
+      .print-form {
+        width: auto;
+        max-width: none;
+        margin: 0;
+        padding: 5mm 6mm;
+        border: 1.5px solid var(--vf-ink);
+        box-shadow: none !important;
+      }
+
+      .vf-info,
+      .vf-vitals,
+      .vf-vitals tr,
+      .vf-sign,
+      .vf-footer {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      a { color: inherit !important; text-decoration: none !important; }
     }
   </style>
 </head>
-<body class="abtc-print-body">
+<body class="abtc-print-body vf-print">
   <div class="abtc-toolbar no-print">
     <div style="display:flex;align-items:center;gap:10px;min-width:0;">
       <button type="button" class="abtc-toolbar__ghost" onclick="window.location.href='{% url 'patients:patient_detail' patient.pk %}'">← Back to Patient</button>
@@ -55,112 +536,266 @@
     </button>
   </div>
 
-  <main class="abtc-doc">
-    {% include 'print/_official_head.html' with document_title="Patient Vital Signs Form" show_printed_at=1 %}
-    <p class="abtc-note">Official recording form — complete each field in ink at the time of measurement. Leave a field blank if the measurement was not taken. Transfer the completed values into the ABTC system after the encounter.</p>
+  <main class="print-form">
+    <svg class="vf-sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+      <symbol id="vf-i-user" viewBox="0 0 24 24"><circle cx="12" cy="7.5" r="4"/><path d="M4.5 21c0-4.1 3.4-7 7.5-7s7.5 2.9 7.5 7"/></symbol>
+      <symbol id="vf-i-pulse" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 12h3l1.6-3.8 2.8 7.6 1.6-3.8H18"/></symbol>
+      <symbol id="vf-i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></symbol>
+      <symbol id="vf-i-gauge" viewBox="0 0 24 24"><path d="M4 17a8 8 0 1 1 16 0"/><path d="M12 17l4-5"/><circle cx="12" cy="17" r="1.4"/></symbol>
+      <symbol id="vf-i-thermometer" viewBox="0 0 24 24"><path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 9v7"/></symbol>
+      <symbol id="vf-i-heart" viewBox="0 0 24 24"><path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 1 0-7.1 7.1l8.8 8.3 8.8-8.3a5 5 0 0 0 0-7.1z"/></symbol>
+      <symbol id="vf-i-lungs" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M10 11.5C10 9 8.2 7 5.7 7 4.3 7 3 8.4 3 10v3.5c0 4 2.8 7.5 6.3 7.5 1.5 0 2.2-.9 2.2-2.4V14c0-1-1.5-2.5-1.5-2.5z"/><path d="M14 11.5C14 9 15.8 7 18.3 7c1.4 0 2.7 1.4 2.7 3v3.5c0 4-2.8 7.5-6.3 7.5-1.5 0-2.2-.9-2.2-2.4V14c0-1 1.5-2.5 1.5-2.5z"/></symbol>
+      <symbol id="vf-i-scale" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 16a4 4 0 0 1 8 0"/><path d="M12 16l1.8-2.6"/></symbol>
+      <symbol id="vf-i-ruler" viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="8" rx="1"/><path d="M6 8v3M10 8v3M14 8v3M18 8v3"/></symbol>
+      <symbol id="vf-i-calc" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15h.01M8 19h8"/></symbol>
+      <symbol id="vf-i-drop" viewBox="0 0 24 24"><path d="M12 3s6 6.5 6 10.5a6 6 0 0 1-12 0C6 9.5 12 3 12 3z"/></symbol>
+      <symbol id="vf-i-bag" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M12 11v6M9 14h6"/></symbol>
+      <symbol id="vf-i-clipboard" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1"/><path d="M8 10h8M8 14h8M8 18h5"/></symbol>
+      <symbol id="vf-i-pencil" viewBox="0 0 24 24"><path d="M4 20l4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20z"/><path d="M13.5 7.5l3 3"/></symbol>
+    </svg>
 
-    <section class="abtc-section">
-      <h2 class="abtc-section-title">Patient Information</h2>
-      <div class="abtc-panel abtc-summary">
-        <div class="abtc-summary__row abtc-summary__row--full"><span>Patient Full Name</span><strong>{{ patient.full_name }}</strong></div>
-        <div class="abtc-summary__row"><span>Patient ID</span><strong>{{ patient.patient_number }}</strong></div>
-        <div class="abtc-summary__row"><span>Sex</span><strong>{{ patient.get_sex_display|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row"><span>Date of Birth</span><strong>{{ patient.birthdate|date:"F j, Y"|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row"><span>Age</span><strong>{% if patient.age %}{{ patient.age }} years old{% else %}Not Recorded{% endif %}</strong></div>
-        <div class="abtc-summary__row abtc-summary__row--full"><span>Date of Assessment</span><strong><span class="vf-assess-line"></span></strong></div>
+    <header class="vf-head">
+      <img src="{% static 'images/lgu_dumingag_logo.png' %}" alt="Municipality of Dumingag logo" class="vf-logo">
+      <span class="vf-head__divider" aria-hidden="true"></span>
+      <div class="vf-head__body">
+        <p class="vf-org">Animal Bite Treatment Center</p>
+        <p class="vf-office">Municipal Health Office</p>
+        <div class="vf-banner"><span>Patient Vital Signs Form</span></div>
       </div>
+    </header>
+
+    <div class="vf-head-rule" aria-hidden="true"></div>
+    <p class="vf-printed"><strong>Date Printed:</strong> {% now "F j, Y, g:i A" %}</p>
+
+    <section class="vf-block" aria-labelledby="vf-patient-title">
+      <div class="vf-bar">
+        <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-user"/></svg>
+        <span id="vf-patient-title">Patient Information</span>
+      </div>
+      <table class="vf-info">
+        <colgroup>
+          <col style="width:27%">
+          <col style="width:27%">
+          <col style="width:14%">
+          <col style="width:32%">
+        </colgroup>
+        <tbody>
+          <tr>
+            <th scope="row">Patient Full Name:</th>
+            <td colspan="3">{{ patient.full_name }}</td>
+          </tr>
+          <tr>
+            <th scope="row">Patient ID:</th>
+            <td>{{ patient.patient_number }}</td>
+            <th scope="row">Sex:</th>
+            <td>{{ patient.get_sex_display|default:"" }}</td>
+          </tr>
+          <tr>
+            <th scope="row">Date of Birth:</th>
+            <td>{{ patient.birthdate|date:"F j, Y" }}</td>
+            <th scope="row">Age:</th>
+            <td>{% if patient.age %}{{ patient.age }} years old{% endif %}</td>
+          </tr>
+          <tr>
+            <th scope="row">Date of Assessment:</th>
+            <td colspan="3">{% if assessment_date %}{{ assessment_date|date:"F j, Y" }}{% else %}<span class="vf-assess-line" aria-hidden="true"></span>{% endif %}</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
-    <section class="abtc-section">
-      <h2 class="abtc-section-title">Vital Signs</h2>
-      <div class="vf-grid">
-        <div class="vf-field vf-field--span2">
-          <p class="vf-label">Date &amp; Time Taken <span class="vf-unit">mm/dd/yyyy · hh:mm</span></p>
-          <div class="vf-box"></div>
-        </div>
-        <div class="vf-field vf-field--span2">
-          <p class="vf-label">Blood Pressure <span class="vf-unit">mmHg</span></p>
-          <div class="vf-bp">
-            <div class="vf-bp__cell"><div class="vf-box"></div><span class="vf-hint">Systolic</span></div>
-            <span class="vf-bp__slash">/</span>
-            <div class="vf-bp__cell"><div class="vf-box"></div><span class="vf-hint">Diastolic</span></div>
-          </div>
-        </div>
-
-        <div class="vf-field">
-          <p class="vf-label">Temperature <span class="vf-unit">°C</span></p>
-          <div class="vf-box"></div>
-        </div>
-        <div class="vf-field">
-          <p class="vf-label">Pulse Rate <span class="vf-unit">bpm</span></p>
-          <div class="vf-box"></div>
-        </div>
-        <div class="vf-field">
-          <p class="vf-label">Respiratory Rate <span class="vf-unit">/min</span></p>
-          <div class="vf-box"></div>
-        </div>
-        <div class="vf-field">
-          <p class="vf-label">SpO₂ <span class="vf-unit">%</span></p>
-          <div class="vf-box"></div>
-        </div>
-
-        <div class="vf-field">
-          <p class="vf-label">Weight <span class="vf-unit">kg</span></p>
-          <div class="vf-box"></div>
-        </div>
-        <div class="vf-field">
-          <p class="vf-label">Height <span class="vf-unit">cm</span></p>
-          <div class="vf-box"></div>
-        </div>
-        <div class="vf-field">
-          <p class="vf-label">BMI <span class="vf-unit">kg/m²</span></p>
-          <div class="vf-box"></div>
-        </div>
-        <div class="vf-field">
-          <p class="vf-label">Pain Scale <span class="vf-unit">0–10</span></p>
-          <div class="vf-box"></div>
-        </div>
-
-        <div class="vf-field vf-field--span2">
-          <p class="vf-label">Blood Glucose <span class="vf-unit">mg/dL</span></p>
-          <div class="vf-box"></div>
-          <div class="vf-checks">
-            <span class="vf-check"><span class="vf-check__box"></span>Random</span>
-            <span class="vf-check"><span class="vf-check__box"></span>Fasting</span>
-          </div>
-        </div>
-        <div class="vf-field vf-field--span2">
-          <p class="vf-label">General Appearance</p>
-          <div class="vf-checks" style="margin-top:2px;">
-            <span class="vf-check"><span class="vf-check__box"></span>Well</span>
-            <span class="vf-check"><span class="vf-check__box"></span>Ill</span>
-            <span class="vf-check"><span class="vf-check__box"></span>Toxic</span>
-          </div>
-          <div class="vf-other"></div>
-          <span class="vf-hint" style="text-align:left;">Other observations</span>
-        </div>
-
-        <div class="vf-field vf-field--full">
-          <p class="vf-label">Additional Notes / Allergy Re-check</p>
-          <div class="vf-box vf-box--tall"></div>
-        </div>
+    <section class="vf-block" aria-labelledby="vf-vitals-title">
+      <div class="vf-bar">
+        <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-pulse"/></svg>
+        <span id="vf-vitals-title">Vital Signs</span>
       </div>
+      <table class="vf-vitals">
+        <colgroup>
+          <col span="20" style="width:5%">
+        </colgroup>
+        <tbody>
+          <tr>
+            <td colspan="10">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-calendar"/></svg>
+                <span class="vf-label__text">Date &amp; Time Taken</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.taken_at %}{{ vital.taken_at|date:"m/d/Y · g:i A" }}{% endif %}</div>
+            </td>
+            <td colspan="10">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-gauge"/></svg>
+                <span class="vf-label__text">Blood Pressure</span>
+                <span class="vf-unit">mmHg</span>
+              </p>
+              <div class="vf-bp">
+                <div class="vf-bp__cell">
+                  <div class="vf-box">{% if vital and vital.bp_systolic is not None %}{{ vital.bp_systolic }}{% endif %}</div>
+                  <span class="vf-hint">Systolic</span>
+                </div>
+                <span class="vf-bp__slash">/</span>
+                <div class="vf-bp__cell">
+                  <div class="vf-box">{% if vital and vital.bp_diastolic is not None %}{{ vital.bp_diastolic }}{% endif %}</div>
+                  <span class="vf-hint">Diastolic</span>
+                </div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td colspan="5">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-thermometer"/></svg>
+                <span class="vf-label__text">Temperature</span>
+                <span class="vf-unit">°C</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.temperature is not None %}{{ vital.temperature|floatformat:"-1" }}{% endif %}</div>
+            </td>
+            <td colspan="5">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-heart"/></svg>
+                <span class="vf-label__text">Pulse Rate</span>
+                <span class="vf-unit">bpm</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.pulse_rate is not None %}{{ vital.pulse_rate }}{% endif %}</div>
+            </td>
+            <td colspan="5">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-lungs"/></svg>
+                <span class="vf-label__text">Respiratory Rate</span>
+                <span class="vf-unit">/min</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.respiratory_rate is not None %}{{ vital.respiratory_rate }}{% endif %}</div>
+            </td>
+            <td colspan="5">
+              <p class="vf-label">
+                <span class="vf-o2" aria-hidden="true">O₂</span>
+                <span class="vf-label__text">SpO₂</span>
+                <span class="vf-unit">%</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.spo2 is not None %}{{ vital.spo2 }}{% endif %}</div>
+            </td>
+          </tr>
+          <tr>
+            <td colspan="5">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-scale"/></svg>
+                <span class="vf-label__text">Weight</span>
+                <span class="vf-unit">kg</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.weight is not None %}{{ vital.weight|floatformat:"-2" }}{% endif %}</div>
+            </td>
+            <td colspan="5">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-ruler"/></svg>
+                <span class="vf-label__text">Height</span>
+                <span class="vf-unit">cm</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.height is not None %}{{ vital.height|floatformat:"-2" }}{% endif %}</div>
+            </td>
+            <td colspan="5">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-calc"/></svg>
+                <span class="vf-label__text">BMI</span>
+                <span class="vf-unit">kg/m²</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.bmi is not None %}{{ vital.bmi|floatformat:"-2" }}{% endif %}</div>
+            </td>
+            <td colspan="5">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-gauge"/></svg>
+                <span class="vf-label__text">Pain Scale</span>
+                <span class="vf-unit">0 – 10</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.pain_score is not None %}{{ vital.pain_score }}{% endif %}</div>
+            </td>
+          </tr>
+          <tr>
+            <td colspan="7">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-drop"/></svg>
+                <span class="vf-label__text">Blood Glucose</span>
+                <span class="vf-unit">mg/dL</span>
+              </p>
+              <div class="vf-box">{% if vital and vital.blood_glucose is not None %}{{ vital.blood_glucose|floatformat:"-1" }}{% endif %}</div>
+            </td>
+            <td colspan="6">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-drop"/></svg>
+                <span class="vf-label__text">Blood Glucose Type</span>
+              </p>
+              <div class="vf-checks">
+                <span class="vf-check">
+                  <span class="vf-check__box{% if vital and vital.glucose_type == 'random' %} vf-check__box--on{% endif %}" role="checkbox" aria-checked="{% if vital and vital.glucose_type == 'random' %}true{% else %}false{% endif %}">{% if vital and vital.glucose_type == 'random' %}<svg class="vf-check__mark" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l2.6 2.6L10 3.5"/></svg>{% endif %}</span>
+                  Random
+                </span>
+                <span class="vf-check">
+                  <span class="vf-check__box{% if vital and vital.glucose_type == 'fasting' %} vf-check__box--on{% endif %}" role="checkbox" aria-checked="{% if vital and vital.glucose_type == 'fasting' %}true{% else %}false{% endif %}">{% if vital and vital.glucose_type == 'fasting' %}<svg class="vf-check__mark" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l2.6 2.6L10 3.5"/></svg>{% endif %}</span>
+                  Fasting
+                </span>
+              </div>
+            </td>
+            <td colspan="7">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-bag"/></svg>
+                <span class="vf-label__text">General Appearance</span>
+              </p>
+              <div class="vf-checks">
+                <span class="vf-check">
+                  <span class="vf-check__box{% if vital and vital.general_appearance == 'well' %} vf-check__box--on{% endif %}" role="checkbox" aria-checked="{% if vital and vital.general_appearance == 'well' %}true{% else %}false{% endif %}">{% if vital and vital.general_appearance == 'well' %}<svg class="vf-check__mark" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l2.6 2.6L10 3.5"/></svg>{% endif %}</span>
+                  Well
+                </span>
+                <span class="vf-check">
+                  <span class="vf-check__box{% if vital and vital.general_appearance == 'ill' %} vf-check__box--on{% endif %}" role="checkbox" aria-checked="{% if vital and vital.general_appearance == 'ill' %}true{% else %}false{% endif %}">{% if vital and vital.general_appearance == 'ill' %}<svg class="vf-check__mark" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l2.6 2.6L10 3.5"/></svg>{% endif %}</span>
+                  Ill
+                </span>
+                <span class="vf-check">
+                  <span class="vf-check__box{% if vital and vital.general_appearance == 'toxic' %} vf-check__box--on{% endif %}" role="checkbox" aria-checked="{% if vital and vital.general_appearance == 'toxic' %}true{% else %}false{% endif %}">{% if vital and vital.general_appearance == 'toxic' %}<svg class="vf-check__mark" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l2.6 2.6L10 3.5"/></svg>{% endif %}</span>
+                  Toxic
+                </span>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td colspan="20">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-clipboard"/></svg>
+                <span class="vf-label__text">Other Observations</span>
+              </p>
+              <div class="vf-box vf-box--write"></div>
+            </td>
+          </tr>
+          <tr>
+            <td colspan="20">
+              <p class="vf-label">
+                <svg class="vf-ico" aria-hidden="true"><use href="#vf-i-pencil"/></svg>
+                <span class="vf-label__text">Additional Notes / Allergy Re-check</span>
+              </p>
+              <div class="vf-box vf-box--notes">{% if vital and vital.notes %}{{ vital.notes|linebreaksbr }}{% endif %}</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <div class="vf-sign">
-      <div>
+      <div class="vf-sign__col">
+        <p class="vf-sign__name">{% if vital and vital.taken_by %}{% if vital.taken_by.get_full_name %}{{ vital.taken_by.get_full_name }}{% else %}{{ vital.taken_by.username }}{% endif %}{% endif %}</p>
         <div class="vf-sign__line"></div>
-        <div class="vf-sign__label">Recorded By</div>
-        <div class="vf-sign__sub">Signature over printed name · Position</div>
+        <p class="vf-sign__label">Recorded By</p>
+        <p class="vf-sign__sub">Signature over printed name · Position</p>
       </div>
-      <div>
+      <div class="vf-sign__col">
+        <p class="vf-sign__name">{% if vital and vital.taken_at %}{{ vital.taken_at|date:"F j, Y · g:i A" }}{% endif %}</p>
         <div class="vf-sign__line"></div>
-        <div class="vf-sign__label">Date / Time Recorded</div>
-        <div class="vf-sign__sub">Date and time of recording</div>
+        <p class="vf-sign__label">Date / Time Recorded</p>
+        <p class="vf-sign__sub">Date and time of recording</p>
       </div>
     </div>
 
-    {% include 'print/_official_footer.html' with confidential=True document_label="Vital Signs Form" %}
+    <footer class="abtc-footer vf-footer">
+      <p class="vf-footer__org">Animal Bite Treatment Center · Municipal Health Office · Dumingag</p>
+      <p class="vf-footer__meta">System-Generated Vital Signs Form · Confidential — for clinical use only</p>
+    </footer>
   </main>
 </body>
 </html>

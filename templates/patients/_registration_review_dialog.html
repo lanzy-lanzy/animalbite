@@ -1,0 +1,79 @@
+<dialog id="registrationReviewDialog" aria-labelledby="registrationReviewTitle" aria-describedby="registrationReviewMessage">
+    <form id="registrationReviewForm" method="POST">
+        {% csrf_token %}
+        <input type="hidden" name="return_to" value="patients">
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <h2 id="registrationReviewTitle" class="text-lg font-bold"></h2>
+        <p id="registrationReviewMessage" class="text-sm text-muted mt-2"></p>
+        <dl class="grid grid-cols-2 gap-3 rounded-xl bg-sage-50 border border-line p-4 mt-4 text-sm">
+            <div><dt class="text-xs text-muted">Patient name</dt><dd id="reviewPatientName" class="font-bold"></dd></div>
+            <div><dt class="text-xs text-muted">Registration Number</dt><dd id="reviewRegistrationNumber" class="font-bold"></dd></div>
+            <div><dt class="text-xs text-muted">Birthdate / Sex</dt><dd id="reviewBirthdateSex"></dd></div>
+            <div><dt class="text-xs text-muted">Barangay</dt><dd id="reviewBarangay"></dd></div>
+            <div><dt class="text-xs text-muted">Contact</dt><dd id="reviewContact"></dd></div>
+            <div><dt class="text-xs text-muted">Bite incident</dt><dd id="reviewBite"></dd></div>
+        </dl>
+        <a id="reviewDetailsLink" class="inline-block text-sm font-bold text-emerald-800 underline mt-3" target="_blank" rel="noopener">Review submitted registration details</a>
+        <div id="reviewRejectionField" class="mt-4" hidden>
+            <label for="reviewRejectionReason" class="form-label">Reason for Rejection *</label>
+            <textarea id="reviewRejectionReason" name="reason" rows="4" class="form-input" placeholder="Please explain why this online registration is being rejected..."></textarea>
+        </div>
+        <div class="flex flex-wrap justify-end gap-2 mt-5">
+            <button type="button" id="registrationReviewCancel" class="btn-secondary btn-sm">Cancel</button>
+            <button type="submit" id="registrationReviewConfirm" class="registration-review-button" disabled></button>
+        </div>
+    </form>
+</dialog>
+<script>
+(function () {
+    const dialog = document.getElementById('registrationReviewDialog');
+    const form = document.getElementById('registrationReviewForm');
+    const reason = document.getElementById('reviewRejectionReason');
+    const confirm = document.getElementById('registrationReviewConfirm');
+    let rejecting = false;
+    let submitting = false;
+    let opener;
+    function updateConfirm() {
+        confirm.disabled = submitting || (rejecting && !reason.value.trim());
+    }
+    document.querySelectorAll('[data-review-kind]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            const data = button.closest('.registration-review-actions').dataset;
+            rejecting = button.dataset.reviewKind === 'reject';
+            submitting = false;
+            opener = button;
+            form.reset();
+            form.action = button.dataset.reviewAction;
+            document.getElementById('registrationReviewTitle').textContent = rejecting ? 'Reject Online Registration' : 'Approve Online Registration';
+            document.getElementById('registrationReviewMessage').textContent = rejecting ? 'This registration will be retained with your reason. No official patient record or bite case will be created.' : 'Are you sure you want to approve this online registration and convert it into an official patient record?';
+            document.getElementById('reviewPatientName').textContent = data.registrationName;
+            document.getElementById('reviewRegistrationNumber').textContent = data.registrationNumber;
+            document.getElementById('reviewBirthdateSex').textContent = data.registrationBirthdate + ' / ' + data.registrationSex;
+            document.getElementById('reviewBarangay').textContent = data.registrationBarangay;
+            document.getElementById('reviewContact').textContent = data.registrationContact;
+            document.getElementById('reviewBite').textContent = data.registrationBite + ' — ' + data.registrationIncident;
+            document.getElementById('reviewDetailsLink').href = data.registrationDetail;
+            document.getElementById('reviewRejectionField').hidden = !rejecting;
+            reason.disabled = !rejecting;
+            reason.required = rejecting;
+            confirm.textContent = rejecting ? 'Confirm Reject' : 'Confirm Approval';
+            confirm.className = 'registration-review-button ' + (rejecting ? 'review-reject' : 'review-approve');
+            updateConfirm();
+            dialog.showModal();
+            if (rejecting) reason.focus();
+            else document.getElementById('registrationReviewCancel').focus();
+        });
+    });
+    reason.addEventListener('input', updateConfirm);
+    document.getElementById('registrationReviewCancel').addEventListener('click', function () { dialog.close(); });
+    dialog.addEventListener('close', function () { if (opener) opener.focus(); });
+    form.addEventListener('submit', function (event) {
+        if (submitting || (rejecting && !reason.value.trim())) {
+            event.preventDefault();
+            return;
+        }
+        submitting = true;
+        updateConfirm();
+    });
+})();
+</script>

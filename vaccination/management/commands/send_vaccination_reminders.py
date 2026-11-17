@@ -1,5 +1,6 @@
 from datetime import timedelta
-from django.core.management.base import BaseCommand
+from zoneinfo import ZoneInfo
+from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Q
 from django.utils import timezone
 from vaccination.models import VaccineDose, SMSLog
@@ -7,12 +8,14 @@ from vaccination.sms import send_dose_reminder, normalize_ph_number
 
 
 class Command(BaseCommand):
-    help = "Send SMS via Semaphore (RHUDumingag) for vaccine schedules: 3 days before and on the day."
+    help = "Send scheduled and missed-dose vaccination reminders via Semaphore."
 
     def add_arguments(self, parser):
         parser.add_argument("--dry-run", action="store_true", help="Don't actually send, just simulate")
-        parser.add_argument("--force", action="store_true", help="Force re-send even if already sent today")
-        parser.add_argument("--type", choices=["3days", "on_day", "all"], default="all", help="Which reminder type to send")
+        parser.add_argument("--force", action="store_true", help="Force advance/day reminders only; never bypass missed-event protection")
+        parser.add_argument("--retry-failed", action="store_true", help="Explicitly retry definite missed-message failures: max 3 attempts, 1 hour apart, within the seven-day recovery window")
+        parser.add_argument("--approve-missed-backlog", action="store_true", help="Allow more than 25 recent catch-up reminders after administrator dry-run review; never expands the seven-day window")
+        parser.add_argument("--type", choices=["3days", "on_day", "missed", "all"], default="all", help="Which reminder type to send")
         parser.add_argument("--limit", type=int, default=0, help="Limit number of messages (0 = no limit)")
         parser.add_argument("--date", type=str, default="", help="Override today as YYYY-MM-DD (for testing)")
         parser.add_argument("--verbose", action="store_true", help="Verbose output")
@@ -32,7 +35,7 @@ class Command(BaseCommand):
                 self.stderr.write(self.style.ERROR(f"Invalid --date {options['date']}, use YYYY-MM-DD"))
                 return
         else:
-            today = timezone.localdate()
+            today = timezone.localdate(timezone=ZoneInfo('Asia/Manila'))
 
         target_3days = today + timedelta(days=3)
         target_today = today
@@ -45,6 +48,7 @@ class Command(BaseCommand):
         skipped = 0
         failed = 0
         total_candidates = 0
+        review_required = False
 
         # Helper to process a queryset
         def process_doses(qs, rtype):
@@ -138,7 +142,96 @@ class Command(BaseCommand):
             self.stdout.write(f"Found {count_t} doses due TODAY (scheduled_date={target_today})")
             process_doses(qs_today, "on_day")
 
+        if reminder_filter in ("missed", "all"):
+            from vaccination.missed_appointments import (
+                MISSED_CATCH_UP_REVIEW_LIMIT, MISSED_REMINDER_LOOKBACK_DAYS,
+                missed_reminder_message, missed_sms_consent_ok,
+                missed_reminder_doses, send_missed_appointment_reminder,
+            )
+
+            missed_doses = missed_reminder_doses(today=today)
+            yesterday = today - timedelta(days=1)
+            catch_up_count = missed_doses.filter(scheduled_date__lt=yesterday).count()
+            self.stdout.write(
+                f"Found {missed_doses.count()} recent unadministered doses "
+                f"({today - timedelta(days=MISSED_REMINDER_LOOKBACK_DAYS)} through {yesterday}); "
+                f"catch-up candidates={catch_up_count}"
+            )
+            if catch_up_count > MISSED_CATCH_UP_REVIEW_LIMIT and not options['approve_missed_backlog']:
+                self.stdout.write(self.style.WARNING(
+                    f'{catch_up_count} catch-up reminders require administrator review. '
+                    'Preview with --type missed --dry-run, then use --approve-missed-backlog '
+                    'only after review. Yesterday\'s reminders are still processed normally.'
+                ))
+                if not dry_run:
+                    review_required = True
+                    skipped += catch_up_count
+                    missed_doses = missed_doses.filter(scheduled_date=yesterday)
+            for dose in missed_doses:
+                total_candidates += 1
+                if limit and (sent + failed + skipped) >= limit:
+                    break
+                patient = dose.schedule.bite_case.patient
+                normalized = normalize_ph_number(patient.contact_number)
+                if dry_run and not missed_sms_consent_ok(dose.schedule.bite_case):
+                    skipped += 1
+                    self.stdout.write(self.style.WARNING(
+                        f"SKIP no SMS consent for {dose}"
+                    ))
+                    continue
+                if dry_run:
+                    if not normalized:
+                        skipped += 1
+                        self.stdout.write(self.style.WARNING(
+                            f"SKIP invalid primary contact for {dose}"
+                        ))
+                        continue
+                    self.stdout.write(self.style.SUCCESS(
+                        f"[DRY RUN] Would send missed appointment reminder "
+                        f"to {normalized} for {dose}: "
+                        f"{missed_reminder_message(dose)}"
+                    ))
+                    sent += 1
+                    continue
+                try:
+                    log, result = send_missed_appointment_reminder(
+                        dose.pk, today=today, retry_failed=options['retry_failed'],
+                        expected_scheduled_date=dose.scheduled_date,
+                    )
+                except Exception as exc:
+                    failed += 1
+                    self.stdout.write(self.style.ERROR(
+                        f"Failed missed reminder for {dose}: {exc}"
+                    ))
+                    continue
+                if result.get("skipped"):
+                    skipped += 1
+                    self.stdout.write(self.style.WARNING(
+                        f"Skipped missed reminder for {dose}: "
+                        f"{result.get('error')}"
+                    ))
+                elif log and log.status == 'queued':
+                    skipped += 1
+                    self.stdout.write(self.style.WARNING(
+                        f"Queued without submission for dose {dose.pk}: SMS gateway disabled"
+                    ))
+                elif log and log.status == "sent":
+                    sent += 1
+                    self.stdout.write(self.style.SUCCESS(
+                        f"Missed appointment reminder {log.status} for "
+                        f"{dose} to {log.recipient}"
+                    ))
+                else:
+                    failed += 1
+                    self.stdout.write(self.style.ERROR(
+                        f"Failed missed reminder for {dose}: "
+                        f"{result.get('error')}"
+                    ))
+
         self.stdout.write(self.style.SUCCESS(f"Done. Candidates={total_candidates} Sent={sent} Skipped={skipped} Failed={failed}"))
 
-        # Also handle FollowUpRecord if desired? Currently only vaccine doses.
-        # Could extend later.
+        if failed or review_required:
+            raise CommandError(
+                f'{failed} reminder(s) failed or have an unknown outcome; '
+                f'backlog review required={review_required}. Review SMS history before retrying.'
+            )

@@ -95,9 +95,9 @@
       <p class="text-xs text-muted mt-1">Find a patient file — read-only. Doctor findings shown in Section 3.</p>
       <span class="mt-2 inline-flex text-xs font-bold text-emerald-700">Open →</span>
     </a>
-    <a href="{% url 'bite_cases:case_list' %}" class="card hover:shadow-md transition p-4 block">
+    <a href="{% url 'nurse:doctor_finding_list' %}" class="card hover:shadow-md transition p-4 block">
       <p class="text-sm font-bold text-ink">View Doctor Findings</p>
-      <p class="text-xs text-muted mt-1">Open a bite case → Section 3 shows the doctor's assessment (read-only).</p>
+      <p class="text-xs text-muted mt-1">View finalized Doctor assessments for assessed patients.</p>
       <span class="mt-2 inline-flex text-xs font-bold text-emerald-700">Open →</span>
     </a>
     <a href="{% url 'vaccination:patient_schedule_list' %}" class="card hover:shadow-md transition p-4 block border-emerald-800">

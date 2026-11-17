@@ -1,32 +1,247 @@
 {% extends 'base.html' %}
 {% block title %}My Profile - ABTC System{% endblock %}
+{% block extra_head %}
+<style>
+    .mp-page { max-width: 880px; margin: 0 auto; }
+    .mp-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 12px 16px;
+        margin-bottom: 18px;
+    }
+    .mp-title { margin: 0; color: #08291F; font-size: 24px; font-weight: 800; line-height: 1.15; }
+    .mp-subtitle { margin: 4px 0 0; color: #496458; font-size: 14px; font-weight: 500; }
+    .mp-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .mp-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        padding: 9px 18px;
+        border-radius: 9999px;
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1;
+        white-space: nowrap;
+        transition: background-color .15s ease, border-color .15s ease;
+    }
+    .mp-btn svg { width: 16px; height: 16px; flex: 0 0 16px; }
+    .mp-btn--edit { border: 1px solid #08291F; background: #08291F; color: #FFFFFF; }
+    .mp-btn--edit:hover { background: #0D382C; border-color: #0D382C; }
+    .mp-btn--password { border: 1px solid #C9D3CC; background: #FFFDF7; color: #08291F; }
+    .mp-btn--password:hover { border-color: #08291F; background: #FFFFFF; }
+    .mp-btn:focus-visible { outline: 2px solid #08291F; outline-offset: 2px; }
+
+    .mp-card {
+        background: #FFFFFF;
+        border: 1px solid #DCE3DD;
+        border-radius: 14px;
+        box-shadow: 0 1px 2px rgba(8, 41, 31, .05);
+    }
+    .mp-card + .mp-card { margin-top: 16px; }
+
+    .mp-overview {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 18px 20px;
+        background: #FFFDF7;
+        border-top: 3px solid #C9A227;
+    }
+    .mp-avatar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 60px;
+        height: 60px;
+        flex: 0 0 60px;
+        border-radius: 9999px;
+        background: #08291F;
+        color: #FFFFFF;
+        font-size: 24px;
+        font-weight: 800;
+        box-shadow: 0 0 0 3px #FFFFFF, 0 0 0 4px #DCE3DD;
+    }
+    .mp-overview-body { min-width: 0; }
+    .mp-eyebrow {
+        margin: 0 0 2px;
+        color: #8A6D12;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+    }
+    .mp-name { margin: 0; color: #08291F; font-size: 19px; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+    .mp-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .mp-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 9999px;
+        border: 1px solid transparent;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .mp-badge--role { background: #F4EBCD; border-color: #E6D597; color: #6E570E; }
+    .mp-badge--active { background: #E3F4E8; border-color: #B7DFC3; color: #0E5A35; }
+    .mp-badge--inactive { background: #FDECEC; border-color: #F5C2C2; color: #9B1C1C; }
+    .mp-badge-dot { width: 7px; height: 7px; border-radius: 9999px; background: currentColor; }
+
+    .mp-section-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 20px;
+        border-bottom: 1px solid #DCE3DD;
+    }
+    .mp-section-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        flex: 0 0 30px;
+        border-radius: 9px;
+        background: #0D382C;
+        color: #FFFFFF;
+    }
+    .mp-section-icon svg { width: 16px; height: 16px; }
+    .mp-section-title { margin: 0; color: #08291F; font-size: 15px; font-weight: 800; }
+
+    .mp-fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px 24px;
+        margin: 0;
+        padding: 16px 20px 18px;
+    }
+    .mp-field { min-width: 0; }
+    .mp-label {
+        margin: 0 0 4px;
+        color: #496458;
+        font-size: 11.5px;
+        font-weight: 700;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+    }
+    .mp-value {
+        margin: 0;
+        padding: 9px 12px;
+        border: 1px solid #E4EAE5;
+        border-radius: 10px;
+        background: #F8FAF7;
+        color: #08291F;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+    }
+    .mp-value .mp-badge { vertical-align: middle; }
+    .mp-empty { color: #8A968F; font-style: italic; font-weight: 500; }
+
+    @media (max-width: 640px) {
+        .mp-header { align-items: flex-start; }
+        .mp-actions { width: 100%; }
+        .mp-actions .mp-btn { flex: 1 1 140px; }
+        .mp-overview { padding: 16px; gap: 12px; }
+        .mp-avatar { width: 52px; height: 52px; flex-basis: 52px; font-size: 21px; }
+        .mp-section-head { padding: 12px 16px; }
+        .mp-fields { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 14px 16px 16px; }
+    }
+</style>
+{% endblock %}
 {% block content %}
-<div class="max-w-3xl mx-auto">
-    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <h1 class="text-xl font-bold text-ink">My Profile</h1>
-        <div class="flex flex-wrap gap-2">
-            <a href="{% url 'accounts:profile_edit' %}" class="btn-primary btn-sm">Edit Profile</a>
-            <a href="{% url 'accounts:change_password' %}" class="btn-secondary btn-sm">Change Password</a>
+{% firstof user.first_name user.get_full_name user.username as initial_source %}
+<div class="mp-page">
+    <header class="mp-header">
+        <div>
+            <h1 class="mp-title">My Profile</h1>
+            <p class="mp-subtitle">View and manage your personal and account information.</p>
         </div>
-    </div>
-    <div class="card">
-        <div class="flex items-center gap-4 mb-6 pb-6 border-b border-line">
-            <div class="w-16 h-16 rounded-full bg-emerald-800 text-white flex items-center justify-center text-2xl font-bold">{{ user.get_full_name|first|default:user.username|first|upper }}</div>
-            <div>
-                <h2 class="text-lg font-semibold text-ink">{{ user.get_full_name|default:user.username }}</h2>
-                <p class="text-sm text-muted">{{ user.get_role_display }}</p>
+        <div class="mp-actions">
+            <a href="{% url 'accounts:profile_edit' %}" class="mp-btn mp-btn--edit">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536M9 13l6.232-6.232a2.5 2.5 0 113.536 3.536L12.536 16.536 8 17.5l.964-4.5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 20h16"/></svg>
+                Edit Profile
+            </a>
+            <a href="{% url 'accounts:change_password' %}" class="mp-btn mp-btn--password">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                Change Password
+            </a>
+        </div>
+    </header>
+
+    <section class="mp-card mp-overview" aria-label="Profile Overview">
+        <div class="mp-avatar" aria-hidden="true">{{ initial_source|first|upper }}</div>
+        <div class="mp-overview-body">
+            <p class="mp-eyebrow">Profile Overview</p>
+            <h2 class="mp-name">{{ user.get_full_name|default:user.username }}</h2>
+            <div class="mp-badges">
+                <span class="mp-badge mp-badge--role">{{ user.get_role_display }}</span>
+                {% if user.is_active %}
+                <span class="mp-badge mp-badge--active"><span class="mp-badge-dot"></span>Active Account</span>
+                {% else %}
+                <span class="mp-badge mp-badge--inactive"><span class="mp-badge-dot"></span>Inactive Account</span>
+                {% endif %}
             </div>
         </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div><label class="text-xs text-muted uppercase tracking-wider">Username</label><p class="text-sm font-medium">{{ user.username }}</p></div>
-            <div><label class="text-xs text-muted uppercase tracking-wider">Email</label><p class="text-sm font-medium">{{ user.email|default:'Not set' }}</p></div>
-            <div><label class="text-xs text-muted uppercase tracking-wider">First Name</label><p class="text-sm font-medium">{{ user.first_name|default:'Not set' }}</p></div>
-            <div><label class="text-xs text-muted uppercase tracking-wider">Last Name</label><p class="text-sm font-medium">{{ user.last_name|default:'Not set' }}</p></div>
-            <div><label class="text-xs text-muted uppercase tracking-wider">Mobile</label><p class="text-sm font-medium">{{ user.mobile|default:'Not set' }}</p></div>
-            <div><label class="text-xs text-muted uppercase tracking-wider">Role</label><p class="text-sm font-medium">{{ user.get_role_display }}</p></div>
-            <div><label class="text-xs text-muted uppercase tracking-wider">Status</label><p class="text-sm"><span class="status-badge {% if user.is_active %}status-active{% else %}status-inactive{% endif %}">{{ user.is_active|yesno:'Active,Inactive' }}</span></p></div>
-            <div><label class="text-xs text-muted uppercase tracking-wider">Joined</label><p class="text-sm font-medium">{{ user.date_joined|date:'M d, Y' }}</p></div>
+    </section>
+
+    <section class="mp-card" aria-labelledby="mp-personal-title">
+        <div class="mp-section-head">
+            <span class="mp-section-icon" aria-hidden="true">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="7.5" r="4" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.5 21c0-4.1 3.4-7 7.5-7s7.5 2.9 7.5 7"/></svg>
+            </span>
+            <h2 class="mp-section-title" id="mp-personal-title">Personal Information</h2>
         </div>
-    </div>
+        <dl class="mp-fields">
+            <div class="mp-field">
+                <dt class="mp-label">First Name</dt>
+                <dd class="mp-value">{% if user.first_name %}{{ user.first_name }}{% else %}<span class="mp-empty">Not Set</span>{% endif %}</dd>
+            </div>
+            <div class="mp-field">
+                <dt class="mp-label">Last Name</dt>
+                <dd class="mp-value">{% if user.last_name %}{{ user.last_name }}{% else %}<span class="mp-empty">Not Set</span>{% endif %}</dd>
+            </div>
+            <div class="mp-field">
+                <dt class="mp-label">Email Address</dt>
+                <dd class="mp-value">{% if user.email %}{{ user.email }}{% else %}<span class="mp-empty">Not Set</span>{% endif %}</dd>
+            </div>
+            <div class="mp-field">
+                <dt class="mp-label">Mobile Number</dt>
+                <dd class="mp-value">{% if user.mobile %}{{ user.mobile }}{% else %}<span class="mp-empty">Not Set</span>{% endif %}</dd>
+            </div>
+        </dl>
+    </section>
+
+    <section class="mp-card" aria-labelledby="mp-account-title">
+        <div class="mp-section-head">
+            <span class="mp-section-icon" aria-hidden="true">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+            </span>
+            <h2 class="mp-section-title" id="mp-account-title">Account Information</h2>
+        </div>
+        <dl class="mp-fields">
+            <div class="mp-field">
+                <dt class="mp-label">Username</dt>
+                <dd class="mp-value">{{ user.username }}</dd>
+            </div>
+            <div class="mp-field">
+                <dt class="mp-label">Role</dt>
+                <dd class="mp-value">{{ user.get_role_display }}</dd>
+            </div>
+            <div class="mp-field">
+                <dt class="mp-label">Account Status</dt>
+                <dd class="mp-value">{% if user.is_active %}<span class="mp-badge mp-badge--active"><span class="mp-badge-dot"></span>Active</span>{% else %}<span class="mp-badge mp-badge--inactive"><span class="mp-badge-dot"></span>Inactive</span>{% endif %}</dd>
+            </div>
+            <div class="mp-field">
+                <dt class="mp-label">Date Joined</dt>
+                <dd class="mp-value">{{ user.date_joined|date:'F j, Y' }}</dd>
+            </div>
+        </dl>
+    </section>
 </div>
 {% endblock %}

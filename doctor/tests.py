@@ -87,15 +87,22 @@ class EncounterLayoutTests(EncounterTestCase):
         self.client.force_login(self.doctor)
         self.response = self.client.get(reverse("doctor:assess_case", args=[self.case.pk]))
 
-    def test_page_renders_the_six_sections(self):
+    def test_page_renders_only_the_assessment_and_treatment_plan_sections(self):
         self.assertEqual(self.response.status_code, 200)
-        for heading in ("Patient Information", "Medical History", "Bite Incident Details",
-                        "Vital Signs", "Clinical Assessment", "Treatment Plan"):
+        for heading in (">5</span> Clinical Assessment",
+                        ">6</span> Vaccine &amp; Treatment Plan"):
             self.assertContains(self.response, heading)
+        for hidden in ("Patient Information", "Medical History",
+                       "Bite Incident Details", "Vital Signs"):
+            self.assertNotContains(self.response, hidden)
+        html = self.response.content.decode()
+        self.assertLess(
+            html.index(">5</span> Clinical Assessment"),
+            html.index(">6</span> Vaccine &amp; Treatment Plan"))
 
     def test_header_shows_only_back_title_and_status(self):
         html = self.response.content.decode()
-        header = html[html.index("<!-- Top bar -->"):html.index("<!-- PATIENT HEADER")]
+        header = html[html.index("<!-- Top bar -->"):html.index("<!-- 5 · CLINICAL ASSESSMENT -->")]
         self.assertIn("← Back", header)
         self.assertIn("Clinical Encounter", header)
         self.assertIn(">New<", header)
@@ -103,16 +110,17 @@ class EncounterLayoutTests(EncounterTestCase):
             self.assertNotIn(label, header)
         self.assertNotIn(self.case.case_number, header)
 
-    def test_patient_chart_is_displayed_read_only(self):
+    def test_patient_information_is_hidden(self):
+        for text in ("PAT-D0001", "Patient ID", "Birthdate", "Civil status",
+                     "None known", "Registered record"):
+            self.assertNotContains(self.response, text)
         self.assertNotContains(self.response, 'name="patient-first_name"')
         self.assertNotContains(self.response, 'name="patient-allergy_info"')
-        self.assertContains(self.response, "PAT-D0001")
-        self.assertContains(self.response, "None known")
 
-    def test_bite_incident_details_show_reported_case_information(self):
-        self.assertContains(self.response, "Place of incident")
-        self.assertContains(self.response, "First aid given")
-        self.assertContains(self.response, "Animal vaccination status")
+    def test_bite_incident_details_are_hidden(self):
+        for text in ("Place of incident", "First aid given",
+                     "Animal vaccination status", "Case number"):
+            self.assertNotContains(self.response, text)
 
     def test_assessment_fields_are_editable(self):
         self.assertContains(self.response, 'name="assess-chief_complaint"')
@@ -238,7 +246,9 @@ class EncounterLayoutTests(EncounterTestCase):
         self.assertEqual(form.initial["dose_schedule_date"], datetime.date(2026, 10, 1))
         self.assertEqual(form.initial["first_dose_date"], datetime.date(2026, 10, 1))
 
-    def test_vital_signs_section_has_no_inputs(self):
+    def test_vital_signs_section_is_hidden(self):
+        self.assertNotContains(self.response, "Vital Signs")
+        self.assertNotContains(self.response, "Read-only")
         self.assertNotContains(self.response, 'name="vitals-')
         self.assertNotContains(self.response, "confirm_vitals")
 
@@ -248,7 +258,7 @@ class EncounterLayoutTests(EncounterTestCase):
             r'name="assess-first_dose_date"[^>]*value="%s"' % timezone.localdate().isoformat(),
         )
 
-    def test_recorded_vitals_are_displayed_read_only(self):
+    def test_recorded_vitals_are_not_displayed(self):
         VitalSign.objects.create(
             patient=self.patient, taken_by=self.nurse,
             taken_at=datetime.datetime(2026, 10, 30, 9, 30, tzinfo=datetime.timezone.utc),
@@ -257,7 +267,7 @@ class EncounterLayoutTests(EncounterTestCase):
         response = self.client.get(reverse("doctor:assess_case", args=[self.case.pk]))
         for text in ("118 mmHg", "76 mmHg", "36.8 °C", "84 bpm", "98 %",
                      "68.00 kg", "165.00 cm", "2 / 10", "Read-only", "nurse.one"):
-            self.assertContains(response, text)
+            self.assertNotContains(response, text)
         self.assertNotContains(response, 'name="vitals-')
         self.assertNotContains(response, "never overwritten")
 
@@ -890,11 +900,48 @@ class AssessmentDetailReadOnlyTests(EncounterTestCase):
     def test_header_shows_patient_case_doctor_status_and_view_only(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
-        for text in ("Assessment Details", "Dora Test", "ABC-D0001",
-                     "doc.one", "Final", "View Only",
+        for text in ("Assessment Details", "Dora Test", "PAT-D0001",
+                     "ABC-D0001", "doc.one", "Finalized", "View Only",
+                     "Patient Number", "Bite Case Number",
+                     "Assessment Status", "Assessed By", "Assessment Date",
+                     "View Full Patient Record",
                      timezone.localtime(self.assessment.encounter_date)
                      .strftime("%B %d, %Y")):
             self.assertContains(response, text)
+
+    def test_view_full_patient_record_opens_the_doctor_patient_page(self):
+        response = self.client.get(self.url)
+        self.assertContains(
+            response,
+            'href="%s"' % reverse("patients:patient_detail", args=[self.patient.pk]))
+
+    def test_screen_renders_only_sections_five_and_six_in_order(self):
+        html = self._screen_html()
+        for hidden in ('id="section-patient"', 'id="section-history"',
+                       'id="section-incident"', 'id="section-vitals"'):
+            self.assertNotIn(hidden, html)
+        self.assertIn('id="section-assessment"', html)
+        self.assertIn('id="section-plan"', html)
+        self.assertLess(html.index('id="section-assessment"'),
+                        html.index('id="section-plan"'))
+        self.assertIn("Clinical Assessment", html)
+        self.assertIn("Vaccine &amp; Treatment Plan", html)
+        for hidden in ("Patient Information", "Medical History",
+                       "Bite Incident Details", "Vital Signs",
+                       "Birthdate", "Civil status", "Parent / Guardian",
+                       "Animal type", "Wound washed immediately",
+                       "BP systolic", "Temperature", "SpO₂"):
+            self.assertNotIn(hidden, html)
+
+    def test_screen_does_not_render_recorded_vitals_or_bite_incident_values(self):
+        html = self._screen_html()
+        for text in ("118 mmHg", "76 mmHg", "36.8 °C", "84 bpm",
+                     "right hand · 1 wound(s)", "First aid given"):
+            self.assertNotIn(text, html)
+
+    def _screen_html(self):
+        html = self.client.get(self.url).content.decode()
+        return html[html.index('class="assessment-screen'):]
 
     def test_print_sheet_uses_the_official_letterhead_and_footer(self):
         response = self.client.get(self.url)
@@ -1094,43 +1141,39 @@ class AssessmentDetailReadOnlyTests(EncounterTestCase):
         for marker in ("RIG Given", "Tetanus Toxoid Given", "Antibiotics Given"):
             self.assertNotIn(marker, section)
 
-    def test_six_sections_render_in_the_required_order(self):
+    def test_print_sheet_is_assessment_only_with_a_compact_header(self):
         html = self.client.get(self.url).content.decode()
-        markers = [
-            'id="section-patient"', 'id="section-history"', 'id="section-incident"',
-            'id="section-vitals"', 'id="section-assessment"', 'id="section-plan"',
+        section = html[
+            html.index('class="abtc-print-only abtc-doc official-assessment assessment-only-print"'):
+            html.index('class="assessment-screen')
         ]
-        self.assertEqual([html.index(m) for m in markers],
-                         sorted(html.index(m) for m in markers))
+        for text in ("Patient Identification", "Patient Name", "Patient Number",
+                     "Bite Case Number", "Assessment Status", "Assessed By",
+                     "Assessment Date", "5. Clinical Assessment",
+                     "6. Vaccine &amp; Treatment Plan",
+                     "Chief Complaint", "Exposure Narrative (Verified)",
+                     "Bite Category", "Dose Schedule", "Vaccine Brand",
+                     "Treatment, Prescription &amp; Follow-up"):
+            self.assertIn(text, section)
+        for hidden in ("Patient Information", "Medical History",
+                       "Animal Bite Information", "Vital Signs", "Birthdate",
+                       "Civil Status", "Vaccination Schedule"):
+            self.assertNotIn(hidden, section)
 
-    def test_patient_information_has_separate_containers(self):
+    def test_full_clinical_sheet_is_preserved_and_clearly_separate(self):
         response = self.client.get(self.url)
-        for label in ("Patient ID", "Full name", "Birthdate", "Age", "Sex",
-                      "Civil status", "Address", "Contact number",
-                      "Parent / Guardian", "Emergency contact", "Registered"):
-            self.assertContains(response, ">%s</p>" % label)
-        self.assertContains(response, "PAT-D0001")
-        self.assertContains(response, "Dora Test")
-
-    def test_missing_medical_history_is_not_treated_as_no_allergies(self):
-        self.patient.medical_history = ""
-        self.patient.allergy_info = ""
-        self.patient.previous_rabies_vax = ""
-        self.patient.remarks = ""
-        self.patient.save()
-        response = self.client.get(self.url)
+        self.assertContains(response, "Full Clinical Sheet")
+        self.assertContains(response, "printFullSheet()")
         html = response.content.decode()
-        history = html[html.index('id="section-history"'):html.index('id="section-incident"')]
-        self.assertEqual(history.count("Not recorded"), 4)
-        self.assertNotContains(response, "No allergies")
-
-    def test_bite_incident_and_vitals_show_saved_values_with_units(self):
-        response = self.client.get(self.url)
-        for text in ("Bite Incident Details", "right hand · 1 wound(s)",
-                     "Animal vaccination status", "First aid given",
-                     "118 mmHg", "76 mmHg", "36.8 °C", "84 bpm", "98 %",
-                     "68.00 kg", "165.00 cm", "2 / 10"):
-            self.assertContains(response, text)
+        section = html[
+            html.index('class="abtc-print-only abtc-doc official-assessment assessment-full-print"'):
+            html.index('class="abtc-print-only abtc-doc official-assessment assessment-only-print"')
+        ]
+        for marker in ("Patient Information", "Medical History",
+                       "Animal Bite Information", "Vital Signs",
+                       "Vaccination Schedule", "Clinical Assessment Document",
+                       "abtc-footer"):
+            self.assertIn(marker, section)
 
     def test_section_five_follows_chief_complaint_exposure_and_category_order(self):
         html = self.client.get(self.url).content.decode()
@@ -1149,11 +1192,14 @@ class AssessmentDetailReadOnlyTests(EncounterTestCase):
         self.assertEqual(len(response.context["doses"]), 2)
         self.assertContains(response, "Dose Schedule Records")
         self.assertContains(response, "2 Doses")
-        self.assertContains(response, ">1st Dose<")
-        self.assertContains(response, ">2nd Dose<")
-        self.assertNotContains(response, ">3rd Dose<")
+        self.assertContains(response, "Scheduled Date")
+        self.assertContains(response, "Date Administered")
+        self.assertContains(response, "1st Dose")
+        self.assertContains(response, "2nd Dose")
+        self.assertNotContains(response, "3rd Dose")
         self.assertContains(response, "November 01, 2026")
         self.assertContains(response, "Not yet set")
+        self.assertContains(response, "Not administered")
         self.assertContains(response, "Completed")
         self.assertContains(response, "Pending Scheduling")
 
@@ -1181,7 +1227,7 @@ class AssessmentDetailReadOnlyTests(EncounterTestCase):
         self.assessment.prescriptions.all().delete()
         self.assessment.prescription = "Paracetamol 500 mg every 6 hours"
         self.assessment.save()
-        html = self.client.get(self.url).content.decode()
+        html = self._screen_html()
         section = html[html.index("Treatment, Prescription &amp; Follow-up"):html.index("</section>", html.index("Treatment, Prescription &amp; Follow-up"))]
         self.assertIn("Paracetamol 500 mg every 6 hours", section)
         self.assertIn(">Quantity<", section)
@@ -1191,7 +1237,7 @@ class AssessmentDetailReadOnlyTests(EncounterTestCase):
         self.assessment.prescriptions.all().delete()
         self.assessment.prescription = ""
         self.assessment.save()
-        html = self.client.get(self.url).content.decode()
+        html = self._screen_html()
         section = html[html.index("Treatment, Prescription &amp; Follow-up"):html.index("</section>", html.index("Treatment, Prescription &amp; Follow-up"))]
         self.assertGreaterEqual(section.count(">Quantity<"), 1)
         self.assertIn(">Prescription<", section)
@@ -1406,3 +1452,190 @@ class DoctorSidebarTests(EncounterTestCase):
         admin = U.objects.create_user("admin.sidebar", password="pw12345678", role="admin")
         self.client.force_login(admin)
         self.assertContains(self.client.get(reverse("dashboard:index")), "Medicine Inventory")
+
+
+class DoctorClinicalBadgeTests(EncounterTestCase):
+    """The Clinical Assessment sidebar badge counts queue cases awaiting sign-off."""
+
+    BADGE_LABEL = "case awaiting clinical assessment"
+
+    def setUp(self):
+        super().setUp()
+        self.other_doctor = U.objects.create_user(
+            "doc.badge", password="pw12345678", role="doctor")
+
+    def _case(self, number):
+        return AnimalBiteCase.objects.create(
+            case_number=number, patient=self.patient, created_by=self.nurse,
+            animal_type="dog", animal_ownership="owned", animal_vax_status="unknown",
+            animal_condition="under_observation", exposure_type="bite",
+            body_part_affected="left leg",
+            date_time_bite=datetime.datetime(2026, 11, 1, 9, 0))
+
+    def _assess(self, case, doctor, status):
+        return ClinicalAssessment.objects.create(
+            patient=self.patient, bite_case=case, assessed_by=doctor,
+            chief_complaint="Bite wound", category_confirmed="category_ii",
+            status=status, is_finalized=status == "final")
+
+    def test_one_pending_case_shows_one(self):
+        self.client.force_login(self.doctor)
+        response = self.client.get(reverse("doctor:dashboard"))
+        self.assertEqual(response.context["pending_clinical_count"], 1)
+        self.assertContains(response, f'aria-label="1 {self.BADGE_LABEL}"')
+
+    def test_drafts_count_but_final_and_other_doctors_do_not(self):
+        self._assess(self.case, self.doctor, "draft")
+        final_case = self._case("ABC-D0201")
+        self._assess(final_case, self.doctor, "final")
+        other_case = self._case("ABC-D0202")
+        self._assess(other_case, self.other_doctor, "draft")
+
+        self.client.force_login(self.doctor)
+        response = self.client.get(reverse("doctor:dashboard"))
+        self.assertEqual(response.context["pending_clinical_count"], 1)
+        self.assertContains(response, f'aria-label="1 {self.BADGE_LABEL}"')
+
+    def test_two_pending_cases_show_two(self):
+        self._case("ABC-D0203")
+        self.client.force_login(self.doctor)
+        response = self.client.get(reverse("doctor:dashboard"))
+        self.assertEqual(response.context["pending_clinical_count"], 2)
+        self.assertContains(response, f'aria-label="2 cases awaiting clinical assessment"')
+
+    def test_finalizing_the_remaining_case_hides_the_badge(self):
+        assessment = self._assess(self.case, self.doctor, "draft")
+        self.client.force_login(self.doctor)
+        self.assertEqual(
+            self.client.get(reverse("doctor:dashboard")).context["pending_clinical_count"], 1)
+
+        assessment.status = "final"
+        assessment.is_finalized = True
+        assessment.save(update_fields=["status", "is_finalized"])
+
+        response = self.client.get(reverse("doctor:dashboard"))
+        self.assertEqual(response.context["pending_clinical_count"], 0)
+        self.assertNotContains(response, self.BADGE_LABEL)
+
+    def test_badge_is_consistent_on_every_doctor_page_and_survives_queue_visits(self):
+        self._case("ABC-D0204")
+        self.client.force_login(self.doctor)
+        for url_name in (
+            "doctor:dashboard", "doctor:queue", "doctor:assessment_list",
+            "patients:patient_list", "bite_cases:case_list", "accounts:profile",
+        ):
+            with self.subTest(page=url_name):
+                response = self.client.get(reverse(url_name))
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context["pending_clinical_count"], 2)
+                self.assertContains(
+                    response, 'aria-label="2 cases awaiting clinical assessment"')
+        # Opening the queue must not clear the notification.
+        self.client.get(reverse("doctor:queue"))
+        self.assertContains(
+            self.client.get(reverse("doctor:queue")),
+            'aria-label="2 cases awaiting clinical assessment"')
+
+
+class DoctorNewCaseBadgeTests(EncounterTestCase):
+    """The Bite Cases sidebar badge counts only cases still in New Case status."""
+
+    def setUp(self):
+        super().setUp()
+        # self.case is a New Case by default.
+        self._case = lambda number, status="new": AnimalBiteCase.objects.create(
+            case_number=number, patient=self.patient, created_by=self.nurse,
+            case_status=status,
+            animal_type="dog", animal_ownership="owned", animal_vax_status="unknown",
+            animal_condition="under_observation", exposure_type="bite",
+            body_part_affected="left leg",
+            date_time_bite=datetime.datetime(2026, 11, 1, 9, 0))
+
+    def _dashboard(self):
+        return self.client.get(reverse("doctor:dashboard"))
+
+    def test_one_new_case_shows_one(self):
+        self.client.force_login(self.doctor)
+        response = self._dashboard()
+        self.assertEqual(response.context["doctor_new_case_count"], 1)
+        self.assertContains(response, 'aria-label="1 new bite case"')
+
+    def test_two_new_cases_show_two(self):
+        self._case("ABC-D0301")
+        self.client.force_login(self.doctor)
+        response = self._dashboard()
+        self.assertEqual(response.context["doctor_new_case_count"], 2)
+        self.assertContains(response, 'aria-label="2 new bite cases"')
+
+    def test_three_new_cases_show_three(self):
+        self._case("ABC-D0302")
+        self._case("ABC-D0303")
+        self.client.force_login(self.doctor)
+        response = self._dashboard()
+        self.assertEqual(response.context["doctor_new_case_count"], 3)
+        self.assertContains(response, 'aria-label="3 new bite cases"')
+
+    def test_non_new_statuses_are_excluded(self):
+        for index, status in enumerate(
+                ("under_treatment", "completed", "missed", "referred", "archived"), start=1):
+            self._case(f"ABC-D031{index}", status=status)
+        self.client.force_login(self.doctor)
+        response = self._dashboard()
+        self.assertEqual(response.context["doctor_new_case_count"], 1)
+        self.assertContains(response, 'aria-label="1 new bite case"')
+
+    def test_badge_hides_when_no_new_cases_remain(self):
+        self.client.force_login(self.doctor)
+        self.assertContains(self._dashboard(), 'aria-label="1 new bite case"')
+
+        self.case.case_status = "under_treatment"
+        self.case.save(update_fields=["case_status"])
+
+        response = self._dashboard()
+        self.assertEqual(response.context["doctor_new_case_count"], 0)
+        self.assertNotContains(response, "new bite case")
+        self.assertNotContains(response, 'aria-label="0 new bite cases"')
+
+    def test_viewing_cases_does_not_clear_the_badge(self):
+        self.client.force_login(self.doctor)
+        self.client.get(reverse("bite_cases:case_list"), {"q": self.case.case_number})
+        self.client.get(reverse("bite_cases:case_detail", args=[self.case.pk]))
+        response = self.client.get(reverse("bite_cases:case_list"))
+        self.assertEqual(response.context["doctor_new_case_count"], 1)
+        self.assertContains(response, 'aria-label="1 new bite case"')
+
+    def test_status_change_recalculates_the_badge(self):
+        self.client.force_login(self.doctor)
+        self._case("ABC-D0321")
+        self.assertEqual(self._dashboard().context["doctor_new_case_count"], 2)
+
+        self.case.case_status = "under_treatment"
+        self.case.save(update_fields=["case_status"])
+        self.assertEqual(self._dashboard().context["doctor_new_case_count"], 1)
+
+        AnimalBiteCase.objects.filter(case_number="ABC-D0321").update(case_status="completed")
+        self.assertEqual(self._dashboard().context["doctor_new_case_count"], 0)
+
+    def test_bite_and_clinical_badges_are_independent(self):
+        ClinicalAssessment.objects.create(
+            patient=self.patient, bite_case=self.case, assessed_by=self.doctor,
+            chief_complaint="Bite wound", category_confirmed="category_ii",
+            status="final", is_finalized=True)
+        self.client.force_login(self.doctor)
+        response = self._dashboard()
+        self.assertEqual(response.context["pending_clinical_count"], 0)
+        self.assertEqual(response.context["doctor_new_case_count"], 1)
+        self.assertContains(response, 'aria-label="1 new bite case"')
+        self.assertNotContains(response, "cases awaiting clinical assessment")
+
+    def test_badge_is_consistent_on_every_doctor_page(self):
+        self.client.force_login(self.doctor)
+        for url_name in (
+            "doctor:dashboard", "doctor:queue", "doctor:assessment_list",
+            "patients:patient_list", "bite_cases:case_list", "accounts:profile",
+        ):
+            with self.subTest(page=url_name):
+                response = self.client.get(reverse(url_name))
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context["doctor_new_case_count"], 1)
+                self.assertContains(response, 'aria-label="1 new bite case"')

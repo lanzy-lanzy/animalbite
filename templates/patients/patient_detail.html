@@ -3,30 +3,8 @@
 {% block title %}{{ patient.full_name }} - ABTC System{% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="{% static 'css/patient_detail.css' %}">
+<link rel="stylesheet" href="{% static 'css/bite_case_sections.css' %}">
 <link rel="stylesheet" href="{% static 'css/print_official.css' %}">
-<style>
-{% if can_manage_portal and patient.account %}
-@media print {
-  @page { size: A4 portrait; margin: 15mm; }
-  body > div.flex.h-screen,
-  body > div.flex.h-screen > div.flex-1 {
-    display: block !important;
-    height: auto !important;
-    overflow: visible !important;
-  }
-  aside.sidebar-shell,
-  header.topbar,
-  .pd-wrap > *:not(.pd-cred-print) { display: none !important; }
-  main.app-canvas {
-    overflow: visible !important;
-    padding: 0 !important;
-    background: #FFFFFF !important;
-  }
-  .pd-wrap { margin: 0 !important; padding: 0 !important; }
-  .pd-cred-print { display: block !important; }
-}
-{% endif %}
-</style>
 {% endblock %}
 {% block content %}
 <div class="pd-wrap">
@@ -69,66 +47,56 @@
             <h2>Patient Information</h2>
         </div>
         <div class="pd-section-body">
-            <div class="pd-grid pd-grid-2">
-                <div class="pd-tile">
-                    <p class="pd-label">Patient ID</p>
-                    <p class="pd-value pd-value--number">{{ patient.patient_number }}</p>
+            <div class="pd-info-fields">
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Patient ID</p>
+                    <p class="pd-info-value">{{ patient.patient_number }}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Full Name</p>
-                    <p class="pd-value">{{ patient.full_name }}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Full Name</p>
+                    <p class="pd-info-value">{{ patient.full_name }}</p>
                 </div>
-            </div>
-            <div class="pd-grid pd-grid-2">
-                <div class="pd-tile">
-                    <p class="pd-label">Birthdate</p>
-                    <p class="pd-value {% if not patient.birthdate %}pd-empty{% endif %}">{{ patient.birthdate|date:"F j, Y"|default:"Not recorded" }}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Birthdate</p>
+                    <p class="pd-info-value {% if not patient.birthdate %}pd-info-empty{% endif %}">{{ patient.birthdate|date:"F j, Y"|default:"Not recorded" }}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Age</p>
-                    <p class="pd-value">{{ patient.age }} years old</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Age</p>
+                    <p class="pd-info-value">{{ patient.age }} years old</p>
                 </div>
-            </div>
-            <div class="pd-grid pd-grid-2">
-                <div class="pd-tile">
-                    <p class="pd-label">Sex</p>
-                    <p class="pd-value {% if not patient.sex %}pd-empty{% endif %}">{{ patient.get_sex_display|default:"Not recorded" }}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Sex</p>
+                    <p class="pd-info-value {% if not patient.sex %}pd-info-empty{% endif %}">{{ patient.get_sex_display|default:"Not recorded" }}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Civil Status</p>
-                    <p class="pd-value {% if not patient.civil_status %}pd-empty{% endif %}">{{ patient.get_civil_status_display|default:"Not recorded" }}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Civil Status</p>
+                    <p class="pd-info-value {% if not patient.civil_status %}pd-info-empty{% endif %}">{{ patient.get_civil_status_display|default:"Not recorded" }}</p>
                 </div>
-            </div>
-            <div class="pd-grid">
-                <div class="pd-tile">
-                    <p class="pd-label">Complete Address</p>
-                    <p class="pd-value {% if not patient.address %}pd-empty{% endif %}">{{ patient.address|default:"Not recorded" }}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Contact Number</p>
+                    <p class="pd-info-value {% if not patient.contact_display %}pd-info-empty{% endif %}">{{ patient.contact_display|default:"Not recorded" }}</p>
                 </div>
-            </div>
-            <div class="pd-grid pd-grid-2">
-                <div class="pd-tile">
-                    <p class="pd-label">Contact Number</p>
-                    <p class="pd-value {% if not patient.contact_display %}pd-empty{% endif %}">{{ patient.contact_display|default:"Not recorded" }}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Barangay</p>
+                    <p class="pd-info-value {% if not patient.barangay %}pd-info-empty{% endif %}">{{ patient.barangay|default:"Not recorded" }}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Barangay</p>
-                    <p class="pd-value {% if not patient.barangay %}pd-empty{% endif %}">{{ patient.barangay|default:"Not recorded" }}</p>
+                <div class="pd-info-field pd-info-field--wide">
+                    <p class="pd-info-label">Complete Address</p>
+                    <p class="pd-info-value {% if not patient.address %}pd-info-empty{% endif %}">{{ patient.address|default:"Not recorded" }}</p>
                 </div>
-            </div>
-            <div class="pd-grid pd-grid-2">
-                <div class="pd-tile">
-                    <p class="pd-label">Parent / Guardian</p>
-                    <p class="pd-value {% if not patient.parent_guardian %}pd-empty{% endif %}">{{ patient.parent_guardian|default:"Not recorded" }}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Parent / Guardian</p>
+                    <p class="pd-info-value {% if not patient.parent_guardian %}pd-info-empty{% endif %}">{{ patient.parent_guardian|default:"Not recorded" }}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Emergency Contact</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Emergency Contact</p>
                     {% if patient.emergency_contact_name or patient.emergency_contact_display %}
-                    <p class="pd-value">
-                        {% if patient.emergency_contact_name %}{{ patient.emergency_contact_name }}{% endif %}
-                        {% if patient.emergency_contact_display %}<span class="pd-subvalue">{{ patient.emergency_contact_display }}</span>{% endif %}
-                    </p>
+                    <div>
+                        {% if patient.emergency_contact_name %}<p class="pd-info-value">{{ patient.emergency_contact_name }}</p>{% endif %}
+                        {% if patient.emergency_contact_display %}<p class="pd-info-subvalue">{{ patient.emergency_contact_display }}</p>{% endif %}
+                    </div>
                     {% else %}
-                    <p class="pd-value pd-empty">Not recorded</p>
+                    <p class="pd-info-value pd-info-empty">Not recorded</p>
                     {% endif %}
                 </div>
             </div>
@@ -141,31 +109,22 @@
             <h2>Medical History</h2>
         </div>
         <div class="pd-section-body">
-            <div class="pd-grid">
-                <div class="pd-tile">
-                    <p class="pd-label">Medical History</p>
-                    <p class="pd-value {% if not patient.medical_history %}pd-empty{% endif %}">{{ patient.medical_history|default:"Not recorded" }}</p>
+            <div class="pd-info-fields">
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Medical History</p>
+                    <p class="pd-info-value {% if not patient.medical_history %}pd-info-empty{% endif %}">{{ patient.medical_history|default:"Not recorded" }}</p>
                 </div>
-            </div>
-            <div class="pd-grid">
-                <div class="pd-tile {% if patient.allergy_info and patient.allergy_info|lower != 'none' and patient.allergy_info|lower != 'none known' and patient.allergy_info|lower != 'n/a' %}pd-tile--alert{% endif %}">
-                    <p class="pd-label">Allergies</p>
-                    {% if patient.allergy_info %}
-                    <p class="pd-value">{{ patient.allergy_info }}</p>
-                    {% else %}
-                    <p class="pd-value pd-empty">Not recorded</p>
-                    <span class="pd-subvalue">Allergy status is not documented; verify with the patient before treatment.</span>
-                    {% endif %}
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Previous Rabies Vaccination</p>
+                    <p class="pd-info-value {% if not patient.previous_rabies_vax %}pd-info-empty{% endif %}">{{ patient.previous_rabies_vax|default:"Not recorded" }}</p>
                 </div>
-            </div>
-            <div class="pd-grid pd-grid-2">
-                <div class="pd-tile">
-                    <p class="pd-label">Previous Rabies Vaccination</p>
-                    <p class="pd-value {% if not patient.previous_rabies_vax %}pd-empty{% endif %}">{{ patient.previous_rabies_vax|default:"Not recorded" }}</p>
+                <div class="pd-info-field {% if patient.allergy_info and patient.allergy_info|lower != 'none' and patient.allergy_info|lower != 'none known' and patient.allergy_info|lower != 'n/a' %}pd-info-field--alert{% endif %}">
+                    <p class="pd-info-label">Allergies</p>
+                    <p class="pd-info-value {% if not patient.allergy_info %}pd-info-empty{% endif %}">{{ patient.allergy_info|default:"Not recorded" }}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Remarks</p>
-                    <p class="pd-value {% if not patient.remarks %}pd-empty{% endif %}">{{ patient.remarks|default:"Not recorded" }}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Remarks</p>
+                    <p class="pd-info-value {% if not patient.remarks %}pd-info-empty{% endif %}">{{ patient.remarks|default:"Not recorded" }}</p>
                 </div>
             </div>
         </div>
@@ -181,7 +140,7 @@
         </div>
         <div class="pd-section-body">
             {% for case in bite_cases %}
-            <div class="pd-case">
+            <div class="pd-case bcs-panel">
                 <div class="pd-case-head">
                     <div>
                         <p class="pd-case-eyebrow">Bite Case {{ forloop.counter }} of {{ bite_cases|length }}</p>
@@ -195,87 +154,7 @@
                         <a href="{% url 'bite_cases:case_detail' case.pk %}" class="pd-link">View Case &rarr;</a>
                     </div>
                 </div>
-
-                <div class="pd-grid pd-grid-2">
-                    <div class="pd-tile">
-                        <p class="pd-label">Case Number</p>
-                        <p class="pd-value pd-value--number">{{ case.case_number }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Case Status</p>
-                        <p class="pd-value">{{ case.get_case_status_display }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Date of Incident</p>
-                        <p class="pd-value">{{ case.date_time_bite|date:"F j, Y"|default:"Not recorded" }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Time of Incident</p>
-                        <p class="pd-value">{{ case.date_time_bite|time:"g:i A"|default:"Not recorded" }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Place of Incident</p>
-                        <p class="pd-value {% if not case.place_of_incident %}pd-empty{% endif %}">{{ case.place_of_incident|default:"Not recorded" }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Barangay</p>
-                        <p class="pd-value {% if not case.incident_barangay %}pd-empty{% endif %}">{{ case.incident_barangay|default:"Not recorded" }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Animal Type</p>
-                        <p class="pd-value">{{ case.get_animal_type_display }}{% if case.animal_other %} ({{ case.animal_other }}){% endif %}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Ownership</p>
-                        <p class="pd-value">{{ case.get_animal_ownership_display }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Animal Condition</p>
-                        <p class="pd-value">{{ case.get_animal_condition_display }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Animal Vaccination Status</p>
-                        <p class="pd-value">{{ case.get_animal_vax_status_display }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Exposure Type</p>
-                        <p class="pd-value">{{ case.get_exposure_type_display }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Body Part / Wounds</p>
-                        <p class="pd-value {% if not case.body_part_affected and not case.wound_description %}pd-empty{% endif %}">
-                            {{ case.body_part_affected|default:"Not recorded" }}
-                            {% if case.wound_description %}<span class="pd-subvalue">{{ case.wound_description }}</span>{% endif %}
-                        </p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Number of Wounds</p>
-                        <p class="pd-value">{{ case.number_of_wounds }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Date of Consultation</p>
-                        <p class="pd-value">{{ case.date_time_consultation|date:"F j, Y"|default:"Not recorded" }}</p>
-                    </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Wound Washed Immediately</p>
-                        <p class="pd-value">{% if case.wound_washed_immediately %}Yes{% else %}No{% endif %}</p>
-                    </div>
-                </div>
-
-                <div class="pd-grid">
-                    <div class="pd-tile">
-                        <p class="pd-label">First Aid Given</p>
-                        <p class="pd-value {% if not case.first_aid_given %}pd-empty{% endif %}">{{ case.first_aid_given|default:"Not recorded" }}</p>
-                    </div>
-                </div>
-                {% if case.initial_consultation_notes %}
-                <div class="pd-grid">
-                    <div class="pd-tile">
-                        <p class="pd-label">Initial Consultation Notes</p>
-                        <p class="pd-value">{{ case.initial_consultation_notes }}</p>
-                    </div>
-                </div>
-                {% endif %}
+                {% include 'bite_cases/_case_sections.html' %}
             </div>
             {% empty %}
             <div class="pd-empty-state">
@@ -307,63 +186,63 @@
         </div>
         <div class="pd-section-body">
             {% if latest_vitals %}
-            <div class="pd-grid pd-grid-3">
-                <div class="pd-tile">
-                    <p class="pd-label">Date and Time Taken</p>
-                    <p class="pd-value">{{ latest_vitals.taken_at|date:"F j, Y · g:i A" }}</p>
+            <div class="pd-info-fields">
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Date and Time Taken</p>
+                    <p class="pd-info-value">{{ latest_vitals.taken_at|date:"F j, Y · g:i A" }}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Blood Pressure</p>
-                    <p class="pd-value {% if not latest_vitals.bp_display %}pd-empty{% endif %}">{% if latest_vitals.bp_display %}{{ latest_vitals.bp_display }} <span class="pd-subvalue">mmHg</span>{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Blood Pressure</p>
+                    <p class="pd-info-value {% if not latest_vitals.bp_display %}pd-info-empty{% endif %}">{% if latest_vitals.bp_display %}{{ latest_vitals.bp_display }} <span class="pd-info-unit">mmHg</span>{% else %}Not recorded{% endif %}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Temperature</p>
-                    <p class="pd-value {% if not latest_vitals.temperature %}pd-empty{% endif %}">{% if latest_vitals.temperature %}{{ latest_vitals.temperature }} <span class="pd-subvalue">°C</span>{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Temperature</p>
+                    <p class="pd-info-value {% if not latest_vitals.temperature %}pd-info-empty{% endif %}">{% if latest_vitals.temperature %}{{ latest_vitals.temperature }} <span class="pd-info-unit">°C</span>{% else %}Not recorded{% endif %}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Pulse Rate</p>
-                    <p class="pd-value {% if not latest_vitals.pulse_rate %}pd-empty{% endif %}">{% if latest_vitals.pulse_rate %}{{ latest_vitals.pulse_rate }} <span class="pd-subvalue">bpm</span>{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Pulse Rate</p>
+                    <p class="pd-info-value {% if not latest_vitals.pulse_rate %}pd-info-empty{% endif %}">{% if latest_vitals.pulse_rate %}{{ latest_vitals.pulse_rate }} <span class="pd-info-unit">bpm</span>{% else %}Not recorded{% endif %}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Respiratory Rate</p>
-                    <p class="pd-value {% if not latest_vitals.respiratory_rate %}pd-empty{% endif %}">{% if latest_vitals.respiratory_rate %}{{ latest_vitals.respiratory_rate }} <span class="pd-subvalue">/min</span>{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Respiratory Rate</p>
+                    <p class="pd-info-value {% if not latest_vitals.respiratory_rate %}pd-info-empty{% endif %}">{% if latest_vitals.respiratory_rate %}{{ latest_vitals.respiratory_rate }} <span class="pd-info-unit">/min</span>{% else %}Not recorded{% endif %}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">SpO₂</p>
-                    <p class="pd-value {% if not latest_vitals.spo2 %}pd-empty{% endif %}">{% if latest_vitals.spo2 %}{{ latest_vitals.spo2 }} <span class="pd-subvalue">%</span>{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">SpO₂</p>
+                    <p class="pd-info-value {% if not latest_vitals.spo2 %}pd-info-empty{% endif %}">{% if latest_vitals.spo2 %}{{ latest_vitals.spo2 }} <span class="pd-info-unit">%</span>{% else %}Not recorded{% endif %}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Weight</p>
-                    <p class="pd-value {% if not latest_vitals.weight %}pd-empty{% endif %}">{% if latest_vitals.weight %}{{ latest_vitals.weight }} <span class="pd-subvalue">kg</span>{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Weight</p>
+                    <p class="pd-info-value {% if not latest_vitals.weight %}pd-info-empty{% endif %}">{% if latest_vitals.weight %}{{ latest_vitals.weight }} <span class="pd-info-unit">kg</span>{% else %}Not recorded{% endif %}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Height</p>
-                    <p class="pd-value {% if not latest_vitals.height %}pd-empty{% endif %}">{% if latest_vitals.height %}{{ latest_vitals.height }} <span class="pd-subvalue">cm</span>{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Height</p>
+                    <p class="pd-info-value {% if not latest_vitals.height %}pd-info-empty{% endif %}">{% if latest_vitals.height %}{{ latest_vitals.height }} <span class="pd-info-unit">cm</span>{% else %}Not recorded{% endif %}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">BMI</p>
-                    <p class="pd-value {% if not latest_vitals.bmi %}pd-empty{% endif %}">{% if latest_vitals.bmi %}{{ latest_vitals.bmi }}{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">BMI</p>
+                    <p class="pd-info-value {% if not latest_vitals.bmi %}pd-info-empty{% endif %}">{% if latest_vitals.bmi %}{{ latest_vitals.bmi }}{% else %}Not recorded{% endif %}</p>
                 </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Pain Scale</p>
-                    <p class="pd-value {% if latest_vitals.pain_score is None %}pd-empty{% endif %}">{% if latest_vitals.pain_score is not None %}{{ latest_vitals.pain_score }} <span class="pd-subvalue">/10</span>{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Pain Scale</p>
+                    <p class="pd-info-value {% if latest_vitals.pain_score is None %}pd-info-empty{% endif %}">{% if latest_vitals.pain_score is not None %}{{ latest_vitals.pain_score }} <span class="pd-info-unit">/10</span>{% else %}Not recorded{% endif %}</p>
                 </div>
                 {% if latest_vitals.blood_glucose %}
-                <div class="pd-tile">
-                    <p class="pd-label">Blood Glucose</p>
-                    <p class="pd-value">{{ latest_vitals.blood_glucose }} <span class="pd-subvalue">mg/dL{% if latest_vitals.get_glucose_type_display %} · {{ latest_vitals.get_glucose_type_display }}{% endif %}</span></p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Blood Glucose</p>
+                    <p class="pd-info-value">{{ latest_vitals.blood_glucose }} <span class="pd-info-unit">mg/dL{% if latest_vitals.get_glucose_type_display %} · {{ latest_vitals.get_glucose_type_display }}{% endif %}</span></p>
                 </div>
                 {% endif %}
-                <div class="pd-tile">
-                    <p class="pd-label">Recorded By</p>
-                    <p class="pd-value {% if not latest_vitals.taken_by %}pd-empty{% endif %}">{{ latest_vitals.taken_by.get_full_name|default:latest_vitals.taken_by.username|default:"Not recorded" }}</p>
+                <div class="pd-info-field">
+                    <p class="pd-info-label">Recorded By</p>
+                    <p class="pd-info-value {% if not latest_vitals.taken_by %}pd-info-empty{% endif %}">{{ latest_vitals.taken_by.get_full_name|default:latest_vitals.taken_by.username|default:"Not recorded" }}</p>
                 </div>
-                <div class="pd-tile pd-tile--wide">
-                    <p class="pd-label">General Appearance and Notes</p>
-                    <p class="pd-value">
+                <div class="pd-info-field pd-info-field--wide">
+                    <p class="pd-info-label">General Appearance and Notes</p>
+                    <div>
                         {% if latest_vitals.general_appearance %}<span class="pd-badge pd-badge--on">{{ latest_vitals.get_general_appearance_display }}</span>{% endif %}
-                        {% if latest_vitals.notes %}<span class="pd-subvalue">{{ latest_vitals.notes }}</span>{% elif not latest_vitals.general_appearance %}<span class="pd-empty">Not recorded</span>{% endif %}
-                    </p>
+                        {% if latest_vitals.notes %}<p class="pd-info-subvalue">{{ latest_vitals.notes }}</p>{% elif not latest_vitals.general_appearance %}<p class="pd-info-value pd-info-empty">Not recorded</p>{% endif %}
+                    </div>
                 </div>
             </div>
 
@@ -440,9 +319,11 @@
                     <span class="pd-group-letter pd-group-letter--round">A</span>
                     <h3 class="pd-group-title">Chief Complaint</h3>
                 </div>
-                <div class="pd-tile pd-tile--wide pd-clinical-long">
-                    <p class="pd-label">Chief Complaint</p>
-                    <p class="pd-value {% if not latest_assessment.chief_complaint %}pd-empty{% endif %}">{{ latest_assessment.chief_complaint|default:"Not recorded" }}</p>
+                <div class="pd-info-fields">
+                    <div class="pd-info-field pd-info-field--wide">
+                        <p class="pd-info-label">Chief Complaint</p>
+                        <p class="pd-info-value {% if not latest_assessment.chief_complaint %}pd-info-empty{% endif %}">{{ latest_assessment.chief_complaint|default:"Not recorded" }}</p>
+                    </div>
                 </div>
             </div>
 
@@ -451,9 +332,11 @@
                     <span class="pd-group-letter pd-group-letter--round">B</span>
                     <h3 class="pd-group-title">Exposure Narrative (Verified)</h3>
                 </div>
-                <div class="pd-tile pd-tile--wide pd-clinical-long">
-                    <p class="pd-label">Narrative as Verified by the Doctor</p>
-                    <p class="pd-value {% if not latest_assessment.exposure_narrative %}pd-empty{% endif %}">{{ latest_assessment.exposure_narrative|default:"Not recorded" }}</p>
+                <div class="pd-info-fields">
+                    <div class="pd-info-field pd-info-field--wide">
+                        <p class="pd-info-label">Narrative as Verified by the Doctor</p>
+                        <p class="pd-info-value {% if not latest_assessment.exposure_narrative %}pd-info-empty{% endif %}">{{ latest_assessment.exposure_narrative|default:"Not recorded" }}</p>
+                    </div>
                 </div>
             </div>
 
@@ -462,14 +345,18 @@
                     <span class="pd-group-letter">C</span>
                     <h3 class="pd-group-title">Bite Category</h3>
                 </div>
-                <div class="pd-tile pd-tile--wide pd-tile--accent">
-                    <p class="pd-label">WHO Bite Category</p>
-                    <p class="pd-category-value {% if not latest_assessment.category_confirmed %}pd-empty{% endif %}">{{ latest_assessment.category_label|default:"Not recorded" }}</p>
-                    {% if latest_assessment.category_confirmed %}
-                    <p class="pd-category-desc">{{ latest_assessment.category_description|default:"No category description recorded." }}</p>
-                    {% else %}
-                    <p class="pd-category-desc pd-empty">No WHO category has been confirmed for this assessment.</p>
-                    {% endif %}
+                <div class="pd-info-fields">
+                    <div class="pd-info-field pd-info-field--wide">
+                        <p class="pd-info-label">WHO Bite Category</p>
+                        <div>
+                            <p class="pd-info-value {% if not latest_assessment.category_confirmed %}pd-info-empty{% endif %}">{{ latest_assessment.category_label|default:"Not recorded" }}</p>
+                            {% if latest_assessment.category_confirmed %}
+                            <p class="pd-info-subvalue">{{ latest_assessment.category_description|default:"No category description recorded." }}</p>
+                            {% else %}
+                            <p class="pd-info-subvalue">No WHO category has been confirmed for this assessment.</p>
+                            {% endif %}
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -478,36 +365,36 @@
                     <span class="pd-group-letter">D</span>
                     <h3 class="pd-group-title">Dose Schedule &amp; Vaccine</h3>
                 </div>
-                <div class="pd-grid pd-grid-2">
-                    <div class="pd-tile">
-                        <p class="pd-label">Dose Schedule</p>
-                        <p class="pd-value {% if not dose_count %}pd-empty{% endif %}">{% if dose_count %}{{ dose_count }} Dose{{ dose_count|pluralize }}{% else %}Not recorded{% endif %}</p>
+                <div class="pd-info-fields">
+                    <div class="pd-info-field">
+                        <p class="pd-info-label">Dose Schedule</p>
+                        <p class="pd-info-value {% if not dose_count %}pd-info-empty{% endif %}">{% if dose_count %}{{ dose_count }} Dose{{ dose_count|pluralize }}{% else %}Not recorded{% endif %}</p>
                     </div>
-                    <div class="pd-tile">
-                        <p class="pd-label">Date (1st Dose)</p>
-                        <p class="pd-value {% if not first_dose_date %}pd-empty{% endif %}">{{ first_dose_date|date:"F d, Y"|default:"Not recorded" }}</p>
+                    <div class="pd-info-field">
+                        <p class="pd-info-label">Date (1st Dose)</p>
+                        <p class="pd-info-value {% if not first_dose_date %}pd-info-empty{% endif %}">{{ first_dose_date|date:"F d, Y"|default:"Not recorded" }}</p>
                     </div>
-                </div>
-                <div class="pd-tile pd-tile--wide">
-                    <p class="pd-label">Dose Schedule Records</p>
-                    {% if clinical_dose_rows %}
-                    <div class="pd-record-list">
-                        <div class="pd-record pd-record--dose pd-record--head">
-                            <span>Dose</span>
-                            <span>Date</span>
-                            <span>Status</span>
+                    <div class="pd-info-field pd-info-field--wide">
+                        <p class="pd-info-label">Dose Schedule Records</p>
+                        {% if clinical_dose_rows %}
+                        <div class="pd-record-list">
+                            <div class="pd-record pd-record--dose pd-record--head">
+                                <span>Dose</span>
+                                <span>Date</span>
+                                <span>Status</span>
+                            </div>
+                            {% for row in clinical_dose_rows %}
+                            <div class="pd-record pd-record--dose">
+                                <span><strong>{{ row.label }}</strong></span>
+                                <span>{% if row.date %}{{ row.date|date:"M d, Y" }}{% else %}<span class="pd-muted">Not yet set</span>{% endif %}</span>
+                                <span class="pd-badge {{ row.status_class }}">{{ row.status }}</span>
+                            </div>
+                            {% endfor %}
                         </div>
-                        {% for row in clinical_dose_rows %}
-                        <div class="pd-record pd-record--dose">
-                            <span><strong>{{ row.label }}</strong></span>
-                            <span>{% if row.date %}{{ row.date|date:"M d, Y" }}{% else %}<span class="pd-muted">Not yet set</span>{% endif %}</span>
-                            <span class="pd-badge {{ row.status_class }}">{{ row.status }}</span>
-                        </div>
-                        {% endfor %}
+                        {% else %}
+                        <p class="pd-info-value pd-info-empty">No dose schedule has been recorded for this case.</p>
+                        {% endif %}
                     </div>
-                    {% else %}
-                    <p class="pd-value pd-empty">No dose schedule has been recorded for this case.</p>
-                    {% endif %}
                 </div>
             </div>
             <div class="pd-group">
@@ -515,22 +402,22 @@
                     <span class="pd-group-letter">E</span>
                     <h3 class="pd-group-title">Vaccine Brand</h3>
                 </div>
-                <div class="pd-tile pd-tile--wide pd-tile--compact">
-                    <p class="pd-label">Vaccine Brand (from Stock)</p>
-                    <p class="pd-value {% if not latest_assessment.vaccine_inventory and not latest_assessment.vaccine_brand_plan %}pd-empty{% endif %}">{% if latest_assessment.vaccine_inventory %}{{ latest_assessment.vaccine_inventory.vaccine_name }}{% if latest_assessment.vaccine_inventory.brand %} ({{ latest_assessment.vaccine_inventory.brand }}){% endif %}{% elif latest_assessment.vaccine_brand_plan %}{{ latest_assessment.vaccine_brand_plan }}{% else %}Not recorded{% endif %}</p>
-                </div>
-                <div class="pd-grid pd-grid-3">
-                    <div class="pd-tile pd-tile--compact">
-                        <p class="pd-label">Volume per Dose (mL)</p>
-                        <p class="pd-value {% if not latest_assessment.vaccine_dose_ml %}pd-empty{% endif %}">{{ latest_assessment.vaccine_dose_ml|default:"Not recorded" }}</p>
+                <div class="pd-info-fields">
+                    <div class="pd-info-field pd-info-field--wide">
+                        <p class="pd-info-label">Vaccine Brand (from Stock)</p>
+                        <p class="pd-info-value {% if not latest_assessment.vaccine_inventory and not latest_assessment.vaccine_brand_plan %}pd-info-empty{% endif %}">{% if latest_assessment.vaccine_inventory %}{{ latest_assessment.vaccine_inventory.vaccine_name }}{% if latest_assessment.vaccine_inventory.brand %} ({{ latest_assessment.vaccine_inventory.brand }}){% endif %}{% elif latest_assessment.vaccine_brand_plan %}{{ latest_assessment.vaccine_brand_plan }}{% else %}Not recorded{% endif %}</p>
                     </div>
-                    <div class="pd-tile pd-tile--compact">
-                        <p class="pd-label">Quantity (Vials/Doses)</p>
-                        <p class="pd-value {% if latest_assessment.vaccine_quantity is None %}pd-empty{% endif %}">{% if latest_assessment.vaccine_quantity is not None %}{{ latest_assessment.vaccine_quantity }}{% else %}Not recorded{% endif %}</p>
+                    <div class="pd-info-field">
+                        <p class="pd-info-label">Volume per Dose (mL)</p>
+                        <p class="pd-info-value {% if not latest_assessment.vaccine_dose_ml %}pd-info-empty{% endif %}">{{ latest_assessment.vaccine_dose_ml|default:"Not recorded" }}</p>
                     </div>
-                    <div class="pd-tile pd-tile--compact">
-                        <p class="pd-label">1st Dose Date</p>
-                        <p class="pd-value {% if not latest_assessment.first_dose_date %}pd-empty{% endif %}">{{ latest_assessment.first_dose_date|date:"F d, Y"|default:"Not recorded" }}</p>
+                    <div class="pd-info-field">
+                        <p class="pd-info-label">Quantity (Vials/Doses)</p>
+                        <p class="pd-info-value {% if latest_assessment.vaccine_quantity is None %}pd-info-empty{% endif %}">{% if latest_assessment.vaccine_quantity is not None %}{{ latest_assessment.vaccine_quantity }}{% else %}Not recorded{% endif %}</p>
+                    </div>
+                    <div class="pd-info-field">
+                        <p class="pd-info-label">1st Dose Date</p>
+                        <p class="pd-info-value {% if not latest_assessment.first_dose_date %}pd-info-empty{% endif %}">{{ latest_assessment.first_dose_date|date:"F d, Y"|default:"Not recorded" }}</p>
                     </div>
                 </div>
             </div>
@@ -540,54 +427,53 @@
                     <span class="pd-group-letter">F</span>
                     <h3 class="pd-group-title">Treatment &amp; Prescription</h3>
                 </div>
-                <div class="pd-tile pd-tile--wide pd-tile--compact pd-clinical-long">
-                    <p class="pd-label">Treatment Plan</p>
-                    <p class="pd-value {% if not latest_assessment.treatment_plan %}pd-empty{% endif %}">{{ latest_assessment.treatment_plan|default:"Not recorded" }}</p>
-                </div>
-                <p class="pd-label">Prescription</p>
-                <div class="pd-grid pd-grid-2">
+                <div class="pd-info-fields">
+                    <div class="pd-info-field pd-info-field--wide">
+                        <p class="pd-info-label">Treatment Plan</p>
+                        <p class="pd-info-value {% if not latest_assessment.treatment_plan %}pd-info-empty{% endif %}">{{ latest_assessment.treatment_plan|default:"Not recorded" }}</p>
+                    </div>
                     {% if latest_assessment.prescriptions.all %}
                         {% for rx in latest_assessment.prescriptions.all %}
-                        <div class="pd-tile pd-tile--compact">
-                            <p class="pd-label">Prescription (from Medicine Inventory)</p>
-                            <p class="pd-value">{{ rx.medicine.label }}</p>
+                        <div class="pd-info-field">
+                            <p class="pd-info-label">Prescription (from Medicine Inventory)</p>
+                            <p class="pd-info-value">{{ rx.medicine.label }}</p>
                         </div>
-                        <div class="pd-tile pd-tile--compact">
-                            <p class="pd-label">Quantity</p>
-                            <p class="pd-value">{{ rx.quantity_display }}</p>
+                        <div class="pd-info-field">
+                            <p class="pd-info-label">Quantity</p>
+                            <p class="pd-info-value">{{ rx.quantity_display }}</p>
                         </div>
                         {% endfor %}
                     {% elif latest_assessment.prescription %}
-                        <div class="pd-tile pd-tile--compact">
-                            <p class="pd-label">Prescription (from Medicine Inventory)</p>
-                            <p class="pd-value">{{ latest_assessment.prescription }}</p>
+                        <div class="pd-info-field">
+                            <p class="pd-info-label">Prescription (from Medicine Inventory)</p>
+                            <p class="pd-info-value">{{ latest_assessment.prescription }}</p>
                         </div>
-                        <div class="pd-tile pd-tile--compact">
-                            <p class="pd-label">Quantity</p>
-                            <p class="pd-value pd-empty">Not recorded</p>
+                        <div class="pd-info-field">
+                            <p class="pd-info-label">Quantity</p>
+                            <p class="pd-info-value pd-info-empty">Not recorded</p>
                         </div>
                     {% else %}
-                        <div class="pd-tile pd-tile--compact">
-                            <p class="pd-label">Prescription (from Medicine Inventory)</p>
-                            <p class="pd-value pd-empty">Not recorded</p>
+                        <div class="pd-info-field">
+                            <p class="pd-info-label">Prescription (from Medicine Inventory)</p>
+                            <p class="pd-info-value pd-info-empty">Not recorded</p>
                         </div>
-                        <div class="pd-tile pd-tile--compact">
-                            <p class="pd-label">Quantity</p>
-                            <p class="pd-value pd-empty">Not recorded</p>
+                        <div class="pd-info-field">
+                            <p class="pd-info-label">Quantity</p>
+                            <p class="pd-info-value pd-info-empty">Not recorded</p>
                         </div>
                     {% endif %}
-                </div>
-                <div class="pd-tile pd-tile--wide pd-tile--compact pd-clinical-long">
-                    <p class="pd-label">Dosage Instructions — Frequency &amp; Duration</p>
-                    <p class="pd-value {% if not latest_assessment.dosage_instructions %}pd-empty{% endif %}">{{ latest_assessment.dosage_instructions|default:"Not recorded" }}</p>
-                </div>
-                <div class="pd-tile pd-tile--wide pd-tile--compact pd-clinical-long">
-                    <p class="pd-label">Follow-up Instructions</p>
-                    <p class="pd-value {% if not latest_assessment.follow_up_instructions %}pd-empty{% endif %}">{{ latest_assessment.follow_up_instructions|default:"Not recorded" }}</p>
-                </div>
-                <div class="pd-tile pd-tile--wide pd-tile--compact pd-clinical-long">
-                    <p class="pd-label">Additional Notes / Allergy Re-check</p>
-                    <p class="pd-value {% if not latest_assessment.additional_notes %}pd-empty{% endif %}">{{ latest_assessment.additional_notes|default:"Not recorded" }}</p>
+                    <div class="pd-info-field pd-info-field--wide">
+                        <p class="pd-info-label">Dosage Instructions — Frequency &amp; Duration</p>
+                        <p class="pd-info-value {% if not latest_assessment.dosage_instructions %}pd-info-empty{% endif %}">{{ latest_assessment.dosage_instructions|default:"Not recorded" }}</p>
+                    </div>
+                    <div class="pd-info-field pd-info-field--wide">
+                        <p class="pd-info-label">Follow-up Instructions</p>
+                        <p class="pd-info-value {% if not latest_assessment.follow_up_instructions %}pd-info-empty{% endif %}">{{ latest_assessment.follow_up_instructions|default:"Not recorded" }}</p>
+                    </div>
+                    <div class="pd-info-field pd-info-field--wide">
+                        <p class="pd-info-label">Additional Notes / Allergy Re-check</p>
+                        <p class="pd-info-value {% if not latest_assessment.additional_notes %}pd-info-empty{% endif %}">{{ latest_assessment.additional_notes|default:"Not recorded" }}</p>
+                    </div>
                 </div>
             </div>
 
@@ -637,141 +523,6 @@
             {% endif %}
         </div>
     </section>
-
-    {% if can_manage_portal %}
-    <section class="pd-section" id="portal-access">
-        <div class="pd-section-head">
-            <span class="pd-section-num">6</span>
-            <h2>Patient Portal Access</h2>
-            <div class="pd-section-meta">
-                <span class="pd-badge {% if patient.account %}pd-badge--on{% else %}pd-badge--gold{% endif %}">
-                    {% if patient.account %}Has Login{% else %}No Login{% endif %}
-                </span>
-            </div>
-        </div>
-        <div class="pd-section-body">
-            {% if patient.account %}
-            <div class="pd-cred-panel">
-                <h3>{% if temp_creds %}{% if temp_creds.reset %}Password Reset{% else %}Login Created{% endif %} — One-Time Credentials{% else %}Patient Login Access{% endif %}</h3>
-                <p>Share these credentials securely with the patient. Ask them to change the password after first login via Profile → Change Password.</p>
-                <div class="pd-cred-grid">
-                    <div class="pd-cred-tile">
-                        <p class="pd-label">Username</p>
-                        <p class="pd-value">{{ patient.account.username }}</p>
-                    </div>
-                    <div class="pd-cred-tile">
-                        <p class="pd-label">Temporary Password{% if temp_creds %} (shown once){% endif %}</p>
-                        {% if temp_creds %}
-                        <p class="pd-value pd-value--secret">{{ temp_creds.password }}</p>
-                        {% else %}
-                        <p class="pd-value pd-value--muted">Shown only when created or reset</p>
-                        {% endif %}
-                    </div>
-                    <div class="pd-cred-tile">
-                        <p class="pd-label">Login URL</p>
-                        <p class="pd-value" style="font-size:.72rem; word-break:break-all;">{{ portal_login_url }}</p>
-                    </div>
-                </div>
-                {% if portal_qr_data_uri %}
-                <div class="pd-cred-qr">
-                    <div class="pd-grid pd-grid-2" style="align-items:center;">
-                        <img src="{{ portal_qr_data_uri }}" alt="Patient login QR code">
-                        <div>
-                            <p class="pd-label">Scan for Login</p>
-                            <p class="pd-value" style="font-size:.78rem;">Point a phone camera at this QR code to open the Patient Portal login page.</p>
-                            <pre>ABTC Patient Portal
-Patient Name: {{ patient.full_name }}
-Login URL: {{ portal_login_url }}
-Username: {{ patient.account.username }}
-Change password after first login (Profile &gt; Change Password).</pre>
-                            <div class="pd-empty-actions" style="justify-content:flex-start;">
-                                <a href="{{ portal_qr_data_uri }}" download="ABTC_login_{{ patient.patient_number }}.png" class="pd-mini-btn">Download QR</a>
-                                <button type="button" onclick="window.print()" class="pd-mini-btn">Print</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                {% endif %}
-                <p class="pd-subvalue">SMS reminders are also sent to {{ patient.contact_display }} (when SMS is enabled).</p>
-            </div>
-            {% endif %}
-
-            {% if patient.account %}
-            <div class="pd-portal-grid">
-                <div class="pd-tile">
-                    <p class="pd-label">Username</p>
-                    <p class="pd-value">{{ patient.account.username }}</p>
-                    <span class="pd-subvalue">{{ patient.account.email|default:"No email address" }}</span>
-                </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Account Status</p>
-                    <p class="pd-value">
-                        <span class="pd-badge {% if patient.account.is_active %}pd-badge--on{% else %}pd-badge--off{% endif %}">{% if patient.account.is_active %}Active{% else %}Inactive{% endif %}</span>
-                    </p>
-                    <span class="pd-subvalue">{{ patient.account.get_role_display }}</span>
-                </div>
-                <div class="pd-tile">
-                    <p class="pd-label">Patient Login Details</p>
-                    <p class="pd-value">Mobile: {{ patient.account.mobile|default:patient.contact_display|default:"Not recorded" }}</p>
-                    <span class="pd-subvalue">Portal: Patient Portal · Profile → Change Password</span>
-                </div>
-            </div>
-            <div class="pd-portal-actions no-print">
-                <form method="POST" action="{% url 'patients:patient_reset_password' patient.pk %}" onsubmit="return confirm('Reset the portal password for {{ patient.full_name|escapejs }}? The new temporary password will be shown once.');">
-                    {% csrf_token %}
-                    <button type="submit" class="pd-mini-btn">Reset Temporary Password &amp; SMS</button>
-                </form>
-                <a href="{% url 'accounts:login' %}" target="_blank" class="pd-mini-btn pd-mini-btn--solid">Open Login Page</a>
-            </div>
-            <p class="pd-note">The patient can sign in to view their bite cases and vaccination schedule, and change the password via Profile → Change Password. Share temporary credentials securely; no stored password is displayed on this record.</p>
-            {% else %}
-            <div class="pd-note pd-note--warn">
-                <strong>No portal login yet.</strong> This patient has no user account. Create one with a temporary password and send it by SMS.
-            </div>
-            <div class="pd-empty-actions no-print" style="justify-content:flex-start;">
-                <form method="POST" action="{% url 'patients:patient_reset_password' patient.pk %}">
-                    {% csrf_token %}
-                    <button type="submit" class="pd-mini-btn pd-mini-btn--solid">Create Login &amp; Send SMS</button>
-                </form>
-            </div>
-            {% endif %}
-        </div>
-    </section>
-    {% endif %}
-
-    {% if can_manage_portal and patient.account %}
-    <div class="abtc-print-only pd-cred-print">
-        {% include 'print/_official_head.html' with document_title="Patient Portal Login Information" show_printed_at=1 %}
-        <section class="abtc-section">
-            <h2 class="abtc-section-title">Patient Information</h2>
-            <div class="abtc-panel abtc-summary">
-                <div class="abtc-summary__row"><span>Patient Name</span><strong>{{ patient.full_name }}</strong></div>
-                <div class="abtc-summary__row"><span>Patient ID</span><strong>{{ patient.patient_number }}</strong></div>
-                <div class="abtc-summary__row"><span>Date Issued</span><strong>{% now "F d, Y · g:i A" %}</strong></div>
-                <div class="abtc-summary__row"><span>Credential Type</span><strong>{% if temp_creds %}{% if temp_creds.reset %}Password Reset{% else %}New Login{% endif %}{% else %}Existing Login{% endif %}</strong></div>
-            </div>
-        </section>
-        <section class="abtc-section">
-            <h2 class="abtc-section-title">{% if temp_creds %}One-Time Login Credentials{% else %}Patient Login Information{% endif %}</h2>
-            <div class="abtc-panel abtc-summary">
-                <div class="abtc-summary__row"><span>Username</span><strong>{{ patient.account.username }}</strong></div>
-                {% if temp_creds %}<div class="abtc-summary__row"><span>Temporary Password</span><strong>{{ temp_creds.password }}</strong></div>{% endif %}
-                <div class="abtc-summary__row abtc-summary__row--full"><span>Login URL</span><strong>{{ portal_login_url }}</strong></div>
-            </div>
-            <p class="abtc-note">Share these credentials securely. The patient should change the password after first login via Profile → Change Password.{% if not temp_creds %} The temporary password is shown only when the login is created or reset.{% endif %}</p>
-            {% if portal_qr_data_uri %}
-            <div class="abtc-panel abtc-panel--plain" style="display:flex;align-items:center;gap:14px;">
-                <img src="{{ portal_qr_data_uri }}" alt="Patient login QR code" style="width:38mm;height:38mm;object-fit:contain;">
-                <div>
-                    <p style="margin:0;font-weight:700;color:#08291F;">Scan for Login</p>
-                    <p class="abtc-note" style="margin:2px 0 0;">Point a phone camera at this QR code to open the Patient Portal login page.</p>
-                </div>
-            </div>
-            {% endif %}
-        </section>
-        {% include 'print/_official_footer.html' with confidential=True %}
-    </div>
-    {% endif %}
 
 </div>
 {% endblock %}

@@ -9,6 +9,7 @@ up. Nothing here writes to the database.
 from collections import OrderedDict
 from datetime import date, timedelta
 from urllib.parse import urlencode
+import uuid
 
 from django.urls import reverse
 from django.utils import timezone
@@ -85,9 +86,15 @@ def _expiry_alerts(module, batch, product, subtitle, unit,
     if batch.quantity_available <= 0:
         return alerts
     quantity_label = _quantity_label(batch.quantity_available, unit)
-    if batch.expiration_date < today:
+    if batch.expiration_date <= today:
         days_past = (today - batch.expiration_date).days
         quantity_verb = 'is' if batch.quantity_available == 1 else 'are'
+        batch_details = [{
+            'batch': batch.batch_number,
+            'expiration': batch.expiration_date,
+            'available': 0,
+            'pending_pull_out': batch.quantity_available,
+        }]
         alerts.append({
             'key': f'{module}-expired-{batch.pk}',
             'kind': 'expired',
@@ -100,6 +107,10 @@ def _expiry_alerts(module, batch, product, subtitle, unit,
             'days_left': -days_past,
             'quantity': batch.quantity_available,
             'quantity_label': quantity_label,
+            'available': 0,
+            'pending_pull_out': batch.quantity_available,
+            'batch_details': batch_details,
+            'form': batch.get_dosage_form_display(),
             'unit': unit,
             'threshold': None,
             'message': (
@@ -112,12 +123,19 @@ def _expiry_alerts(module, batch, product, subtitle, unit,
             ),
             'badge_class': BADGE_CLASSES['expired'],
             'url': _detail_url(module, batch.pk, batch.batch_number),
+            'pull_out_url': reverse(
+                f'inventory:{module}_pull_out', args=[batch.pk]),
+            'pull_out_token': str(uuid.uuid4()),
         })
     elif batch.expiration_date <= warning_end:
         days_left = (batch.expiration_date - today).days
-        if days_left == 0:
-            remaining = 'expires today'
-        elif days_left == 1:
+        batch_details = [{
+            'batch': batch.batch_number,
+            'expiration': batch.expiration_date,
+            'available': batch.quantity_available,
+            'pending_pull_out': 0,
+        }]
+        if days_left == 1:
             remaining = '1 day left'
         else:
             remaining = f'{days_left} days left'
@@ -133,6 +151,10 @@ def _expiry_alerts(module, batch, product, subtitle, unit,
             'days_left': days_left,
             'quantity': batch.quantity_available,
             'quantity_label': quantity_label,
+            'available': batch.quantity_available,
+            'pending_pull_out': 0,
+            'batch_details': batch_details,
+            'form': batch.get_dosage_form_display(),
             'unit': unit,
             'threshold': None,
             'message': (
@@ -141,9 +163,8 @@ def _expiry_alerts(module, batch, product, subtitle, unit,
                 f'({remaining}).'
             ),
             'short_message': (
-                'Expires today.' if days_left == 0
-                else f'Expires in {days_left} day'
-                     f'{"s" if days_left != 1 else ""}.'
+                f'Expires in {days_left} day'
+                f'{"s" if days_left != 1 else ""}.'
             ),
             'badge_class': BADGE_CLASSES['expiring'],
             'url': _detail_url(module, batch.pk, batch.batch_number),
@@ -152,10 +173,21 @@ def _expiry_alerts(module, batch, product, subtitle, unit,
 
 
 def _product_alerts(module, group, product, subtitle, unit, today, threshold):
-    usable = sum(
-        batch.quantity_available for batch in group
-        if batch.expiration_date >= today
-    )
+    live_batches = [
+        batch for batch in group if batch.expiration_date > today
+    ]
+    usable = sum(batch.quantity_available for batch in live_batches)
+    batch_details = [
+        {
+            'batch': batch.batch_number,
+            'expiration': batch.expiration_date,
+            'available': batch.quantity_available,
+            'pending_pull_out': 0,
+        }
+        for batch in live_batches
+    ]
+    nearest_expiration = min(
+        (batch.expiration_date for batch in live_batches), default=None)
     if usable <= 0:
         return [{
             'key': f'{module}-out-{group[0].pk}',
@@ -165,10 +197,14 @@ def _product_alerts(module, group, product, subtitle, unit, today, threshold):
             'product': product,
             'subtitle': subtitle,
             'batch': '',
-            'expiration': None,
+            'expiration': nearest_expiration,
             'days_left': None,
             'quantity': 0,
             'quantity_label': _quantity_label(0, unit),
+            'available': 0,
+            'pending_pull_out': 0,
+            'batch_details': batch_details,
+            'form': group[0].get_dosage_form_display(),
             'unit': unit,
             'threshold': threshold,
             'message': f'Out of Stock: {product} has no remaining available stock.',
@@ -189,6 +225,11 @@ def _product_alerts(module, group, product, subtitle, unit, today, threshold):
             'days_left': None,
             'quantity': usable,
             'quantity_label': _quantity_label(usable, unit),
+            'available': usable,
+            'pending_pull_out': 0,
+            'batch_details': batch_details,
+            'form': group[0].get_dosage_form_display(),
+            'expiration': nearest_expiration,
             'unit': unit,
             'threshold': threshold,
             'message': (

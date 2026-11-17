@@ -1,0 +1,378 @@
+@import url('bite_case_sections.css');
+
+/* Admin Bite Case view: compact three-section information page. */
+
+.app-canvas { background: #FAF6EE; }
+
+.bcs-wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 4px 0 56px;
+  color: #0D382C;
+}
+
+.bcs-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.bcs-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.bcs-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: 1px solid #D8CFBD;
+  background: #fff;
+  color: #0D382C;
+  font: 600 13px/1 'Figtree', system-ui, sans-serif;
+  letter-spacing: .01em;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.bcs-btn:hover {
+  border-color: #0D382C;
+}
+
+.bcs-btn--primary {
+  background: #0D382C;
+  border-color: #0D382C;
+  color: #fff;
+}
+
+.bcs-btn--primary:hover {
+  background: #0A2C23;
+  border-color: #0A2C23;
+}
+
+.bcs-btn-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+/* Doctor actions row — role-specific controls live outside the info sheet. */
+.bcs-toolbar--actions {
+  margin-top: -8px;
+  padding: 10px 14px;
+  border: 1px solid #E7DFCF;
+  border-radius: 12px;
+  background: #FFFDF7;
+}
+
+.bcs-actions-label {
+  color: #B08A2E;
+  font: 800 11px/1 'Figtree', system-ui, sans-serif;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.bcs-toolbar--actions .bcs-toolbar-right {
+  flex-wrap: wrap;
+  margin-left: 0;
+}
+
+.bcs-panel--notes {
+  margin-top: 18px;
+}
+
+.bcs-notes {
+  display: grid;
+  gap: 10px;
+}
+
+.bcs-note {
+  padding: 10px 12px;
+  border: 1px solid #EDE5D6;
+  border-radius: 10px;
+  background: #FBF8F1;
+}
+
+.bcs-note .bcs-value {
+  margin: 0;
+}
+
+.bcs-note-meta {
+  margin: 4px 0 0;
+  color: #476762;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.bcs-note-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.bcs-header {
+  padding-bottom: 18px;
+}
+
+.bcs-title {
+  margin: 0 0 10px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: .01em;
+  color: #0D382C;
+}
+
+.bcs-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 22px;
+}
+
+.bcs-head-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.bcs-head-label {
+  color: #476762;
+  font-weight: 500;
+}
+
+.bcs-head-value {
+  color: #0D382C;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.bcs-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border: 1px solid #E5C999;
+  border-radius: 999px;
+  background: #FBF7EC;
+  color: #0D382C;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bcs-desc {
+  margin: 10px 0 0;
+  color: #476762;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .bcs-title {
+    font-size: 21px;
+  }
+
+  .bcs-toolbar--actions {
+    align-items: flex-start;
+  }
+
+  .bcs-toolbar--actions .bcs-toolbar-right {
+    width: 100%;
+  }
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
+  aside,
+  header.topbar,
+  .no-print {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  main.app-canvas {
+    overflow: visible !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .bcs-wrap {
+    max-width: none;
+    width: auto;
+    margin: 0;
+    padding: 0;
+  }
+
+  .bcs-panel {
+    background: #fff !important;
+    border: 1.5px solid #08291F !important;
+    border-radius: 0 !important;
+    padding: 5mm 6mm !important;
+    box-shadow: none !important;
+  }
+
+  /* The official letterhead replaces the screen heading. */
+  .bcs-title {
+    display: none !important;
+  }
+
+  .bcs-header {
+    margin: 0 0 10px;
+    padding: 2px 0 8px;
+    border-bottom: 1.5px solid #08291F;
+  }
+
+  .bcs-headline {
+    gap: 4px 26px;
+  }
+
+  .bcs-head-item {
+    font-size: 9.6pt;
+  }
+
+  .bcs-head-label {
+    color: #111 !important;
+    font-weight: 700;
+  }
+
+  .bcs-head-value {
+    color: #111 !important;
+    font-size: 10pt;
+    font-weight: 800;
+  }
+
+  .bcs-status {
+    padding: 2px 9px;
+    border: 1px solid #5E7A6D !important;
+    border-radius: 0;
+    background: #EAF3EC !important;
+    color: #111 !important;
+    font-size: 9pt;
+    font-weight: 800;
+  }
+
+  .bcs-desc {
+    margin: 6px 0 0;
+    color: #111 !important;
+    font-size: 9.6pt;
+    font-weight: 600;
+  }
+
+  .bcs-desc::before {
+    content: "Bite Summary: ";
+    font-weight: 800;
+  }
+
+  .bcs-section {
+    padding: 0;
+    margin: 0 0 10px;
+    border-top: 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .bcs-section-title {
+    margin: 0;
+    padding: 6px 12px;
+    gap: 9px;
+    background: #0D382C;
+    color: #fff !important;
+    border: 0;
+    font-family: inherit;
+    font-size: 12pt;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .bcs-icon {
+    display: block;
+    width: 18px;
+    height: 18px;
+    color: #fff;
+  }
+
+  .bcs-icon--screen {
+    display: none !important;
+  }
+
+  .bcs-icon--print {
+    display: block !important;
+  }
+
+  .bcs-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 0;
+    row-gap: 0;
+    border-top: 1px solid #5E7A6D;
+    border-left: 1px solid #5E7A6D;
+  }
+
+  .bcs-field {
+    grid-template-columns: 40% minmax(0, 1fr);
+    column-gap: 0;
+    align-items: stretch;
+    border-right: 1px solid #5E7A6D;
+    border-bottom: 1px solid #5E7A6D;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .bcs-field--wide,
+  .bcs-field--print-wide {
+    grid-column: 1 / -1;
+    grid-template-columns: 20% minmax(0, 1fr);
+  }
+
+  .bcs-label {
+    padding: 6px 10px;
+    background: #EAF3EC;
+    border-right: 1px solid #5E7A6D;
+    color: #111 !important;
+    font-size: 9pt;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .bcs-value {
+    padding: 6px 10px;
+    color: #111 !important;
+    font-size: 9.4pt;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+
+  .bcs-empty {
+    color: #3F5148 !important;
+    font-style: normal;
+    font-weight: 500;
+  }
+
+  .abtc-footer {
+    margin-top: 12px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

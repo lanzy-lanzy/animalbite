@@ -10,7 +10,10 @@ from django.urls import reverse
 from django.utils import timezone
 
 from bite_cases.models import AnimalBiteCase, ExposureClassification
-from inventory.models import MedicineInventory, VaccineInventory
+from inventory.models import (
+    MedicineInventory, MedicineStockMovement, VaccineInventory,
+    VaccineStockMovement,
+)
 from patients.models import Patient
 from vaccination.models import VaccinationSchedule, VaccineDose
 
@@ -26,6 +29,8 @@ ALL_REPORT_URLS = (
     'reports_index',
     'cases_report',
     'patient_treatment_report',
+    'patients_report',
+    'animal_bite_cases_report',
     'vaccine_report',
     'vaccine_inventory_report',
     'medicine_inventory_report',
@@ -33,6 +38,8 @@ ALL_REPORT_URLS = (
     'barangay_report',
     'animal_type_report',
     'missed_appointments',
+    'completed_vaccinations',
+    'under_treatment_report',
 )
 
 
@@ -76,9 +83,12 @@ class ReportAccessTests(TestCase):
             self.client.force_login(user)
             for name in ALL_REPORT_URLS:
                 with self.subTest(role=role, url=name):
+                    expected_status = (
+                        403 if name == 'barangay_report'
+                        and role not in {'admin', 'nurse'} else 200)
                     self.assertEqual(
                         self.client.get(reverse(f'reports:{name}')).status_code,
-                        200)
+                        expected_status)
 
     def test_doctors_and_patients_are_denied(self):
         self.client.force_login(self.doctor)
@@ -144,6 +154,121 @@ class PatientReportTests(TestCase):
     def _login(self):
         self.client.force_login(self.nurse)
 
+    def test_patients_report_counts_unique_records_and_searches(self):
+        unlinked_patient = make_patient(
+            'PAT-NC0001', 'NoCase', 'Patient')
+        self._login()
+        response = self.client.get(reverse('reports:patients_report'), {
+            'type': 'all',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total'], 3)
+        self.assertContains(response, 'Patients Report')
+        self.assertContains(response, 'Complete list of registered patients.')
+        self.assertContains(response, 'Total Patients: <strong class="text-ink">3</strong>', html=False)
+        self.assertContains(response, self.patient.patient_number)
+        self.assertContains(response, self.other_patient.patient_number)
+        self.assertContains(response, unlinked_patient.patient_number)
+
+        self.patient.sex = 'male'
+        self.patient.save(update_fields=['sex'])
+        male = self.client.get(reverse('reports:patients_report'), {
+            'type': 'all', 'q': 'Male',
+        })
+        self.assertEqual(male.context['total'], 1)
+        self.assertContains(male, self.patient.patient_number)
+        self.assertNotContains(male, self.other_patient.patient_number)
+
+    def test_patients_report_period_uses_registration_date(self):
+        today = timezone.localdate()
+        Patient.objects.filter(pk=self.patient.pk).update(
+            created_at=timezone.make_aware(datetime.datetime.combine(
+                today, datetime.time(10, 0))))
+        Patient.objects.filter(pk=self.other_patient.pk).update(
+            created_at=timezone.make_aware(datetime.datetime.combine(
+                today - datetime.timedelta(days=1), datetime.time(10, 0))))
+        self._login()
+
+        today_response = self.client.get(reverse('reports:patients_report'), {
+            'type': 'daily',
+        })
+        self.assertEqual(today_response.context['total'], 1)
+        self.assertContains(today_response, 'Registration date period:')
+        all_time_response = self.client.get(reverse('reports:patients_report'), {
+            'type': 'all',
+        })
+        self.assertEqual(all_time_response.context['total'], 2)
+
+    def test_patients_print_includes_complete_filtered_list_and_total(self):
+        for index in range(3, 29):
+            make_patient(f'PAT-PR{index:04d}', f'Patient{index}', 'Print')
+        self._login()
+        response = self.client.get(reverse('reports:patients_report'), {
+            'type': 'all', 'page': 2, 'export': 'print',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['rows']), 28)
+        self.assertContains(response, 'PAT-PR0028')
+        self.assertContains(response, 'PATIENTS REPORT')
+        self.assertContains(response, 'Total Patients')
+        self.assertContains(response, 'Municipal Health Office')
+        self.assertContains(response, 'lgu_dumingag_logo.png')
+
+    def test_animal_bite_cases_report_keeps_each_incident(self):
+        self._login()
+        response = self.client.get(reverse('reports:animal_bite_cases_report'), {
+            'type': 'all',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total'], 3)
+        self.assertContains(response, 'Animal Bite Cases Report')
+        self.assertContains(response, 'Total Animal Bite Cases:')
+        self.assertContains(response, self.complete_case.case_number)
+        self.assertContains(response, self.ongoing_case.case_number)
+        self.assertEqual(
+            self.client.get(reverse('reports:animal_bite_cases_report'), {
+                'type': 'all', 'q': 'ABC-R0002',
+            }).context['total'],
+            1,
+        )
+
+    def test_animal_bite_cases_period_uses_incident_date(self):
+        today = timezone.localdate()
+        make_case(
+            'ABC-TODAY1', self.patient,
+            datetime.datetime.combine(today, datetime.time(10, 0)),
+            created_by=self.nurse,
+        )
+        self._login()
+
+        today_response = self.client.get(
+            reverse('reports:animal_bite_cases_report'), {'type': 'daily'})
+        self.assertEqual(today_response.context['total'], 1)
+        self.assertContains(today_response, 'Incident date period:')
+        all_time_response = self.client.get(
+            reverse('reports:animal_bite_cases_report'), {'type': 'all'})
+        self.assertEqual(all_time_response.context['total'], 4)
+
+    def test_animal_bite_cases_print_includes_all_incidents_not_current_page(self):
+        for index in range(4, 28):
+            make_case(
+                f'ABC-PR{index:04d}', self.patient,
+                datetime.datetime(2026, 11, 5, 9, 0),
+                created_by=self.nurse,
+            )
+        self._login()
+        response = self.client.get(reverse('reports:animal_bite_cases_report'), {
+            'type': 'all', 'page': 2, 'export': 'print',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context['rows']), 27)
+        self.assertContains(response, 'ABC-PR0027')
+        self.assertContains(response, 'ANIMAL BITE CASES REPORT')
+        self.assertContains(response, 'Total Animal Bite Cases')
+        self.assertContains(response, 'Municipal Health Office')
+
     def test_completed_requires_the_full_dose_plan(self):
         completed = completed_schedule_case_ids()
         self.assertIn(self.complete_case.pk, completed)
@@ -164,7 +289,24 @@ class PatientReportTests(TestCase):
         self.assertContains(response, 'Total Bite Cases')
         self.assertContains(response, 'Out of Stock')
         self.assertContains(response, 'Expired Batches')
-        self.assertContains(response, 'Patient and Treatment')
+        self.assertContains(response, 'Patients')
+        self.assertContains(response, 'Animal Bite Cases')
+        self.assertContains(
+            response,
+            'Complete list of registered patients and total patient count.')
+        self.assertContains(
+            response,
+            'Complete list of recorded animal bite cases and total case count.')
+        self.assertContains(response, reverse('reports:patients_report'))
+        self.assertContains(response, reverse('reports:animal_bite_cases_report'))
+        self.assertNotContains(response, 'Patient and Treatment')
+        for report_name in (
+            'vaccine_inventory_report',
+            'medicine_inventory_report',
+            'stock_alerts_report',
+            'vaccine_report',
+        ):
+            self.assertContains(response, reverse(f'reports:{report_name}'))
         self.assertContains(response, 'Animal Bite Statistics')
         self.assertEqual(response.context['summary']['total_patients'], 2)
         self.assertEqual(response.context['summary']['total_cases'], 3)
@@ -223,10 +365,9 @@ class PatientReportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         for text in ('Start date', 'End date', 'Custom', '>Clear<', '>Apply<'):
             self.assertNotContains(response, text)
-        for label in ('Daily', 'Weekly', 'Monthly', 'Last 7 days',
-                      'Last 30 days', 'Annual'):
+        for label in ('Today', 'This Week', 'This Month', 'All Time'):
             self.assertContains(response, label)
-        self.assertContains(response, 'Search case number or patient')
+        self.assertContains(response, 'placeholder="Search..."')
 
     def test_patient_report_lists_required_columns_and_statuses(self):
         self._login()
@@ -294,31 +435,24 @@ class PatientReportTests(TestCase):
             'q': 'Maria', 'type': 'all'})
         for text in ('Custom Range', 'Start date', 'End date',
                      'name="barangay"', 'name="animal"', 'name="status"',
-                     '>Clear<', '>Apply<'):
+                     '>Clear<', '>Apply<', 'reports-search-field',
+                     'Search Field', 'All Fields', 'Clear Search'):
             self.assertNotContains(response, text)
         self.assertContains(response, 'Reporting Period')
         self.assertContains(response, 'Search All Records')
         self.assertContains(
             response,
-            'Search name, barangay, sex, animal, case number...')
-        column_headers = (
-            b'class="table-header">Patient</th>',
-            b'class="table-header">Patient ID</th>',
-            b'class="table-header">Sex</th>',
-            b'class="table-header">Case Number</th>',
-            b'class="table-header">Barangay</th>',
-            b'class="table-header">Animal</th>',
-            b'class="table-header">Treatment Status</th>',
-        )
-        header_positions = [response.content.index(header)
-                            for header in column_headers]
-        self.assertEqual(header_positions, sorted(header_positions))
-        self.assertLess(
-            header_positions[0],
-            response.content.index(b'Reporting Period'))
+            'Search patient, sex, barangay, case, animal, status...')
+        form = response.content.decode().split(
+            '<form id="global-search-form"', 1)[1].split('</form>', 1)[0]
+        self.assertEqual(form.count('type="search"'), 1)
+        self.assertEqual(form.count('<button'), 1)
+        self.assertNotIn('name="search_field"', form)
+        self.assertLess(response.content.index(b'Search Results'),
+                        response.content.index(b'Reporting Period'))
         self.assertLess(
             response.content.index(b'Search All Records'),
-            response.content.index(b'Reporting Period'))
+            response.content.index(b'Search Results'))
         self.assertLess(
             response.content.index(b'Reporting Period'),
             response.content.index(b'Total Patients'))
@@ -329,6 +463,299 @@ class PatientReportTests(TestCase):
             with self.subTest(url=name):
                 self.assertEqual(
                     self.client.get(reverse(f'reports:{name}')).status_code, 200)
+
+
+class FollowUpReportTests(TestCase):
+
+    def setUp(self):
+        self.nurse = make_user('followup.nurse', 'nurse')
+        self.today = datetime.date(2026, 11, 12)
+        self.patient = make_patient('PAT-FU0001', 'Juan', 'Dela Cruz')
+        self.case = make_case(
+            'ABC-FU0001', self.patient,
+            datetime.datetime(2026, 11, 10, 9, 0),
+            status='under_treatment', created_by=self.nurse)
+        self.schedule = VaccinationSchedule.objects.create(
+            bite_case=self.case, created_by=self.nurse)
+        self.missed = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label='Dose 1',
+            dose_status='scheduled',
+            scheduled_date=self.today - datetime.timedelta(days=1),
+            vaccine_brand='Verorab')
+        self.second_case = make_case(
+            'ABC-FU0004', self.patient,
+            datetime.datetime(2026, 11, 8, 9, 0),
+            status='under_treatment', created_by=self.nurse)
+        self.second_schedule = VaccinationSchedule.objects.create(
+            bite_case=self.second_case, created_by=self.nurse)
+        VaccineDose.objects.create(
+            schedule=self.second_schedule, dose_label='Dose 1',
+            dose_status='completed',
+            scheduled_date=self.today - datetime.timedelta(days=5),
+            actual_date=self.today - datetime.timedelta(days=5))
+        self.second_missed = VaccineDose.objects.create(
+            schedule=self.second_schedule, dose_label='Dose 2',
+            dose_status='scheduled',
+            scheduled_date=self.today - datetime.timedelta(days=3),
+            vaccine_brand='Verorab')
+        self.administered = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label='Dose 2',
+            dose_status='completed',
+            scheduled_date=self.today - datetime.timedelta(days=2),
+            actual_date=self.today - datetime.timedelta(days=1),
+            vaccine_brand='Verorab', administered_by=self.nurse)
+        self.due_today = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label='Dose 3',
+            dose_status='scheduled', scheduled_date=self.today,
+            vaccine_brand='Verorab')
+        self.cancelled = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label='Dose 4',
+            dose_status='cancelled',
+            scheduled_date=self.today - datetime.timedelta(days=1))
+        self.rescheduled_future = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label='Dose 5',
+            dose_status='rescheduled',
+            scheduled_date=self.today + datetime.timedelta(days=1))
+        self.late_case = make_case(
+            'ABC-FU0002', self.patient,
+            datetime.datetime(2026, 11, 11, 9, 0),
+            status='under_treatment', created_by=self.nurse)
+        self.late_schedule = VaccinationSchedule.objects.create(
+            bite_case=self.late_case, created_by=self.nurse)
+        self.administered_late = VaccineDose.objects.create(
+            schedule=self.late_schedule, dose_label='Dose 1',
+            dose_status='completed',
+            scheduled_date=self.today - datetime.timedelta(days=5),
+            actual_date=self.today, vaccine_brand='Verorab',
+            administered_by=self.nurse)
+        VaccineDose.objects.create(
+            schedule=self.late_schedule, dose_label='Dose 2',
+            dose_status='scheduled',
+            scheduled_date=self.today + datetime.timedelta(days=3))
+        self.complete_case = make_case(
+            'ABC-FU0003', self.patient,
+            datetime.datetime(2026, 11, 9, 9, 0),
+            status='completed', created_by=self.nurse)
+        complete_schedule = VaccinationSchedule.objects.create(
+            bite_case=self.complete_case, created_by=self.nurse)
+        VaccineDose.objects.create(
+            schedule=complete_schedule, dose_label='Dose 1',
+            dose_status='completed',
+            scheduled_date=self.today - datetime.timedelta(days=4),
+            actual_date=self.today - datetime.timedelta(days=3),
+            vaccine_brand='Verorab', administered_by=self.nurse)
+        self.client.force_login(self.nurse)
+
+    def _report(self, name, params=None):
+        with patch('reports.views.timezone.localdate', return_value=self.today):
+            return self.client.get(reverse(f'reports:{name}'), params or {
+                'type': 'all',
+            })
+
+    def test_missed_report_only_lists_past_unadministered_uncancelled_doses(self):
+        response = self._report('missed_appointments')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total'], 2)
+        self.assertContains(response, 'Missed Appointment')
+        self.assertContains(response, '1st Dose')
+        self.assertContains(response, '2nd Dose')
+        self.assertContains(response, 'ABC-FU0001')
+        self.assertContains(response, 'ABC-FU0004')
+        self.assertNotContains(response, 'ABC-FU0002')
+        self.assertNotContains(response, '3rd Dose')
+        self.assertNotContains(response, '4th Dose')
+        self.assertNotContains(response, '5th Dose')
+
+    def test_missed_search_matches_all_columns_dates_and_numeric_values(self):
+        searches = (
+            ('Juan', {'ABC-FU0001', 'ABC-FU0004'}),
+            ('ABC-FU0004', {'ABC-FU0004'}),
+            ('0917', {'ABC-FU0001', 'ABC-FU0004'}),
+            ('2nd Dose', {'ABC-FU0004'}),
+            ('Nov 09, 2026', {'ABC-FU0004'}),
+            ('11/09/2026', {'ABC-FU0004'}),
+            ('2026-11-09', {'ABC-FU0004'}),
+            ('Missed', {'ABC-FU0001', 'ABC-FU0004'}),
+            ('3', {'ABC-FU0004'}),
+            ('13', set()),
+            ('2', {'ABC-FU0004'}),
+            ('1', {'ABC-FU0001', 'ABC-FU0004'}),
+        )
+        for keyword, expected_cases in searches:
+            with self.subTest(keyword=keyword):
+                response = self._report('missed_appointments', {
+                    'type': 'all', 'q': keyword,
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context['total'], len(expected_cases))
+                rows = list(response.context['rows'])
+                self.assertEqual(
+                    {row['cells'][2] for row in rows}, expected_cases)
+
+    def test_missed_search_ui_empty_state_and_print_respect_search(self):
+        no_matches = self._report('missed_appointments', {
+            'type': 'all', 'q': 'not found',
+        })
+        self.assertEqual(no_matches.context['total'], 0)
+        self.assertContains(no_matches, 'No matching missed appointments found.')
+        self.assertContains(no_matches, '<label', html=False)
+        self.assertContains(no_matches, '>Search</label>', html=False)
+        self.assertContains(no_matches, 'placeholder="Search..."')
+        self.assertEqual(no_matches.content.count(b'type="search"'), 1)
+        search_form = no_matches.content.decode().split(
+            '<form method="get"', 1)[1].split('</form>', 1)[0]
+        self.assertEqual(search_form.count('<button'), 1)
+        self.assertContains(no_matches, 'value="not found"')
+
+        printed = self._report('missed_appointments', {
+            'type': 'all', 'q': 'ABC-FU0004', 'export': 'print',
+        })
+        self.assertEqual(printed.status_code, 200)
+        self.assertContains(printed, 'ABC-FU0004')
+        self.assertNotContains(printed, 'ABC-FU0001')
+
+    def test_completed_search_matches_all_nine_columns(self):
+        searches = (
+            ('1', {'ABC-FU0001'}),
+            ('Juan', {
+                'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003', 'ABC-FU0004',
+            }),
+            ('ABC-FU0002', {'ABC-FU0002'}),
+            ('Verorab', {'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003'}),
+            ('2nd Dose', {'ABC-FU0001'}),
+            ('Nov 10, 2026', {'ABC-FU0001'}),
+            ('11/10/2026', {'ABC-FU0001'}),
+            ('2026-11-10', {'ABC-FU0001'}),
+            ('Nov 11, 2026', {'ABC-FU0001'}),
+            ('11/11/2026', {'ABC-FU0001'}),
+            ('2026-11-11', {'ABC-FU0001'}),
+            ('followup.nurse', {
+                'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003',
+            }),
+            ('Completed', {
+                'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003', 'ABC-FU0004',
+            }),
+        )
+        for keyword, expected_cases in searches:
+            with self.subTest(keyword=keyword):
+                response = self._report('completed_vaccinations', {
+                    'type': 'all', 'q': keyword,
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context['total'], len(expected_cases))
+                rows = list(response.context['rows'])
+                self.assertEqual(
+                    {row['cells'][2] for row in rows}, expected_cases)
+
+    def test_completed_search_paginates_and_prints_matching_period_records(self):
+        for index in range(22):
+            VaccineDose.objects.create(
+                schedule=self.late_schedule,
+                dose_label=f'Extra Dose {index + 1}',
+                dose_status='completed',
+                scheduled_date=self.today,
+                actual_date=self.today,
+                administered_by=self.nurse,
+                vaccine_brand='Rabies Vaccine',
+            )
+
+        before = list(VaccineDose.objects.values_list(
+            'pk', 'dose_status', 'actual_date'))
+        all_rows = self._report('completed_vaccinations', {
+            'type': 'all', 'page': 2,
+        })
+        self.assertEqual(all_rows.context['total'], 26)
+        expected_26 = list(all_rows.context['rows'])[0]['cells']
+
+        row_search = self._report('completed_vaccinations', {
+            'type': 'all', 'q': '26',
+        })
+        self.assertEqual(row_search.context['total'], 1)
+        self.assertEqual(
+            list(row_search.context['rows'])[0]['cells'], expected_26)
+        self.assertEqual(expected_26[2], 'ABC-FU0003')
+
+        monthly_brand_search = self._report('completed_vaccinations', {
+            'type': 'monthly', 'q': 'Rabies',
+        })
+        self.assertEqual(monthly_brand_search.context['total'], 22)
+
+        printed = self._report('completed_vaccinations', {
+            'type': 'all', 'q': 'ABC-FU0002', 'export': 'print',
+        })
+        self.assertEqual(printed.status_code, 200)
+        self.assertContains(printed, 'ABC-FU0002')
+        self.assertNotContains(printed, 'ABC-FU0001')
+        self.assertEqual(before, list(VaccineDose.objects.values_list(
+            'pk', 'dose_status', 'actual_date')))
+
+    def test_completed_report_uses_actual_dates_and_preserves_dose_numbers(self):
+        response = self._report('completed_vaccinations', {'type': 'all'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total'], 4)
+        rows = list(response.context['rows'])
+        row_cells = [row['cells'] for row in rows]
+        self.assertEqual({row[2] for row in row_cells}, {
+            'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0003', 'ABC-FU0004',
+        })
+        self.assertIn('2nd Dose', [row[4] for row in row_cells])
+        self.assertIn('Treatment Course Completed', [row[8] for row in row_cells])
+        self.assertContains(response, 'Completed')
+
+    def test_under_treatment_counts_remaining_doses_per_case(self):
+        response = self._report('under_treatment_report', {'type': 'all'})
+
+        self.assertEqual(response.status_code, 200)
+        rows = list(response.context['rows'])
+        cases = {row['cells'][2]: row['cells'] for row in rows}
+        self.assertEqual(
+            set(cases), {'ABC-FU0001', 'ABC-FU0002', 'ABC-FU0004'})
+        self.assertEqual(cases['ABC-FU0001'][4:7], [4, 1, 3])
+        self.assertEqual(cases['ABC-FU0001'][7], '1st Dose')
+        self.assertEqual(cases['ABC-FU0002'][4:7], [2, 1, 1])
+        self.assertEqual(cases['ABC-FU0004'][4:7], [2, 1, 1])
+
+    def test_search_period_and_print_use_all_matching_records(self):
+        search = self._report('completed_vaccinations', {
+            'type': 'all', 'q': 'ABC-FU0002',
+        })
+        self.assertEqual(search.context['total'], 1)
+        self.assertContains(search, 'ABC-FU0002')
+        self.assertNotContains(search, 'ABC-FU0001')
+
+        today_only = self._report('completed_vaccinations', {
+            'type': 'daily',
+        })
+        self.assertEqual(today_only.context['total'], 1)
+        self.assertContains(today_only, 'ABC-FU0002')
+
+        printed = self._report('completed_vaccinations', {
+            'type': 'all', 'export': 'print',
+        })
+        self.assertEqual(printed.status_code, 200)
+        self.assertContains(printed, 'ABC-FU0001')
+        self.assertContains(printed, 'ABC-FU0002')
+        self.assertContains(printed, 'ABC-FU0003')
+        self.assertContains(printed, 'Municipal Health Office')
+
+    def test_report_cards_and_each_detail_page_are_available(self):
+        index = self.client.get(reverse('reports:reports_index'))
+        self.assertContains(index, 'Missed Appointments')
+        self.assertContains(index, 'Completed Vaccinations')
+        self.assertContains(index, 'Under Treatment')
+        self.assertContains(index, 'rep-grid--3')
+        for name in (
+            'missed_appointments',
+            'completed_vaccinations',
+            'under_treatment_report',
+        ):
+            response = self._report(name)
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, 'Back to Reports Center')
+            self.assertContains(response, 'Print Sheet')
+            self.assertEqual(response.content.count(b'type="search"'), 1)
 
 
 class GlobalReportSearchTests(TestCase):
@@ -372,12 +799,24 @@ class GlobalReportSearchTests(TestCase):
                 self.assertEqual(
                     [case.case_number for case in response.context['case_page']],
                     ['ABC-G0001'])
+                self.assertEqual(
+                    [patient.pk for patient in response.context['patient_page']],
+                    [self.male.pk])
+                self.assertNotIn(
+                    self.female.pk,
+                    [patient.pk for patient in response.context['patient_page']])
 
         response = self.client.get(url, {'q': 'Female', 'type': 'all'})
         self.assertEqual(response.context['summary']['total_patients'], 1)
         self.assertEqual(
             [case.case_number for case in response.context['case_page']],
             ['ABC-G0002'])
+        self.assertEqual(
+            [patient.pk for patient in response.context['patient_page']],
+            [self.female.pk])
+        self.assertNotIn(
+            self.male.pk,
+            [patient.pk for patient in response.context['patient_page']])
 
     def test_patient_report_export_uses_exact_sex_search(self):
         response = self.client.get(
@@ -404,30 +843,23 @@ class GlobalReportSearchTests(TestCase):
                     [case.case_number for case in response.context['case_page']],
                     [matching_case])
 
-    def test_search_field_limits_results_to_the_selected_field(self):
+    def test_global_search_automatically_searches_all_fields(self):
         self.female.first_name = self.male_case.case_number
         self.female.save(update_fields=['first_name'])
         url = reverse('reports:reports_index')
 
-        patient_name = self.client.get(url, {
+        response = self.client.get(url, {
             'q': self.male_case.case_number,
             'search_field': 'patient_name',
             'type': 'all',
         })
-        self.assertEqual(patient_name.context['result_count'], 1)
+        self.assertEqual(response.context['result_count'], 3)
         self.assertEqual(
-            [case.case_number for case in patient_name.context['case_page']],
-            [self.female_case.case_number])
-
-        case_number = self.client.get(url, {
-            'q': self.male_case.case_number,
-            'search_field': 'case_number',
-            'type': 'all',
-        })
-        self.assertEqual(case_number.context['result_count'], 1)
+            {case.case_number for case in response.context['case_page']},
+            {self.male_case.case_number, self.female_case.case_number})
         self.assertEqual(
-            [case.case_number for case in case_number.context['case_page']],
-            [self.male_case.case_number])
+            [patient.pk for patient in response.context['patient_page']],
+            [self.female.pk])
 
         export = self.client.get(
             reverse('reports:patient_treatment_report'),
@@ -472,18 +904,21 @@ class GlobalReportSearchTests(TestCase):
             barangay='San Pedro', animal='cat', created_by=self.nurse)
         response = self.client.get(reverse('reports:reports_index'), {
             'q': 'aIdEn', 'search_field': 'patient_name', 'type': 'all'})
-        self.assertEqual(response.context['result_count'], 2)
+        self.assertEqual(response.context['result_count'], 3)
         self.assertEqual(
             {case.case_number for case in response.context['case_page']},
             {'ABC-G0001', 'ABC-G0003'})
+        self.assertEqual(
+            [patient.pk for patient in response.context['patient_page']],
+            [self.male.pk])
 
-    def test_clear_search_resets_field_and_keeps_reporting_period(self):
+    def test_reporting_period_links_preserve_search_without_search_category(self):
         response = self.client.get(reverse('reports:reports_index'), {
             'q': 'male', 'search_field': 'sex', 'type': 'monthly'})
-        self.assertContains(response, 'value="sex" selected')
-        self.assertContains(response, 'href="?type=monthly"')
-        self.assertContains(response, '?type=weekly')
-        self.assertContains(response, 'search_field=sex')
+        self.assertContains(response, 'href="?type=monthly&q=male"')
+        self.assertContains(response, 'href="?type=weekly&q=male"')
+        self.assertNotContains(response, 'search_field=')
+        self.assertNotContains(response, 'Clear Search')
 
     def test_reporting_period_filters_matching_cases_by_incident_date(self):
         older_date = timezone.localdate() - datetime.timedelta(days=45)
@@ -522,6 +957,9 @@ class GlobalReportSearchTests(TestCase):
         self.assertEqual(
             [case.case_number for case in response.context['case_page']],
             [treated_case.case_number])
+        self.assertEqual(response.context['dose_page'].paginator.count, 1)
+        self.assertContains(response, 'Vaccination Records')
+        self.assertContains(response, 'Rabivax Z')
 
     def test_inventory_search_returns_actual_batches_without_changing_snapshot(self):
         expiry = timezone.localdate() + datetime.timedelta(days=365)
@@ -547,6 +985,18 @@ class GlobalReportSearchTests(TestCase):
             reverse('reports:medicine_inventory_report'), {'q': 'Amoxicillin'})
         self.assertEqual(len(response.context['products']), 1)
         self.assertIn(medicine, response.context['products'][0]['batches'])
+
+        for keyword, group, record in (
+                ('Rabies Vaccine', 'vaccine_page', vaccine),
+                ('Amoxicillin', 'medicine_page', medicine)):
+            with self.subTest(keyword=keyword):
+                result = self.client.get(
+                    reverse('reports:reports_index'),
+                    {'q': keyword, 'type': 'all'})
+                self.assertIn(record, result.context[group])
+                self.assertContains(result, 'Inventory Records')
+                self.assertContains(result, keyword)
+
         current_snapshot = self.client.get(
             reverse('reports:reports_index'), {'type': 'all'}
         ).context['inventory']
@@ -556,9 +1006,7 @@ class GlobalReportSearchTests(TestCase):
         response = self.client.get(reverse('reports:reports_index'), {
             'q': 'not-a-real-record', 'type': 'all'})
         self.assertContains(response, 'No matching records found.')
-        self.assertContains(
-            response,
-            'Try another patient name, case number, barangay, animal type, or status.')
+        self.assertContains(response, 'Please try another search keyword.')
 
 
 class DistributionTests(TestCase):
@@ -596,11 +1044,211 @@ class DistributionTests(TestCase):
 
     def test_barangay_and_animal_pages_render(self):
         self.client.force_login(self.nurse)
-        for name in ('barangay_report', 'animal_type_report'):
-            with self.subTest(url=name):
-                response = self.client.get(reverse(f'reports:{name}'))
-                self.assertEqual(response.status_code, 200)
-                self.assertContains(response, 'Distribution — horizontal bars')
+        barangay = self.client.get(reverse('reports:barangay_report'), {
+            'type': 'all',
+        })
+        self.assertEqual(barangay.status_code, 200)
+        self.assertContains(barangay, 'Cases by Barangay Report')
+        for heading in ('No.', 'Barangay', 'Total Cases'):
+            self.assertContains(barangay, heading)
+        summary_table = barangay.content.decode().split(
+            '<table', 1)[1].split('</table>', 1)[0]
+        self.assertIn('<th class="table-header">Action</th>', summary_table)
+        self.assertContains(barangay, 'View cases in Poblacion')
+        self.assertContains(barangay, 'View cases in San Isidro')
+        self.assertContains(barangay, 'Print Sheet')
+        self.assertContains(barangay, 'class="barangay-view-button"')
+        self.assertContains(barangay, 'background-color: #0D382C !important')
+        self.assertContains(barangay, 'background-color: #0C543F !important')
+        self.assertContains(barangay, 'color: #FFFFFF !important')
+        self.assertContains(barangay, 'padding: 10px 22px')
+        self.assertContains(barangay, 'gap: 8px')
+        header_actions = barangay.content.decode().split(
+            '<div class="flex flex-wrap justify-end gap-2 no-print">', 1)[1].split(
+                '</div>', 1)[0]
+        self.assertEqual(header_actions.count('<a '), 1)
+        self.assertIn('export=print-sheet', header_actions)
+        for hidden_action in ('Preview PDF', 'Download PDF', 'Export CSV'):
+            self.assertNotIn(hidden_action, header_actions)
+        self.assertNotContains(barangay, 'Percentage')
+        self.assertNotContains(barangay, 'Distribution — horizontal bars')
+        self.assertNotContains(barangay, 'ABC-D0001')
+        rows = barangay.context['rows']
+        self.assertEqual(
+            [row['name'] for row in rows],
+            ['Poblacion', 'San Isidro', 'Unspecified'])
+        self.assertEqual(barangay.context['total'], 4)
+        self.assertContains(barangay, 'export=print-sheet')
+
+        animal = self.client.get(reverse('reports:animal_type_report'))
+        self.assertEqual(animal.status_code, 200)
+        self.assertContains(animal, 'Cases by Animal Type Report')
+        self.assertContains(animal, 'Animal Type Case Summary')
+        self.assertContains(animal, 'Action')
+        self.assertContains(animal, 'Print Sheet')
+        self.assertNotContains(animal, 'Preview PDF')
+        self.assertNotContains(animal, 'Download PDF')
+        self.assertNotContains(animal, 'Export CSV')
+        self.assertNotContains(animal, 'Percentage')
+        self.assertNotContains(animal, 'Distribution — horizontal bars')
+
+    def test_animal_type_search_summary_and_detail_filtering(self):
+        self.client.force_login(self.nurse)
+        url = reverse('reports:animal_type_report')
+        response = self.client.get(url, {'type': 'all', 'q': 'dog'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total'], 2)
+        self.assertEqual(
+            [row['name'] for row in response.context['rows']], ['Dog'])
+        self.assertContains(response, 'Search animal type, case number, or patient...')
+        self.assertContains(response, 'animal-type/dog/')
+
+        today_response = self.client.get(url, {
+            'type': 'daily', 'q': 'dog',
+        })
+        self.assertEqual(today_response.status_code, 200)
+        self.assertEqual(today_response.context['total'], 0)
+
+        detail = self.client.get(reverse(
+            'reports:animal_type_detail_report',
+            kwargs={'animal_type': 'dog'},
+        ), {'type': 'all', 'q': 'ABC-D0001'})
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.context['total'], 1)
+        self.assertContains(detail, 'ABC-D0001')
+        self.assertContains(detail, 'Barangay')
+        self.assertNotContains(detail, 'ABC-D0002')
+        self.assertNotContains(detail, 'ABC-D0003')
+        self.assertContains(detail, 'type=all')
+        self.assertContains(detail, 'q=ABC-D0001')
+
+    def test_animal_type_print_sheets_group_all_and_detail_records(self):
+        self.client.force_login(self.nurse)
+        summary_sheet = self.client.get(reverse('reports:animal_type_report'), {
+            'type': 'all', 'export': 'print-sheet',
+        })
+        self.assertEqual(summary_sheet.status_code, 200)
+        self.assertTemplateUsed(
+            summary_sheet, 'reports/animal_type_print_sheet.html')
+        self.assertEqual(summary_sheet.context['grand_total'], 4)
+        self.assertEqual(
+            [(group['name'], group['total'])
+             for group in summary_sheet.context['groups']],
+            [('Cat', 1), ('Dog', 2), ('Other', 1)],
+        )
+        for text in (
+            'Animal Bite Treatment Center', 'Municipal Health Office',
+            'CASES BY ANIMAL TYPE REPORT', 'Reporting Period: All time',
+            'Date Generated:', 'Cat', 'ABC-D0003', 'Dog', 'ABC-D0001',
+            'Other', 'ABC-D0004', 'GRAND TOTAL: 4 CASES',
+        ):
+            self.assertContains(summary_sheet, text)
+
+        detail_sheet = self.client.get(reverse(
+            'reports:animal_type_detail_report',
+            kwargs={'animal_type': 'dog'},
+        ), {'type': 'all', 'export': 'print-sheet'})
+        self.assertEqual(detail_sheet.status_code, 200)
+        self.assertEqual(detail_sheet.context['grand_total'], 2)
+        self.assertContains(detail_sheet, 'Total Dog Cases: 2')
+        self.assertContains(detail_sheet, 'ABC-D0001')
+        self.assertContains(detail_sheet, 'ABC-D0002')
+        self.assertNotContains(detail_sheet, 'ABC-D0003')
+
+    def test_barangay_detail_shows_only_selected_cases_and_preserves_filters(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(
+            reverse('reports:barangay_detail_report', kwargs={
+                'barangay': 'Poblacion',
+            }),
+            {'type': 'all', 'q': 'ABC-D0001'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total'], 1)
+        self.assertContains(response, 'ABC-D0001')
+        self.assertNotContains(response, 'ABC-D0002')
+        self.assertNotContains(response, 'ABC-D0003')
+        self.assertContains(response, 'Ana Cruz')
+        self.assertContains(response, 'Date of Incident')
+        self.assertContains(response, 'Exposure Type')
+        self.assertContains(response, 'type=all')
+        self.assertContains(response, 'q=ABC-D0001')
+        self.assertContains(response, 'Print Report')
+
+    def test_barangay_detail_prints_all_selected_period_cases(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(
+            reverse('reports:barangay_detail_report', kwargs={
+                'barangay': 'Poblacion',
+            }),
+            {'type': 'monthly', 'export': 'print'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'reports/print_official.html')
+        for text in (
+            'CASES BY BARANGAY REPORT', 'Selected Barangay', 'Poblacion',
+            'Reporting Period', 'Date Generated', 'Total Number of Cases',
+            'ABC-D0001', 'ABC-D0002', 'Animal Bite Treatment Center',
+            'Municipal Health Office',
+        ):
+            self.assertContains(response, text)
+        self.assertNotContains(response, 'ABC-D0003')
+
+    def test_barangay_print_sheet_groups_all_cases_and_totals(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse('reports:barangay_report'), {
+            'type': 'all', 'export': 'print-sheet',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'reports/barangay_print_sheet.html')
+        self.assertEqual(response.context['grand_total'], 4)
+        self.assertEqual(
+            [(group['name'], group['total'])
+             for group in response.context['groups']],
+            [('Poblacion', 2), ('San Isidro', 1), ('Unspecified', 1)],
+        )
+        for text in (
+            'CASES BY BARANGAY REPORT', 'Animal Bite Treatment Center',
+            'Municipal Health Office', 'Reporting Period: All time',
+            'Date Generated:', 'Barangay: Poblacion', 'ABC-D0001',
+            'ABC-D0002', 'Barangay: San Isidro', 'ABC-D0003',
+            'GRAND TOTAL: 4 CASES', 'Case Status',
+        ):
+            self.assertContains(response, text)
+
+    def test_barangay_print_sheet_obeys_period_and_search(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse('reports:barangay_report'), {
+            'type': 'monthly', 'q': 'ABC-D0001', 'export': 'print-sheet',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['grand_total'], 1)
+        self.assertEqual(len(response.context['groups']), 1)
+        self.assertEqual(response.context['groups'][0]['name'], 'Poblacion')
+        self.assertContains(response, 'Search: ABC-D0001')
+        self.assertContains(response, 'ABC-D0001')
+        self.assertNotContains(response, 'ABC-D0002')
+        self.assertNotContains(response, 'ABC-D0003')
+
+    def test_barangay_detail_rejects_unknown_barangays_and_unauthorized_roles(self):
+        self.client.force_login(self.nurse)
+        unknown = self.client.get(reverse(
+            'reports:barangay_detail_report',
+            kwargs={'barangay': 'No Such Barangay'},
+        ), {'type': 'all'})
+        self.assertEqual(unknown.status_code, 404)
+
+        health_worker = make_user('dist.health.worker', 'health_worker')
+        self.client.force_login(health_worker)
+        forbidden = self.client.get(reverse('reports:barangay_report'))
+        self.assertEqual(forbidden.status_code, 403)
+        forbidden_detail = self.client.get(reverse(
+            'reports:barangay_detail_report',
+            kwargs={'barangay': 'Poblacion'},
+        ), {'type': 'all'})
+        self.assertEqual(forbidden_detail.status_code, 403)
 
     def test_distribution_reports_ignore_custom_date_parameters(self):
         self.client.force_login(self.nurse)
@@ -714,6 +1362,112 @@ class InventoryReportTests(TestCase):
         rabipur = next(p for p in products if p['name'] == 'Rabipur')
         self.assertEqual(rabipur['stock_status'], 'Low Stock')
 
+    def test_vaccine_usage_search_matches_name_brand_and_batch(self):
+        self.client.force_login(self.nurse)
+        url = reverse('reports:vaccine_report')
+
+        by_name = self.client.get(url, {'type': 'all', 'q': 'vErOrAb'})
+        self.assertEqual(by_name.status_code, 200)
+        self.assertEqual(by_name.context['page_obj'].paginator.count, 2)
+        self.assertEqual(by_name.context['total_received'], 15)
+
+        by_brand = self.client.get(url, {'type': 'all', 'q': 'sAnOfI'})
+        self.assertEqual(by_brand.context['page_obj'].paginator.count, 2)
+        by_batch = self.client.get(url, {'type': 'all', 'q': 'v-2'})
+        self.assertEqual(by_batch.context['page_obj'].paginator.count, 1)
+        self.assertContains(by_batch, 'V-2')
+        self.assertNotContains(by_batch, 'V-1')
+
+    def test_vaccine_usage_search_matches_exact_quantities_and_expiry_dates(self):
+        exact_quantity = VaccineInventory.objects.create(
+            vaccine_name='Quantity Match', brand='Exact', batch_number='Q-MATCH',
+            expiration_date=datetime.date(2027, 11, 9), quantity_received=100,
+            quantity_available=98, quantity_used=2,
+        )
+        nonmatching_quantities = VaccineInventory.objects.create(
+            vaccine_name='Quantity Near Match', brand='Exact',
+            batch_number='Q-NEAR', expiration_date=self.live_date,
+            quantity_received=200, quantity_available=20, quantity_used=12,
+        )
+        self.client.force_login(self.nurse)
+        url = reverse('reports:vaccine_report')
+
+        quantity_response = self.client.get(url, {'type': 'all', 'q': '2'})
+        quantity_ids = {
+            item.pk for item in quantity_response.context['items'].object_list
+        }
+        self.assertIn(exact_quantity.pk, quantity_ids)
+        self.assertIn(self.low.pk, quantity_ids)
+        self.assertNotIn(nonmatching_quantities.pk, quantity_ids)
+
+        for date_query in ('Nov 09, 2027', '2027-11-09', '11/09/2027'):
+            with self.subTest(date_query=date_query):
+                response = self.client.get(url, {
+                    'type': 'all', 'q': date_query,
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context['page_obj'].paginator.count, 1)
+                self.assertContains(response, 'Q-MATCH')
+
+    def test_vaccine_usage_search_paginates_matching_database_records(self):
+        for number in range(21):
+            VaccineInventory.objects.create(
+                vaccine_name='Pagination Vaccine', brand='Page Test',
+                batch_number=f'PAGE-{number}',
+                expiration_date=self.live_date, quantity_received=10,
+                quantity_available=10,
+            )
+        VaccineInventory.objects.create(
+            vaccine_name='Z Pagination Vaccine', brand='Page Test',
+            batch_number='PAGE-TAIL', expiration_date=self.live_date,
+            quantity_received=10, quantity_available=10,
+        )
+        self.client.force_login(self.nurse)
+
+        response = self.client.get(reverse('reports:vaccine_report'), {
+            'type': 'all', 'q': 'Pagination Vaccine', 'page': 2,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['page_obj'].paginator.count, 22)
+        self.assertEqual(len(response.context['items']), 2)
+        self.assertContains(response, 'PAGE-TAIL')
+
+    def test_vaccine_usage_search_combines_with_reporting_period(self):
+        old_date = timezone.localdate() - datetime.timedelta(days=40)
+        self.v1.date_received = timezone.localdate()
+        self.v1.save(update_fields=['date_received'])
+        self.v2.date_received = old_date
+        self.v2.save(update_fields=['date_received'])
+        self.client.force_login(self.nurse)
+
+        response = self.client.get(reverse('reports:vaccine_report'), {
+            'type': 'last7', 'q': 'verorab',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['page_obj'].paginator.count, 1)
+        self.assertEqual(response.context['total_received'], 10)
+        self.assertContains(response, 'V-1')
+        self.assertNotContains(response, 'V-2')
+
+    def test_vaccine_usage_search_ui_and_empty_state(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse('reports:vaccine_report'), {
+            'type': 'all', 'q': 'not-a-vaccine',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Search All Vaccine Records')
+        self.assertContains(response, 'Reporting Period')
+        self.assertContains(response, 'No matching vaccine records found.')
+        self.assertEqual(response.content.count(b'type="search"'), 1)
+        search_form = response.content.decode().split(
+            'role="search"', 1)[1].split('</form>', 1)[0]
+        self.assertEqual(search_form.count('<button'), 1)
+        self.assertIn('name="q"', search_form)
+        self.assertIn('name="type"', search_form)
+        self.assertNotIn('name="start_date"', search_form)
+
     def test_medicine_products_keep_strengths_separate(self):
         products = grouped_medicine_products()
         amoxicillin = [p for p in products if p['name'] == 'Amoxicillin']
@@ -763,6 +1517,156 @@ class InventoryReportTests(TestCase):
         after = list(VaccineInventory.objects.values_list(
             'pk', 'quantity_available', 'quantity_used'))
         self.assertEqual(before, after)
+
+    def test_stock_alert_categories_include_complete_batch_information(self):
+        expiring = VaccineInventory.objects.create(
+            vaccine_name='Imovax', brand='Sanofi',
+            dosage_form='injectable', unit='vial', batch_number='V-SOON',
+            expiration_date=timezone.localdate() + datetime.timedelta(days=5),
+            quantity_received=8, quantity_available=6, quantity_used=2,
+        )
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse('reports:stock_alerts_report'))
+        self.assertEqual(response.status_code, 200)
+        sections = {section['key']: section for section in response.context['sections']}
+
+        low_row = next(
+            row for row in sections['low_stock']['rows']
+            if row['product'] == 'Rabipur')
+        self.assertEqual(low_row['form'], 'Injectable')
+        self.assertEqual(low_row['unit'], 'vial')
+        self.assertEqual(low_row['available'], 2)
+        self.assertEqual(low_row['batch_details'][0]['batch'], 'V-4')
+        self.assertEqual(low_row['batch_details'][0]['expiration'], self.future)
+
+        out_row = next(
+            row for row in sections['out_of_stock']['rows']
+            if row['product'] == 'Paracetamol 500 mg')
+        self.assertEqual(out_row['form'], 'Tablet')
+        self.assertEqual(out_row['available'], 0)
+        self.assertEqual(out_row['batch_details'][0]['batch'], 'M-3')
+        self.assertEqual(out_row['batch_details'][0]['expiration'], self.future)
+
+        soon_row = next(
+            row for row in sections['expiring']['rows']
+            if row['batch'] == 'V-SOON')
+        self.assertEqual(soon_row['form'], 'Injectable')
+        self.assertEqual(soon_row['unit'], 'vial')
+        self.assertEqual(soon_row['available'], 6)
+        self.assertEqual(soon_row['expiration'], expiring.expiration_date)
+
+        expired_row = next(
+            row for row in sections['expired']['rows']
+            if row['batch'] == 'V-3')
+        self.assertEqual(expired_row['available'], 0)
+        self.assertEqual(expired_row['pending_pull_out'], 4)
+        self.assertEqual(expired_row['expiration'], self.past)
+
+        content = response.content.decode()
+        for heading in (
+                'Medicine / Vaccine', 'Form', 'Unit', 'Batches',
+                'Available', 'Expiry'):
+            self.assertIn(heading, content)
+            self.assertEqual(content.count(f'>{heading}</th>'), 5)
+        self.assertIn('pending pull-out', content)
+
+    def test_batch_expiring_today_is_expired_not_expiring_soon(self):
+        today = timezone.localdate()
+        batch = VaccineInventory.objects.create(
+            vaccine_name='Anti-Rabies Vaccine', brand='Verorab',
+            dosage_form='injectable', unit='vial', batch_number='TODAY-1',
+            expiration_date=today, quantity_received=3, quantity_available=2,
+        )
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse('reports:stock_alerts_report'))
+        sections = {section['key']: section for section in response.context['sections']}
+        expired = next(row for row in sections['expired']['rows']
+                       if row['batch'] == 'TODAY-1')
+        self.assertEqual(expired['available'], 0)
+        self.assertEqual(expired['pending_pull_out'], 2)
+        self.assertEqual(expired['expiration'], batch.expiration_date)
+        self.assertNotIn(
+            'TODAY-1',
+            [row['batch'] for row in sections['expiring']['rows']],
+        )
+
+    def test_pulled_out_stocks_report_includes_medicine_and_vaccine_transactions(self):
+        partial_medicine = MedicineInventory.objects.create(
+            medicine_name='Paracetamol', generic_name='Acetaminophen',
+            strength='500 mg', dosage_form='tablet', unit='tablet',
+            batch_number='M-OLD-PARTIAL', expiration_date=self.past,
+            quantity_received=10, quantity_available=4,
+        )
+        MedicineStockMovement.objects.create(
+            medicine=partial_medicine, movement_type='expired_pull_out',
+            quantity=6, batch_number=partial_medicine.batch_number,
+            expiration_date=partial_medicine.expiration_date,
+            moved_by=self.nurse, notes='Reason: Expired Stock',
+        )
+        self.expired.quantity_available = 0
+        self.expired.save(update_fields=['quantity_available'])
+        VaccineStockMovement.objects.create(
+            vaccine=self.expired, movement_type='expired_pull_out',
+            quantity=4, batch_number=self.expired.batch_number,
+            expiration_date=self.expired.expiration_date,
+            moved_by=self.nurse, notes='Reason: Damaged packaging',
+        )
+
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse('reports:stock_alerts_report'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '5. Pulled Out Stocks')
+        self.assertContains(response, 'Completed medicine and vaccine stock pull-out records.')
+        sections = {section['key']: section for section in response.context['sections']}
+        pulled_out = sections['pulled_out']['rows']
+        self.assertEqual(len(pulled_out), 2)
+        medicine_row = next(row for row in pulled_out
+                            if row['batch'] == 'M-OLD-PARTIAL')
+        vaccine_row = next(row for row in pulled_out
+                           if row['batch'] == 'V-3')
+        self.assertEqual(medicine_row['quantity'], 6)
+        self.assertEqual(medicine_row['form'], 'Tablet')
+        self.assertEqual(medicine_row['reason'], 'Expired Stock')
+        self.assertEqual(vaccine_row['quantity'], 4)
+        self.assertEqual(vaccine_row['status'], 'Pulled Out')
+        self.assertNotIn(
+            'V-3', [row['batch'] for row in sections['expired']['rows']])
+        self.assertEqual(
+            'M-OLD-PARTIAL',
+            [row['batch'] for row in sections['expired']['rows']][0],
+        )
+
+    def test_stock_alert_exports_include_completed_pull_out_records(self):
+        MedicineStockMovement.objects.create(
+            medicine=self.med_a, movement_type='expired_pull_out',
+            quantity=3, batch_number='M-1',
+            expiration_date=self.med_a.expiration_date, moved_by=self.nurse,
+            notes='Reason: Expired Stock',
+        )
+        self.client.force_login(self.nurse)
+        url = reverse('reports:stock_alerts_report')
+        csv_response = self.client.get(url, {'export': 'csv'})
+        self.assertContains(csv_response, 'Pull-out date:')
+        self.assertContains(csv_response, 'Amoxicillin')
+        self.assertContains(csv_response, 'Pulled Out')
+        for heading in ('Medicine / Vaccine', 'Form', 'Unit', 'Batches',
+                        'Available', 'Expiry'):
+            self.assertContains(csv_response, heading)
+        csv_rows = list(csv.reader(csv_response.content.decode().splitlines()))
+        self.assertEqual(csv_rows[0], [
+            'Medicine / Vaccine', 'Form', 'Unit', 'Batches', 'Available',
+            'Expiry',
+        ])
+        self.assertTrue(all(len(row) == 6 for row in csv_rows))
+        print_response = self.client.get(url, {'export': 'print'})
+        self.assertEqual(print_response.status_code, 200)
+        self.assertContains(print_response, 'Amoxicillin')
+        self.assertContains(print_response, 'M-1')
+        self.assertContains(print_response, 'Pull-out date:')
+        self.assertContains(print_response, 'Transaction Reference')
+        pdf_response = self.client.get(url, {'export': 'pdf'})
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertTrue(pdf_response.content.startswith(b'%PDF'))
 
     def test_inventory_exports_are_available(self):
         self.client.force_login(self.nurse)

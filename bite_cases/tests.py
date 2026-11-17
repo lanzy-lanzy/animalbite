@@ -8,14 +8,14 @@ import datetime
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
-from django.utils import timezone
+from django.utils import formats, timezone
 
 from audit.models import AuditLog
 from doctor.models import ClinicalAssessment
 from patients.models import Patient
 from vaccination.models import VaccinationSchedule, VaccineDose
 
-from .models import AnimalBiteCase
+from .models import AnimalBiteCase, ExposureClassification
 
 U = get_user_model()
 
@@ -252,7 +252,7 @@ class BiteCasePortalAccessVisibilityTests(BiteCaseDeleteTestCase):
 
     def test_admin_case_view_keeps_only_bite_incident_details(self):
         content = self._detail(self.admin).content.decode()
-        self.assertIn("Bite Incident Details", content)
+        self.assertIn("Bite Location / Body Part", content)
         self.assertIn(self.case.case_number, content)
         self.assertIn("&larr; Back", content)
         for marker in (
@@ -267,39 +267,200 @@ class BiteCasePortalAccessVisibilityTests(BiteCaseDeleteTestCase):
         ):
             self.assertNotIn(marker, content)
 
-    def test_admin_case_view_uses_reference_card_layout(self):
+    def test_admin_case_view_uses_the_three_section_panel(self):
         content = self._detail(self.admin).content.decode()
         for marker in (
-            "css/patient_detail.css",
-            'class="pd-section-num">3</span>',
-            "<h2>Bite Incident Details</h2>",
-            'pd-badge--gold">1 case</span>',
-            'class="pd-case-eyebrow">Bite Case 1 of 1</p>',
-            f'class="pd-case-number">{self.case.case_number}</p>',
-            "View Case &rarr;",
-            'class="pd-grid pd-grid-2"',
+            "css/bite_case_sheet.css",
+            'class="bcs-wrap"',
+            'class="bcs-panel"',
+            'class="bcs-header"',
+            '<h1 class="bcs-title">Bite Case Details</h1>',
+            'class="bcs-headline"',
+            'class="bcs-status"',
+            'class="bcs-desc"',
+            'class="bcs-section"',
+            'class="bcs-section-title"',
+            'class="bcs-icon"',
+            'class="bcs-fields"',
+            'class="bcs-field"',
+            'class="bcs-label"',
+            'class="bcs-value"',
+            'class="bcs-btn bcs-btn--primary"',
+            'class="bcs-btn-icon"',
+            "&larr; Back to Bite Cases",
+            "Print Sheet",
+            "window.print()",
+        ):
+            self.assertIn(marker, content)
+        for legacy in (
+            "patient_detail.css", "pd-tile", "pd-badge", "pd-grid", "pd-section",
+            "bcs-doc", "bcs-grid", "bcs-row", "bcs-note",
+            "Recent Bite Cases", "View Case",
+        ):
+            self.assertNotIn(legacy, content)
+
+    def test_admin_case_header_shows_case_number_status_and_summary(self):
+        content = self._detail(self.admin).content.decode()
+        self.assertIn(
+            'class="bcs-head-label">Case Number:</span> '
+            f'<span class="bcs-head-value">{self.case.case_number}</span>',
+            content,
+        )
+        self.assertIn(
+            'class="bcs-head-label">Status:</span> '
+            f'<span class="bcs-status">{self.case.get_case_status_display()}</span>',
+            content,
+        )
+        summary = "%s %s &middot; %s at %s" % (
+            self.case.get_animal_type_display(),
+            self.case.get_exposure_type_display(),
+            formats.date_format(self.case.date_time_bite, "F j, Y"),
+            formats.time_format(self.case.date_time_bite, "g:i A"),
+        )
+        self.assertIn(f'class="bcs-desc">{summary}</p>', content)
+
+    def test_admin_case_sections_appear_in_order(self):
+        content = self._detail(self.admin).content.decode()
+        positions = [
+            content.index(title)
+            for title in (
+                "Incident Information",
+                "Animal Information",
+                "Exposure &amp; Wound Information",
+            )
+        ]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_admin_case_fields_follow_their_section_order(self):
+        content = self._detail(self.admin).content.decode()
+        positions = [
+            content.index(f'class="bcs-label">{label}</span>')
+            for label in (
+                "Patient Name", "Patient Number", "Place of Incident",
+                "Barangay", "Date of Consultation", "Animal Type", "Ownership",
+                "Animal Condition", "Animal Vaccination Status", "Exposure Type",
+                "Bite Location / Body Part", "Number of Wounds",
+                "Wound Washed Immediately", "Wound Description",
+                "First Aid Given",
+            )
+        ]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_admin_case_view_hides_incident_date_and_time(self):
+        content = self._detail(self.admin).content.decode()
+        for hidden in ("Date of Incident", "Time of Incident"):
+            self.assertNotIn(f'class="bcs-label">{hidden}</span>', content)
+
+    def test_admin_case_view_shows_only_the_selected_case(self):
+        content = self._detail(self.admin).content.decode()
+        self.assertIn(self.case.case_number, content)
+        self.assertNotIn(self.other_case.case_number, content)
+
+    def test_admin_case_view_hides_recording_and_classification_fields(self):
+        self.case.initial_consultation_notes = "Referred for anti-rabies vaccination"
+        self.case.save(update_fields=["initial_consultation_notes"])
+        ExposureClassification.objects.create(
+            bite_case=self.case, category="category_ii", classified_by=self.doctor,
+        )
+        content = self._detail(self.admin).content.decode()
+        for hidden in (
+            "Recorded By", "Date Recorded", "Last Updated",
+            "Initial Consultation Notes", "WHO Bite Category",
+        ):
+            self.assertNotIn(f'class="bcs-label">{hidden}</span>', content)
+        self.assertNotIn("Referred for anti-rabies vaccination", content)
+        self.assertNotIn("Category II", content)
+
+    def test_admin_case_view_shows_every_saved_case_field(self):
+        self.case.place_of_incident = "Boarding House"
+        self.case.incident_barangay = "Caridad"
+        self.case.animal_other = "Ferret"
+        self.case.body_part_affected = "Left leg"
+        self.case.wound_description = "Puncture wounds on the calf"
+        self.case.first_aid_given = "Washed with soap and water"
+        self.case.save()
+        content = self._detail(self.admin).content.decode()
+        for value in (
+            self.case.case_number,
+            self.case.get_case_status_display(),
+            self.patient.full_name(),
+            self.patient.patient_number,
+            "Boarding House", "Caridad", "Dog (Ferret)", "Owned",
+            "Under Observation", "Unknown", "Bite", "Left leg",
+            "Puncture wounds on the calf", "Washed with soap and water",
+        ):
+            self.assertIn(value, content)
+        for label in (
+            "Patient Name", "Patient Number", "Place of Incident", "Barangay",
+            "Date of Consultation", "Animal Type", "Ownership", "Animal Condition",
+            "Animal Vaccination Status", "Exposure Type",
+            "Bite Location / Body Part", "Number of Wounds",
+            "Wound Washed Immediately", "Wound Description", "First Aid Given",
+        ):
+            self.assertIn(f'class="bcs-label">{label}</span>', content)
+
+    def test_admin_case_view_marks_missing_details_instead_of_blank_cells(self):
+        content = self._detail(self.admin).content.decode()
+        self.assertIn('class="bcs-value bcs-empty">Not Recorded</span>', content)
+
+    def test_nurse_case_view_keeps_full_sections(self):
+        content = self._detail(self.nurse).content.decode()
+        self.assertIn("Bite Incident Details", content)
+        self.assertIn("Quick Actions", content)
+        self.assertIn("Exposure Classification", content)
+        self.assertIn('id="clinical-assessment"', content)
+        self.assertIn("Medical Notes", content)
+        self.assertNotIn("pd-section-num", content)
+        self.assertNotIn("pd-grid pd-grid-2", content)
+
+    def test_doctor_case_view_uses_the_shared_admin_sheet(self):
+        content = self._detail(self.doctor).content.decode()
+        for marker in (
+            "css/bite_case_sheet.css",
+            'class="bcs-wrap"',
+            'class="bcs-panel"',
+            'class="bcs-header"',
+            '<h1 class="bcs-title">Bite Case Details</h1>',
+            'class="bcs-headline"',
+            'class="bcs-status"',
+            'class="bcs-desc"',
+            'class="bcs-section"',
+            'class="bcs-section-title"',
+            'class="bcs-icon"',
+            'class="bcs-fields"',
+            'class="bcs-field"',
+            'class="bcs-label"',
+            'class="bcs-value"',
+            "Incident Information", "Animal Information",
+            "Exposure &amp; Wound Information",
         ):
             self.assertIn(marker, content)
         for label in (
-            "Case Number", "Case Status", "Date of Incident", "Time of Incident",
-            "Place of Incident", "Barangay", "Animal Type", "Ownership",
+            "Patient Name", "Patient Number", "Place of Incident", "Barangay",
+            "Date of Consultation", "Animal Type", "Ownership",
             "Animal Condition", "Animal Vaccination Status", "Exposure Type",
-            "Body Part / Wounds", "Number of Wounds", "Date of Consultation",
-            "Wound Washed Immediately", "First Aid Given",
+            "Bite Location / Body Part", "Number of Wounds",
+            "Wound Washed Immediately", "Wound Description", "First Aid Given",
         ):
-            self.assertIn(f'class="pd-label">{label}</p>', content)
-
-    def test_doctor_and_nurse_case_view_keeps_full_sections(self):
-        for user in (self.doctor, self.nurse):
-            with self.subTest(role=user.role):
-                content = self._detail(user).content.decode()
-                self.assertIn("Bite Incident Details", content)
-                self.assertIn("Quick Actions", content)
-                self.assertIn("Exposure Classification", content)
-                self.assertIn('id="clinical-assessment"', content)
-                self.assertIn("Medical Notes", content)
-                self.assertNotIn("pd-section-num", content)
-                self.assertNotIn("pd-grid pd-grid-2", content)
+            self.assertIn(f'class="bcs-label">{label}</span>', content)
+        for removed in (
+            "Bite Incident Details", "Quick Actions", "Exposure Classification",
+            'id="clinical-assessment"', "Vaccination Progress",
+            "Doctor Actions", "bcs-actions-label", "Medical Notes",
+            "No notes yet.", "Add medical note", "Add Note",
+            "bcs-panel--notes", 'id="medical-notes"',
+        ):
+            self.assertNotIn(removed, content)
+        for url in (
+            reverse("doctor:assess_case", args=[self.case.pk]),
+            reverse("bite_cases:classify_exposure", args=[self.case.pk]),
+            reverse("vaccination:follow_up_create", args=[self.case.pk]),
+            reverse("vaccination:observation_create", args=[self.case.pk]),
+            reverse("bite_cases:add_medical_note", args=[self.case.pk]),
+        ):
+            self.assertNotIn(url, content)
+        self.assertIn("Back to Bite Cases", content)
+        self.assertIn("Print Sheet", content)
 
     def test_nurse_and_doctor_do_not_see_portal_details_or_actions(self):
         for user in (self.nurse, self.doctor):
@@ -374,3 +535,154 @@ class BiteCaseDeleteModalTests(BiteCaseDeleteTestCase):
         self.assertIn("Cancel", html)
         self.assertIn("Confirm Delete", html)
         self.assertIn("csrfmiddlewaretoken", html)
+
+
+class BiteCaseSidebarBadgeTests(TestCase):
+    """The Admin sidebar badge counts only bite cases whose status is New Case."""
+
+    def setUp(self):
+        self.admin = U.objects.create_user("admin.badge", password="pw12345678", role="admin")
+        self.patient = self._make_patient("PAT-BADGE-01", "Badge")
+        self.other_patient = self._make_patient("PAT-BADGE-02", "Other")
+
+    def _make_patient(self, number, first_name):
+        return Patient.objects.create(
+            patient_number=number, first_name=first_name, last_name="Fixture",
+            birthdate=datetime.date(1990, 1, 1), contact_number="09170000000",
+            sex="female",
+        )
+
+    def _make_case(self, number, patient, status="new"):
+        return AnimalBiteCase.objects.create(
+            case_number=number,
+            patient=patient,
+            created_by=self.admin,
+            animal_type="dog",
+            animal_ownership="owned",
+            animal_vax_status="unknown",
+            animal_condition="under_observation",
+            exposure_type="bite",
+            body_part_affected="right hand",
+            number_of_wounds=1,
+            date_time_bite=timezone.make_aware(datetime.datetime(2026, 10, 30, 9, 0)),
+            date_time_consultation=timezone.make_aware(datetime.datetime(2026, 10, 30, 10, 0)),
+            case_status=status,
+        )
+
+    def _page(self, url_name="bite_cases:case_list", *args):
+        self.client.force_login(self.admin)
+        return self.client.get(reverse(url_name, args=args))
+
+    def _count(self, response):
+        return response.context["new_bite_case_count"]
+
+    def test_single_new_case_shows_a_count_of_one(self):
+        self._make_case("ABC-BADGE-01", self.patient)
+        response = self._page()
+        self.assertEqual(self._count(response), 1)
+        self.assertContains(response, 'aria-label="1 new bite case">1</span>')
+
+    def test_each_new_case_is_counted_once(self):
+        self._make_case("ABC-BADGE-01", self.patient)
+        self._make_case("ABC-BADGE-02", self.patient)
+        self._make_case("ABC-BADGE-03", self.other_patient)
+        response = self._page()
+        self.assertEqual(self._count(response), 3)
+        self.assertContains(response, 'aria-label="3 new bite cases">3</span>')
+
+    def test_badge_is_hidden_when_no_case_is_new(self):
+        self._make_case("ABC-BADGE-01", self.patient, status="under_treatment")
+        self._make_case("ABC-BADGE-02", self.other_patient, status="completed")
+        response = self._page()
+        self.assertEqual(self._count(response), 0)
+        self.assertNotIn("new bite case", response.content.decode())
+
+    def test_non_new_statuses_are_not_counted(self):
+        for index, status in enumerate(
+            ("under_treatment", "completed", "missed", "referred", "archived"), 1
+        ):
+            self._make_case(f"ABC-BADGE-{index:02d}", self.patient, status=status)
+        self._make_case("ABC-BADGE-99", self.other_patient)
+        response = self._page()
+        self.assertEqual(self._count(response), 1)
+        self.assertContains(response, 'aria-label="1 new bite case">1</span>')
+
+    def test_creating_a_case_through_the_view_increases_the_badge(self):
+        self.client.force_login(self.admin)
+        self.assertEqual(self._count(self._page()), 0)
+        response = self.client.post(reverse("bite_cases:case_create"), {
+            "patient": self.patient.pk,
+            "date_time_bite": "2026-10-30T09:00",
+            "place_of_incident": "Basketball court",
+            "incident_barangay": "Poblacion",
+            "animal_type": "dog",
+            "animal_ownership": "stray",
+            "animal_vax_status": "unknown",
+            "animal_condition": "missing",
+            "exposure_type": "bite",
+            "body_part_affected": "Left ankle",
+            "number_of_wounds": 1,
+        })
+        self.assertEqual(response.status_code, 302)
+        created = AnimalBiteCase.objects.get()
+        self.assertEqual(created.case_status, "new")
+        self.assertEqual(self._count(self._page()), 1)
+
+    def test_status_change_decreases_the_badge(self):
+        case = self._make_case("ABC-BADGE-01", self.patient)
+        self._make_case("ABC-BADGE-02", self.other_patient)
+        self.assertEqual(self._count(self._page()), 2)
+        case.case_status = "under_treatment"
+        case.save(update_fields=["case_status", "updated_at"])
+        response = self._page()
+        self.assertEqual(self._count(response), 1)
+        self.assertNotIn("2 new bite cases", response.content.decode())
+
+    def test_viewing_the_case_list_and_detail_keeps_the_badge(self):
+        case = self._make_case("ABC-BADGE-01", self.patient)
+        self.assertEqual(self._count(self._page()), 1)
+        self.assertEqual(self._count(self._page()), 1)
+        detail = self._page("bite_cases:case_detail", case.pk)
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(self._count(detail), 1)
+        self.assertContains(detail, 'aria-label="1 new bite case">1</span>')
+
+    def test_patients_badge_stays_independent_from_bite_cases(self):
+        from pre_registrations.models import PreRegistration
+
+        PreRegistration.objects.create(
+            first_name="Pending", last_name="Online",
+            birthdate=datetime.date(2000, 1, 1), sex="female",
+            contact_number="09170000001", address="Zone 1", barangay="Poblacion",
+            medical_history="None", allergy_info="None", previous_rabies_vax="None",
+            bite_datetime=timezone.now(), incident_place="Street",
+            incident_barangay="Poblacion", animal_type="dog",
+            animal_ownership="stray", animal_vaccination_status="unknown",
+            animal_condition="alive", exposure_type="bite",
+            body_part_affected="Left hand", consent_given=True,
+        )
+        self._make_case("ABC-BADGE-01", self.patient)
+        self._make_case("ABC-BADGE-02", self.other_patient)
+        response = self._page()
+        self.assertEqual(response.context["pending_online_registration_count"], 1)
+        self.assertEqual(self._count(response), 2)
+        self.assertContains(response, 'aria-label="1 pending online registration">1</span>')
+        self.assertContains(response, 'aria-label="2 new bite cases">2</span>')
+
+    def test_count_is_consistent_across_admin_pages(self):
+        self._make_case("ABC-BADGE-01", self.patient)
+        self._make_case("ABC-BADGE-02", self.other_patient)
+        for url_name in (
+            "dashboard:index",
+            "patients:patient_list",
+            "bite_cases:case_list",
+            "vaccination:patient_schedule_list",
+            "vaccination:sms_log_list",
+            "inventory:vaccine_list",
+            "reports:reports_index",
+        ):
+            with self.subTest(page=url_name):
+                response = self._page(url_name)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self._count(response), 2)
+                self.assertContains(response, 'aria-label="2 new bite cases">2</span>')

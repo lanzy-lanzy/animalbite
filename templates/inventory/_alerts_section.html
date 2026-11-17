@@ -112,6 +112,46 @@
             text-decoration: none;
         }
         .inv-alert-action:hover { text-decoration: underline; }
+        .inv-alert-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        .inv-alert-pullout {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 9px;
+            padding: 5px 11px;
+            border: 0;
+            border-radius: 999px;
+            background: #0D382C;
+            color: #FFFFFF;
+            font-size: 11.5px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+        .inv-alert-pullout:hover { background: #14513F; }
+        .inv-alert-dialog {
+            width: min(94vw, 520px);
+            max-height: 90vh;
+            padding: 0;
+            overflow: auto;
+            border: 0;
+            border-radius: 18px;
+            background: #FFFDF7;
+            color: #20362F;
+            box-shadow: 0 24px 70px rgba(8, 32, 26, .3);
+        }
+        .inv-alert-dialog::backdrop { background: rgba(8, 32, 26, .58); }
+        .inv-alert-dialog form { padding: 22px; }
+        .inv-alert-dialog h3 { margin: 0 0 14px; color: #0D382C; font-size: 18px; font-weight: 800; }
+        .inv-alert-dialog dl { display: grid; gap: 8px; margin: 0 0 15px; }
+        .inv-alert-dialog dl div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+        .inv-alert-dialog dt { color: #6B7280; }
+        .inv-alert-dialog dd { margin: 0; text-align: right; font-weight: 700; }
+        .inv-alert-dialog label { display: block; margin: 10px 0 4px; color: #0D382C; font-size: 12px; font-weight: 700; }
+        .inv-alert-dialog input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #D9DED9; border-radius: 8px; background: #FFFFFF; }
+        .inv-alert-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+        .inv-alert-dialog__actions button { min-height: 40px; padding: 8px 14px; border: 0; border-radius: 999px; font-weight: 700; cursor: pointer; }
+        .inv-alert-dialog__cancel { background: #F4EBD7; color: #0D382C; }
+        .inv-alert-dialog__confirm { background: #0D382C; color: #FFFFFF; }
         .inv-alerts-empty {
             padding: 12px 14px;
             border: 1px dashed rgba(201, 162, 39, .35);
@@ -157,10 +197,49 @@
                     {% if alert.expiration %}Expiration Date: {{ alert.expiration|date:'M d, Y' }}{% endif %}
                     {% if alert.kind == 'low_stock' %}Available: {{ alert.quantity_label }} · Minimum: {{ alert.threshold }}{% endif %}
                     {% if alert.kind == 'out_of_stock' %}Available: {{ alert.quantity_label }}{% endif %}
+                    {% if alert.kind == 'expired' %}Remaining physical stock: {{ alert.quantity_label }}{% endif %}
                 </p>
                 {% endif %}
                 <p class="inv-alert-message">{{ alert.short_message }}</p>
-                <a href="{{ alert.url }}" class="inv-alert-action">View Inventory &rarr;</a>
+                <div class="inv-alert-actions">
+                    <a href="{{ alert.url }}" class="inv-alert-action">View Inventory &rarr;</a>
+                    {% if alert.kind == 'expired' and request.user.role == 'nurse' or alert.kind == 'expired' and request.user.role == 'admin' %}
+                    <button type="button" class="inv-alert-pullout"
+                            data-alert-pull-out-open="alert-pull-out-{{ alert.key }}">
+                        Pull Out
+                    </button>
+                    <dialog class="inv-alert-dialog" id="alert-pull-out-{{ alert.key }}"
+                            aria-label="Confirm expired stock pull-out">
+                        <form method="post" action="{{ alert.pull_out_url }}">
+                            {% csrf_token %}
+                            <input type="hidden" name="submission_token" value="{{ alert.pull_out_token }}">
+                            <h3>Confirm Expired Stock Pull Out</h3>
+                            <dl>
+                                <div><dt>Product</dt><dd>{{ alert.product }}{% if alert.subtitle %} · {{ alert.subtitle }}{% endif %}</dd></div>
+                                <div><dt>Batch</dt><dd>{{ alert.batch }}</dd></div>
+                                <div><dt>Expiration Date</dt><dd>{{ alert.expiration|date:'M d, Y' }}</dd></div>
+                                <div><dt>Remaining Physical Stock</dt><dd>{{ alert.quantity_label }}</dd></div>
+                                <div><dt>Authorized Personnel</dt><dd>{{ request.user.get_full_name|default:request.user.username }}</dd></div>
+                            </dl>
+                            <label for="alert-pull-out-quantity-{{ alert.key }}">Pull-Out Quantity</label>
+                            <input id="alert-pull-out-quantity-{{ alert.key }}" name="quantity"
+                                   type="number" min="1" max="{{ alert.quantity }}"
+                                   value="{{ alert.quantity }}" required>
+                            <label for="alert-pull-out-reason-{{ alert.key }}">Reason</label>
+                            <input id="alert-pull-out-reason-{{ alert.key }}" name="reason"
+                                   type="text" maxlength="100" value="Expired Stock" required>
+                            <label for="alert-pull-out-remarks-{{ alert.key }}">Remarks</label>
+                            <input id="alert-pull-out-remarks-{{ alert.key }}" name="remarks"
+                                   type="text" maxlength="2000">
+                            <div class="inv-alert-dialog__actions">
+                                <button type="button" class="inv-alert-dialog__cancel"
+                                        data-alert-pull-out-close>Cancel</button>
+                                <button type="submit" class="inv-alert-dialog__confirm">Confirm Pull Out</button>
+                            </div>
+                        </form>
+                    </dialog>
+                    {% endif %}
+                </div>
             </div>
         </article>
         {% endfor %}
@@ -169,3 +248,25 @@
     <p class="inv-alerts-empty">No inventory alerts. Stock levels look healthy.</p>
     {% endif %}
 </section>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('[data-alert-pull-out-open]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                var dialog = document.getElementById(button.dataset.alertPullOutOpen);
+                if (dialog) dialog.showModal();
+            });
+        });
+        document.querySelectorAll('[data-alert-pull-out-close]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                var dialog = button.closest('dialog');
+                if (dialog) dialog.close();
+            });
+        });
+        document.querySelectorAll('.inv-alert-dialog form').forEach(function (form) {
+            form.addEventListener('submit', function () {
+                var submit = form.querySelector('[type="submit"]');
+                if (submit) submit.disabled = true;
+            });
+        });
+    });
+</script>

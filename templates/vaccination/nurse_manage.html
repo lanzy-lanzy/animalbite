@@ -84,6 +84,18 @@
         </div>
       </div>
 
+      {% if missed_count %}
+      <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-3" role="alert">
+        <svg class="w-5 h-5 shrink-0 text-red-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.7 3.86a2 2 0 0 0-3.4 0Z"/></svg>
+        <div class="min-w-0">
+          <p class="text-sm font-bold text-red-800">Missed Vaccination Appointment</p>
+          <p class="text-xs font-medium text-red-700 mt-1">{{ patient.full_name }} missed the scheduled {% for m in missed_doses %}{{ m.label }} on {{ m.date|date:"F j, Y" }}{% if not forloop.last %}; {% endif %}{% endfor %}.</p>
+          <p class="text-xs font-medium text-red-700 mt-1">{% if missed_count == 1 %}This dose has{% else %}These doses have{% endif %} not yet been administered.</p>
+          <p class="text-xs font-medium text-red-700 mt-1">Please review the patient's vaccination record and coordinate the next appropriate action.</p>
+        </div>
+      </div>
+      {% endif %}
+
       <div class="overflow-x-auto rounded-xl border border-line">
         <table class="w-full">
           <thead>
@@ -106,7 +118,7 @@
                 <span class="text-xs font-bold text-amber-700">Pending Scheduling</span>
                 {% endif %}
               </td>
-              <td class="table-cell px-3"><span class="status-badge status-{{ row.dose.dose_status }}">{{ row.dose.get_dose_status_display }}</span></td>
+              <td class="table-cell px-3"><span class="status-badge vaccination-status status-{{ row.status_class }}">{{ row.status_label }}</span></td>
               <td class="table-cell px-3 whitespace-nowrap">
                 {% if row.dose.actual_date %}
                 {{ row.dose.actual_date|date:"M d, Y" }}{% if row.dose.actual_time %} · {{ row.dose.actual_time|time:"h:i A" }}{% endif %}

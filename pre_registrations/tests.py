@@ -1,7 +1,11 @@
-from datetime import date
+from datetime import date, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import IntegrityError, connection
+from django.forms.models import model_to_dict
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -11,8 +15,13 @@ from doctor.models import ClinicalAssessment
 from patients.models import Patient
 from vaccination.models import VaccinationSchedule, VaccineDose
 
+from .forms import StaffPreRegistrationForm
 from .models import PreRegistration
-from .services import convert_to_official_case
+from .services import (
+    DuplicateConfirmationRequired,
+    convert_to_official_case,
+    reject_pre_registration,
+)
 
 
 class PreRegistrationModelTests(TestCase):
@@ -237,6 +246,26 @@ class PublicPreRegistrationTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(PreRegistration.objects.get().civil_status, "married")
 
+    def test_public_submission_capitalizes_patient_names(self):
+        payload = self.valid_payload()
+        payload.update(
+            username="john.borling",
+            email="john@example.com",
+            first_name="john paul r",
+            middle_name="d",
+            last_name="borling",
+            suffix="jr",
+        )
+
+        response = self.client.post(reverse("pre_registrations:public_create"), payload)
+
+        self.assertEqual(response.status_code, 302)
+        record = PreRegistration.objects.get()
+        self.assertEqual(record.first_name, "John Paul R")
+        self.assertEqual(record.middle_name, "D")
+        self.assertEqual(record.last_name, "Borling")
+        self.assertEqual(record.suffix, "Jr.")
+
     def test_public_form_requires_medical_history_allergies_and_previous_rabies_vax(self):
         payload = self.valid_payload()
         for field in ("medical_history", "allergy_info", "previous_rabies_vax"):
@@ -450,6 +479,9 @@ class StaffPreRegistrationTests(TestCase):
             password="pass12345",
             role="encoder",
         )
+        self.admin = User.objects.create_user(
+            username="review.admin", password="pass12345", role="admin",
+        )
         self.record = PreRegistration.objects.create(
             first_name="Rico",
             last_name="Bautista",
@@ -501,8 +533,8 @@ class StaffPreRegistrationTests(TestCase):
         self.assertContains(response, self.record.pre_registration_number)
         self.assertContains(response, "Rico Bautista")
 
-    def test_staff_pages_offer_conversion_without_verify_console_or_duplicate_action(self):
-        self.client.login(username="encoder", password="pass12345")
+    def test_admin_pages_offer_conversion_without_verify_console_or_duplicate_action(self):
+        self.client.force_login(self.admin)
 
         detail = self.client.get(reverse("pre_registrations:staff_detail", args=[self.record.pk]))
         self.assertNotContains(detail, "Verify Console")
@@ -629,7 +661,7 @@ class StaffPreRegistrationTests(TestCase):
         )
 
         self.assertNotContains(detail, "Registration Date and Time")
-        self.assertNotContains(detail, "Registration Status")
+        self.assertContains(detail, "Registration Status")
         self.assertNotContains(detail, "Consent to Data Use")
         self.assertContains(detail, "Emergency Contact")
         self.assertContains(detail, self.record.get_status_display())
@@ -684,8 +716,8 @@ class StaffPreRegistrationTests(TestCase):
         self.record.refresh_from_db()
         self.assertEqual(self.record.address, raw_address)
 
-    def test_staff_detail_actions_and_qr_are_read_only(self):
-        self.client.login(username="encoder", password="pass12345")
+    def test_admin_detail_get_actions_and_qr_are_read_only(self):
+        self.client.force_login(self.admin)
         qr_url = reverse(
             "pre_registrations:qr_code", args=[self.record.pre_registration_number]
         )
@@ -712,7 +744,7 @@ class StaffPreRegistrationTests(TestCase):
         )
 
     def test_detail_moves_convert_and_print_below_bite_incident_section(self):
-        self.client.login(username="encoder", password="pass12345")
+        self.client.force_login(self.admin)
 
         detail = self.client.get(
             reverse("pre_registrations:staff_detail", args=[self.record.pk])
@@ -746,7 +778,7 @@ class StaffPreRegistrationTests(TestCase):
         self.assertEqual(html.count('class="btn-danger"'), 1)
 
     def test_converted_detail_keeps_top_to_back_and_edit(self):
-        patient, _case = convert_to_official_case(self.record, self.staff)
+        patient, _case = convert_to_official_case(self.record, self.admin)
         self.record.refresh_from_db()
         self.client.login(username="encoder", password="pass12345")
 
@@ -839,12 +871,22 @@ class StaffPreRegistrationTests(TestCase):
         self.record.civil_status = "married"
         self.record.save(update_fields=["civil_status", "updated_at"])
 
-        patient, _case = convert_to_official_case(self.record, self.staff)
+        patient, _case = convert_to_official_case(self.record, self.admin)
 
         self.assertEqual(patient.civil_status, "married")
 
-    def test_staff_can_convert_to_official_patient_and_case(self):
-        self.client.login(username="encoder", password="pass12345")
+    def test_conversion_capitalizes_names_for_new_patients(self):
+        PreRegistration.objects.filter(pk=self.record.pk).update(
+            first_name="joseph y", middle_name="", last_name="araneta", suffix="jr",
+        )
+        record = PreRegistration.objects.get(pk=self.record.pk)
+
+        patient, _case = convert_to_official_case(record, self.admin)
+
+        self.assertEqual(patient.full_name(), "Joseph Y Araneta Jr.")
+
+    def test_admin_can_convert_to_official_patient_and_case(self):
+        self.client.force_login(self.admin)
 
         response = self.client.post(reverse("pre_registrations:convert", args=[self.record.pk]))
 
@@ -868,7 +910,7 @@ class StaffPreRegistrationTests(TestCase):
         )
         self.record.account = patient_account
         self.record.save(update_fields=["account"])
-        self.client.login(username="encoder", password="pass12345")
+        self.client.force_login(self.admin)
         self.client.post(reverse("pre_registrations:convert", args=[self.record.pk]))
         self.record.refresh_from_db()
         try:
@@ -907,8 +949,8 @@ class StaffPreRegistrationTests(TestCase):
 
         self.assertRedirects(response, reverse("accounts:patient_portal"))
 
-    def test_staff_can_reject_with_reason_and_patient_sees_it(self):
-        self.client.login(username="encoder", password="pass12345")
+    def test_admin_can_reject_with_reason_and_patient_sees_it(self):
+        self.client.force_login(self.admin)
 
         detail = self.client.get(
             reverse("pre_registrations:staff_detail", args=[self.record.pk])
@@ -929,7 +971,7 @@ class StaffPreRegistrationTests(TestCase):
         self.assertEqual(
             self.record.rejection_reason, "Duplicate entry from another barangay."
         )
-        self.assertEqual(self.record.rejected_by, self.staff)
+        self.assertEqual(self.record.rejected_by, self.admin)
         self.assertIsNotNone(self.record.rejected_at)
 
         status = self.client.post(
@@ -940,7 +982,7 @@ class StaffPreRegistrationTests(TestCase):
         self.assertContains(status, "Duplicate entry from another barangay.")
 
     def test_reject_requires_a_reason(self):
-        self.client.login(username="encoder", password="pass12345")
+        self.client.force_login(self.admin)
 
         response = self.client.post(
             reverse("pre_registrations:staff_reject", args=[self.record.pk]),
@@ -954,16 +996,13 @@ class StaffPreRegistrationTests(TestCase):
         self.assertEqual(self.record.rejection_reason, "")
 
     def test_reject_page_requires_post(self):
-        self.client.login(username="encoder", password="pass12345")
+        self.client.force_login(self.admin)
 
         response = self.client.get(
             reverse("pre_registrations:staff_reject", args=[self.record.pk])
         )
 
-        self.assertRedirects(
-            response,
-            reverse("pre_registrations:staff_detail", args=[self.record.pk]),
-        )
+        self.assertEqual(response.status_code, 405)
         self.record.refresh_from_db()
         self.assertEqual(self.record.status, PreRegistration.Status.SUBMITTED)
 
@@ -971,7 +1010,7 @@ class StaffPreRegistrationTests(TestCase):
         self.record.status = PreRegistration.Status.REJECTED
         self.record.rejection_reason = "Not a real patient."
         self.record.save(update_fields=["status", "rejection_reason"])
-        self.client.login(username="encoder", password="pass12345")
+        self.client.force_login(self.admin)
 
         response = self.client.post(
             reverse("pre_registrations:convert", args=[self.record.pk])
@@ -986,8 +1025,8 @@ class StaffPreRegistrationTests(TestCase):
         self.assertEqual(Patient.objects.count(), 0)
         self.assertEqual(AnimalBiteCase.objects.count(), 0)
 
-    def test_staff_edit_can_reject_with_rejection_reason(self):
-        self.client.login(username="encoder", password="pass12345")
+    def test_admin_edit_can_reject_with_rejection_reason(self):
+        self.client.force_login(self.admin)
         payload = {
             "first_name": "Rico",
             "middle_name": "",
@@ -1046,7 +1085,7 @@ class StaffPreRegistrationTests(TestCase):
         self.record.refresh_from_db()
         self.assertEqual(self.record.status, PreRegistration.Status.REJECTED)
         self.assertEqual(self.record.rejection_reason, "Wrong barangay selected.")
-        self.assertEqual(self.record.rejected_by, self.staff)
+        self.assertEqual(self.record.rejected_by, self.admin)
         self.assertIsNotNone(self.record.rejected_at)
 
 
@@ -1203,7 +1242,7 @@ class OnlineRegistrationDeleteTests(TestCase):
         )
 
     def test_converted_registration_is_blocked_and_preserves_patient_records(self):
-        patient, case = convert_to_official_case(self.record, self.encoder)
+        patient, case = convert_to_official_case(self.record, self.admin)
         self.record.refresh_from_db()
         schedule = VaccinationSchedule.objects.create(bite_case=case, created_by=self.nurse)
         VaccineDose.objects.create(schedule=schedule, dose_label="Day 0", dose_status="scheduled")
@@ -1265,7 +1304,7 @@ class OnlineRegistrationDeleteTests(TestCase):
         self.assertEqual(log.user, self.admin)
 
     def test_archive_keeps_converted_registration_and_linked_records(self):
-        patient, case = convert_to_official_case(self.record, self.encoder)
+        patient, case = convert_to_official_case(self.record, self.admin)
         self.record.refresh_from_db()
 
         response = self._archive()
@@ -1299,6 +1338,412 @@ class OnlineRegistrationDeleteTests(TestCase):
             'class="btn-secondary btn-sm">Open</a>',
             html,
         )
+
+
+@override_settings(SEMAPHORE_ENABLED=False)
+class AdminRegistrationReviewTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.admin = User.objects.create_user("review.admin", role="admin", password="pass12345")
+        self.account = User.objects.create_user("review.patient", role="patient", password="pass12345")
+        self.bite_time = timezone.now()
+        self.record = self.make_record()
+        self.client.force_login(self.admin)
+        self.convert_url = reverse("pre_registrations:convert", args=[self.record.pk])
+        self.reject_url = reverse("pre_registrations:staff_reject", args=[self.record.pk])
+        self.edit_url = reverse("pre_registrations:staff_edit", args=[self.record.pk])
+        self.detail_url = reverse("pre_registrations:staff_detail", args=[self.record.pk])
+
+    def make_record(self, **overrides):
+        fields = dict(
+            account=self.account, first_name="Mina", middle_name="Lee", last_name="Review",
+            birthdate=date(1992, 2, 2), sex="female", civil_status="single",
+            contact_number="09175550001", address="Poblacion, Poblacion", barangay="Poblacion",
+            medical_history="None", allergy_info="Penicillin", previous_rabies_vax="None",
+            guardian_name="Nora", guardian_contact_number="09175550002",
+            emergency_contact_name="Nora", emergency_contact_number="09175550002",
+            bite_datetime=self.bite_time, incident_place="Market", incident_barangay="Poblacion",
+            animal_type="dog", animal_ownership="owned", animal_vaccination_status="unknown",
+            animal_condition="alive", exposure_type="bite", body_part_affected="Left arm",
+            number_of_wounds=1, wound_washed=True, first_aid_given="Soap and water",
+            remarks="Original note", consent_given=True,
+        )
+        fields.update(overrides)
+        return PreRegistration.objects.create(**fields)
+
+    def source_snapshot(self):
+        metadata = {
+            "status", "verified_by_id", "verified_at", "converted_patient_id", "converted_case_id",
+            "rejection_reason", "rejected_by_id", "rejected_at", "updated_at",
+        }
+        return {
+            name: value for name, value in PreRegistration.objects.values().get(pk=self.record.pk).items()
+            if name not in metadata
+        }
+
+    def edit_payload(self, **overrides):
+        self.record.refresh_from_db()
+        data = model_to_dict(self.record, fields=StaffPreRegistrationForm.Meta.fields)
+        local_bite = timezone.localtime(self.record.bite_datetime)
+        data.update(bite_date=local_bite.date().isoformat(), bite_time=local_bite.strftime("%H:%M:%S"))
+        data.update(overrides)
+        return data
+
+    def make_patient(self, **overrides):
+        fields = dict(
+            patient_number="PAT-00001", account=self.account, first_name="Mina", last_name="Review",
+            birthdate=date(1992, 2, 2), sex="female", contact_number="09175550001", address="Poblacion",
+        )
+        fields.update(overrides)
+        return Patient.objects.create(**fields)
+
+    def test_non_admin_review_posts_and_service_calls_are_forbidden(self):
+        before = self.source_snapshot()
+        for role in ("encoder", "nurse", "doctor", "health_worker"):
+            with self.subTest(role=role):
+                staff = get_user_model().objects.create_user(f"review.{role}", role=role)
+                self.client.force_login(staff)
+                self.assertEqual(self.client.post(self.convert_url).status_code, 403)
+                self.assertEqual(self.client.post(self.reject_url, {"reason": "Invalid submission"}).status_code, 403)
+                with self.assertRaises(PermissionDenied):
+                    convert_to_official_case(self.record, staff)
+                with self.assertRaises(PermissionDenied):
+                    reject_pre_registration(self.record, staff, "Invalid submission")
+                detail = self.client.get(self.detail_url)
+                self.assertNotContains(detail, self.convert_url)
+                self.assertNotContains(detail, self.reject_url)
+                listing = self.client.get(reverse("pre_registrations:staff_list"))
+                self.assertNotContains(listing, self.convert_url)
+        self.assertEqual(self.source_snapshot(), before)
+        self.assertEqual(Patient.objects.count(), 0)
+        self.assertEqual(AnimalBiteCase.objects.count(), 0)
+        self.assertFalse(AuditLog.objects.exists())
+
+    def test_review_requires_login_post_and_csrf(self):
+        for url in (self.convert_url, self.reject_url):
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 405)
+                anonymous = Client()
+                response = anonymous.post(url, {"reason": "Invalid submission"})
+                self.assertEqual(response.status_code, 302)
+                self.assertIn("/login/", response.url)
+                csrf_client = Client(enforce_csrf_checks=True)
+                csrf_client.force_login(self.admin)
+                self.assertEqual(csrf_client.post(url, {"reason": "Invalid submission"}).status_code, 403)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.status, PreRegistration.Status.SUBMITTED)
+        self.assertEqual(Patient.objects.count(), 0)
+        csrf_client.get(self.detail_url)
+        token = csrf_client.cookies["csrftoken"].value
+        response = csrf_client.post(self.reject_url, {"reason": "Invalid submission", "csrfmiddlewaretoken": token})
+        self.assertEqual(response.status_code, 302)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.status, PreRegistration.Status.REJECTED)
+
+    def test_rejection_requires_meaningful_reason_and_preserves_exact_text(self):
+        before = self.source_snapshot()
+        for reason in ("", " \t\r\n ", "... ---"):
+            response = self.client.post(self.reject_url, {"reason": reason})
+            self.assertEqual(response.status_code, 200)
+            self.record.refresh_from_db()
+            self.assertEqual(self.record.status, PreRegistration.Status.SUBMITTED)
+        reason = "  Incorrect details.\r\nPlease contact <clinic> & explain.  "
+        response = self.client.post(self.reject_url, {"reason": reason})
+        self.assertRedirects(response, self.detail_url)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.rejection_reason, reason)
+        self.assertEqual(self.record.rejected_by, self.admin)
+        self.assertIsNotNone(self.record.rejected_at)
+        self.assertEqual(self.source_snapshot(), before)
+        log = AuditLog.objects.get(action="REJECT_PRE_REGISTRATION")
+        self.assertEqual((log.target_type, log.target_id), ("pre_registration", self.record.pk))
+        self.assertTrue(log.description.endswith(reason))
+        self.assertEqual(Patient.objects.count(), 0)
+        self.assertEqual(AnimalBiteCase.objects.count(), 0)
+        self.assertEqual(VaccinationSchedule.objects.count(), 0)
+        self.assertEqual(get_user_model().objects.count(), 2)
+
+    def test_rejection_retry_and_stale_approval_preserve_first_review(self):
+        stale = PreRegistration.objects.get(pk=self.record.pk)
+        self.client.post(self.reject_url, {"reason": "First reason"})
+        first = PreRegistration.objects.values().get(pk=self.record.pk)
+        other_admin = get_user_model().objects.create_user("other.admin", role="admin")
+        self.client.force_login(other_admin)
+        self.client.post(self.reject_url, {"reason": "Replacement reason"})
+        self.assertEqual(PreRegistration.objects.values().get(pk=self.record.pk), first)
+        with self.assertRaises(ValidationError):
+            convert_to_official_case(stale, other_admin)
+        self.assertEqual(AuditLog.objects.filter(action="REJECT_PRE_REGISTRATION").count(), 1)
+        self.assertEqual(Patient.objects.count(), 0)
+        self.assertEqual(AnimalBiteCase.objects.count(), 0)
+
+    def test_rejection_does_not_require_valid_original_data_or_normalize_it(self):
+        PreRegistration.objects.filter(pk=self.record.pk).update(contact_number="invalid legacy contact", first_name="")
+        before = self.source_snapshot()
+        response = self.client.post(self.reject_url, {"reason": "Missing required details"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.source_snapshot(), before)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.status, PreRegistration.Status.REJECTED)
+
+    def test_non_admin_cannot_change_review_fields_or_reopen_by_edit(self):
+        staff = get_user_model().objects.create_user("edit.encoder", role="encoder")
+        self.client.force_login(staff)
+        for status in PreRegistration.Status.values:
+            if status == self.record.status:
+                continue
+            with self.subTest(status=status):
+                response = self.client.post(self.edit_url, self.edit_payload(status=status, rejection_reason="A reason"))
+                self.assertEqual(response.status_code, 403)
+        response = self.client.post(self.edit_url, self.edit_payload(rejection_reason="Tampered reason"))
+        self.assertEqual(response.status_code, 403)
+        response = self.client.post(self.edit_url, self.edit_payload(remarks="Corrected by encoder"))
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(AuditLog.objects.filter(action="UPDATE_PRE_REGISTRATION", target_type="pre_registration", target_id=self.record.pk).exists())
+        reject_pre_registration(self.record, self.admin, "Original rejection")
+        self.assertEqual(self.client.get(self.edit_url).status_code, 403)
+        self.assertEqual(self.client.post(self.edit_url, self.edit_payload(status="submitted")).status_code, 403)
+
+    def test_admin_edit_cannot_fake_conversion_or_rewrite_rejected_data(self):
+        self.assertEqual(self.client.post(self.edit_url, self.edit_payload(status="converted")).status_code, 403)
+        source = self.source_snapshot()
+        # Rejection through Edit uses the same service and ignores proposed source edits.
+        reason = "  Wrong information\nPlease resubmit.  "
+        response = self.client.post(self.edit_url, self.edit_payload(status="rejected", rejection_reason=reason, first_name="Tampered"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.source_snapshot(), source)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.rejection_reason, reason)
+        first_review = (self.record.rejection_reason, self.record.rejected_by_id, self.record.rejected_at)
+        response = self.client.post(self.edit_url, self.edit_payload(status="rejected", rejection_reason="Replacement", first_name="Tampered"))
+        self.assertEqual(response.status_code, 200)
+        self.record.refresh_from_db()
+        self.assertEqual((self.record.rejection_reason, self.record.rejected_by_id, self.record.rejected_at), first_review)
+        response = self.client.post(self.edit_url, self.edit_payload(status="submitted", first_name="Tampered", rejection_reason="Removed"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.source_snapshot(), source)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.status, PreRegistration.Status.SUBMITTED)
+        self.assertEqual((self.record.rejection_reason, self.record.rejected_by_id, self.record.rejected_at), first_review)
+        log = AuditLog.objects.get(action="UPDATE_PRE_REGISTRATION")
+        self.assertEqual((log.target_type, log.target_id), ("pre_registration", self.record.pk))
+        self.assertIn(reason, log.description)
+        self.assertEqual(AuditLog.objects.filter(action="REJECT_PRE_REGISTRATION").count(), 1)
+        self.assertEqual(Patient.objects.count(), 0)
+
+    def test_admin_can_reopen_invalid_rejected_source_without_rewriting_it(self):
+        PreRegistration.objects.filter(pk=self.record.pk).update(contact_number="invalid legacy contact", first_name="")
+        reject_pre_registration(self.record, self.admin, "Missing required details")
+        before = self.source_snapshot()
+        response = self.client.post(self.edit_url, {"status": "for_verification", "first_name": "Tampered"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.source_snapshot(), before)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.status, PreRegistration.Status.FOR_VERIFICATION)
+        self.assertEqual(self.record.rejection_reason, "Missing required details")
+        self.assertTrue(AuditLog.objects.filter(action="UPDATE_PRE_REGISTRATION", target_type="pre_registration", target_id=self.record.pk).exists())
+
+    def test_rejection_after_duplicate_warning_blocks_later_confirmation(self):
+        self.make_record()
+        self.assertContains(self.client.post(self.convert_url), "Possible Duplicate Warning")
+        self.client.post(self.reject_url, {"reason": "Rejected after review"})
+        response = self.client.post(self.convert_url, {"confirm_duplicates": "1"})
+        self.assertRedirects(response, self.detail_url)
+        self.assertEqual(Patient.objects.count(), 0)
+        self.assertEqual(AnimalBiteCase.objects.count(), 0)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.status, PreRegistration.Status.REJECTED)
+
+    def test_duplicate_warning_requires_explicit_confirmation_and_keeps_return_path(self):
+        duplicate = self.make_record()
+        target = reverse("patients:patient_list") + "?status=pending&q=Mina&page=2"
+        payload = {"return_to": "patients", "next": target}
+        for attempt in range(2):
+            response = self.client.post(self.convert_url, payload)
+            self.assertContains(response, "Possible Duplicate Warning")
+            self.assertContains(response, duplicate.pre_registration_number)
+            self.assertContains(response, 'name="return_to" value="patients"')
+            self.assertEqual(response.context["next"], target)
+            self.assertEqual(Patient.objects.count(), 0)
+            self.assertEqual(AnimalBiteCase.objects.count(), 0)
+        with self.assertRaises(DuplicateConfirmationRequired):
+            convert_to_official_case(self.record, self.admin)
+        payload["confirm_duplicates"] = "1"
+        response = self.client.post(self.convert_url, payload)
+        self.assertRedirects(response, target, fetch_redirect_response=False)
+        # Even without confirming duplicates again, an already converted request is idempotent.
+        response = self.client.post(self.convert_url, {"return_to": "patients", "next": target})
+        self.assertRedirects(response, target, fetch_redirect_response=False)
+        self.assertEqual(Patient.objects.count(), 1)
+        self.assertEqual(AnimalBiteCase.objects.count(), 1)
+        self.assertEqual(AuditLog.objects.filter(action="CONVERT_PRE_REGISTRATION").count(), 1)
+
+    def test_conversion_checks_duplicates_in_atomic_block_and_preserves_source_qr_and_audit(self):
+        PreRegistration.objects.filter(pk=self.record.pk).update(
+            first_name="  Mina  ", contact_number="+639175550001", remarks="Original\r\n note  ",
+        )
+        before = self.source_snapshot()
+        original = PreRegistration.possible_duplicates
+
+        def check_locked(record):
+            self.assertTrue(connection.in_atomic_block)
+            return original(record)
+
+        stale = PreRegistration.objects.get(pk=self.record.pk)
+        legacy = AuditLog.objects.create(user=self.admin, action="UPDATE_PRE_REGISTRATION", description=f"Legacy {self.record.pre_registration_number}")
+        with (
+            patch.object(PreRegistration, "possible_duplicates", check_locked),
+            patch.object(PreRegistration.objects, "select_for_update", wraps=PreRegistration.objects.select_for_update) as row_lock,
+            patch.object(get_user_model().objects, "select_for_update", wraps=get_user_model().objects.select_for_update) as account_lock,
+        ):
+            patient, case = convert_to_official_case(stale, self.admin)
+            row_lock.assert_called_once()
+            account_lock.assert_called_once()
+        repeated_patient, repeated_case = convert_to_official_case(stale, self.admin)
+        self.assertEqual((patient.pk, case.pk), (repeated_patient.pk, repeated_case.pk))
+        self.assertEqual(self.source_snapshot(), before)
+        self.assertEqual(Patient.objects.count(), 1)
+        self.assertEqual(AnimalBiteCase.objects.count(), 1)
+        self.assertEqual(case.first_aid_given, "Soap and water")
+        self.assertTrue(AuditLog.objects.filter(pk=legacy.pk).exists())
+        log = AuditLog.objects.get(action="CONVERT_PRE_REGISTRATION")
+        self.assertEqual((log.target_type, log.target_id, log.user_id), ("pre_registration", self.record.pk, self.admin.pk))
+        self.assertEqual(VaccinationSchedule.objects.count(), 0)
+        self.assertEqual(VaccineDose.objects.count(), 0)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.verified_by, self.admin)
+        with self.assertRaises(ValidationError):
+            reject_pre_registration(stale, self.admin, "Late rejection")
+        self.assertEqual(self.record.converted_case_id, case.pk)
+
+    def test_required_source_fields_and_existing_validators_block_conversion_atomically(self):
+        invalid_fields = {
+            "first_name": "  ", "last_name": "", "contact_number": "invalid",
+            "address": "", "barangay": "", "medical_history": "", "allergy_info": "",
+            "previous_rabies_vax": "", "sex": "invalid", "animal_type": "invalid",
+            "incident_place": "", "incident_barangay": "", "body_part_affected": "",
+            "guardian_contact_number": "invalid", "consent_given": False,
+        }
+        for field, value in invalid_fields.items():
+            with self.subTest(field=field):
+                original = getattr(self.record, field)
+                PreRegistration.objects.filter(pk=self.record.pk).update(**{field: value})
+                with self.assertRaises(ValidationError):
+                    convert_to_official_case(self.record, self.admin)
+                self.assertEqual(Patient.objects.count(), 0)
+                self.assertEqual(AnimalBiteCase.objects.count(), 0)
+                self.assertFalse(AuditLog.objects.filter(action="CONVERT_PRE_REGISTRATION").exists())
+                PreRegistration.objects.filter(pk=self.record.pk).update(**{field: original})
+
+    def test_ineligible_statuses_and_archived_records_hide_actions_and_block_conversion(self):
+        for status in ("rejected", "cancelled", "duplicate", "no_show"):
+            with self.subTest(status=status):
+                PreRegistration.objects.filter(pk=self.record.pk).update(status=status)
+                response = self.client.get(self.detail_url)
+                self.assertNotContains(response, self.convert_url)
+                self.assertNotContains(response, self.reject_url)
+                with self.assertRaises(ValidationError):
+                    convert_to_official_case(self.record, self.admin)
+        PreRegistration.objects.filter(pk=self.record.pk).update(status="submitted", is_archived=True)
+        with self.assertRaises(ValidationError):
+            convert_to_official_case(self.record, self.admin)
+        with self.assertRaises(ValidationError):
+            reject_pre_registration(self.record, self.admin, "Archived")
+        self.assertNotContains(self.client.get(self.detail_url), self.convert_url)
+        self.assertEqual(Patient.objects.count(), 0)
+
+    def test_verified_is_not_pending_but_legacy_admin_can_convert(self):
+        PreRegistration.objects.filter(pk=self.record.pk).update(status="verified")
+        detail = self.client.get(self.detail_url)
+        self.assertNotContains(detail, self.reject_url)
+        self.assertContains(detail, self.convert_url)
+        with self.assertRaises(ValidationError):
+            reject_pre_registration(self.record, self.admin, "Not pending")
+        response = self.client.post(self.convert_url)
+        self.record.refresh_from_db()
+        self.assertRedirects(response, reverse("bite_cases:case_detail", args=[self.record.converted_case_id]))
+
+    def test_reuses_valid_linked_patient_and_existing_account_for_multiple_registrations(self):
+        patient = self.make_patient()
+        PreRegistration.objects.filter(pk=self.record.pk).update(converted_patient=patient)
+        reused, first_case = convert_to_official_case(self.record, self.admin)
+        another = self.make_record(bite_datetime=self.bite_time + timedelta(days=1))
+        reused_again, second_case = convert_to_official_case(another, self.admin)
+        self.assertEqual((reused.pk, reused_again.pk), (patient.pk, patient.pk))
+        self.assertNotEqual(first_case.pk, second_case.pk)
+        self.assertEqual(Patient.objects.count(), 1)
+        self.assertEqual(AnimalBiteCase.objects.count(), 2)
+
+    def test_inconsistent_links_never_create_another_case(self):
+        patient, case = convert_to_official_case(self.record, self.admin)
+        for changes in (
+            {"converted_patient_id": None},
+            {"converted_case_id": None},
+            {"status": "submitted"},
+        ):
+            with self.subTest(changes=changes):
+                PreRegistration.objects.filter(pk=self.record.pk).update(**changes)
+                with self.assertRaises(ValidationError):
+                    convert_to_official_case(self.record, self.admin)
+                PreRegistration.objects.filter(pk=self.record.pk).update(
+                    status="converted", converted_patient=patient, converted_case=case,
+                )
+        other_patient = self.make_patient(patient_number="PAT-00002", account=None)
+        PreRegistration.objects.filter(pk=self.record.pk).update(converted_patient=other_patient)
+        with self.assertRaises(ValidationError):
+            convert_to_official_case(self.record, self.admin)
+        self.assertEqual(AnimalBiteCase.objects.count(), 1)
+
+    def test_number_collision_rolls_back_patient_case_review_and_audit(self):
+        existing_patient = self.make_patient(account=None)
+        existing_case = AnimalBiteCase.objects.create(
+            case_number="ABC-00001", patient=existing_patient, date_time_bite=self.bite_time,
+        )
+        before = PreRegistration.objects.values().get(pk=self.record.pk)
+        with patch("pre_registrations.services.generate_case_number", return_value=existing_case.case_number):
+            with self.assertRaises(IntegrityError):
+                convert_to_official_case(self.record, self.admin)
+        self.assertEqual(PreRegistration.objects.values().get(pk=self.record.pk), before)
+        self.assertEqual(Patient.objects.count(), 1)
+        self.assertEqual(AnimalBiteCase.objects.count(), 1)
+        self.assertFalse(AuditLog.objects.exists())
+
+    def test_safe_return_targets_only_apply_with_patients_marker(self):
+        for target in ("https://evil.example/patients/", "//evil.example/patients/", "javascript:alert(1)"):
+            response = self.client.post(self.reject_url, {"reason": "Not eligible", "return_to": "patients", "next": target})
+            self.assertRedirects(response, reverse("patients:patient_list"), fetch_redirect_response=False)
+        response = self.client.post(self.reject_url, {"reason": "Not eligible", "next": "/patients/?page=2"})
+        self.assertRedirects(response, self.detail_url)
+        response = self.client.post(self.reject_url, {"reason": "Not eligible", "return_to": "patients", "next": "/patients/?page=2"})
+        self.assertRedirects(response, "/patients/?page=2", fetch_redirect_response=False)
+        detail = self.client.get(self.detail_url, {"from": "patients"})
+        self.assertContains(detail, f'href="{reverse("patients:patient_list")}" class="btn-secondary">&larr; Back')
+
+    def test_rejected_detail_is_read_only_with_exact_escaped_reason_and_targeted_history(self):
+        reason = "  Missing <script>alert('x')</script> details\nPlease resubmit.  "
+        number = self.record.pre_registration_number
+        for text in (f"Legacy update {number}: <b>original</b>", f"Unrelated {number}0", f"Unrelated X{number}", f"Unrelated {number}-suffix"):
+            AuditLog.objects.create(user=self.admin, action="UPDATE_PRE_REGISTRATION", description=text)
+        structured = AuditLog.objects.create(
+            user=self.admin, action="UPDATE_PRE_REGISTRATION", description="Structured event without a number",
+            target_type="pre_registration", target_id=self.record.pk,
+        )
+        reject_pre_registration(self.record, self.admin, reason)
+        response = self.client.get(self.detail_url)
+        for label in ("Registration Source", "Online", "Registration Status", "Reason for Rejection", "Rejected By", "Rejection Date and Time", "Registration History"):
+            self.assertContains(response, label)
+        self.assertNotContains(response, self.edit_url)
+        self.assertNotContains(response, self.convert_url)
+        self.assertNotContains(response, self.reject_url)
+        self.assertNotContains(response, "View Patient Record")
+        self.assertNotContains(response, "<script>alert(")
+        self.assertContains(response, "&lt;script&gt;")
+        self.assertContains(response, "&lt;b&gt;original&lt;/b&gt;")
+        self.assertContains(response, structured.description)
+        self.assertNotContains(response, "Unrelated")
+        self.assertContains(response, self.record.address)
+        self.assertEqual(len(response.context["history"]), 3)
+        self.assertContains(response, reverse("pre_registrations:qr_code", args=[number]))
 
 
 class PatientReportBiteTests(TestCase):

@@ -172,11 +172,11 @@
     flex-direction: column;
     gap: 12px;
     margin-top: 10px;
-    padding: 16px;
-    border-radius: 20px;
-    border: 1px solid #ece2cd;
-    background: #fffdf8;
-    box-shadow: 0 20px 44px -36px rgba(8, 32, 26, .4);
+    padding: 18px 22px;
+    border-radius: 16px;
+    border: 1px solid #e7dfcf;
+    background: #fff;
+    box-shadow: 0 20px 44px -40px rgba(8, 32, 26, .35);
 }
 
 .pd-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
@@ -228,6 +228,71 @@
 .pd-tile--accent {
     border-color: rgba(201, 162, 39, .45);
     background: linear-gradient(145deg, #f7efd8, #fdfaf1);
+}
+
+/* Read-only information rows — matches the Admin Bite Case Details sheet. */
+.pd-info-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 44px;
+    row-gap: 13px;
+}
+.pd-info-field {
+    display: grid;
+    grid-template-columns: 152px minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: baseline;
+    min-width: 0;
+}
+.pd-info-field--wide { grid-column: 1 / -1; }
+.pd-info-label {
+    margin: 0;
+    color: #476762;
+    font-size: .82rem;
+    font-weight: 500;
+    line-height: 1.45;
+    letter-spacing: normal;
+    text-transform: none;
+}
+.pd-info-value {
+    margin: 0;
+    color: #0d382c;
+    font-size: .92rem;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+}
+.pd-info-empty { color: #476762; font-style: italic; font-weight: 500; }
+.pd-info-subvalue {
+    margin: 2px 0 0;
+    color: #476762;
+    font-size: .8rem;
+    font-weight: 500;
+    line-height: 1.5;
+}
+.pd-info-unit { color: #476762; font-size: .8rem; font-weight: 500; }
+.pd-info-value--secret { color: #991b1b; }
+.pd-info-field--alert .pd-info-label { color: #991b1b; }
+.pd-info-field--alert .pd-info-value { color: #7f1d1d; }
+
+@media (max-width: 900px) {
+    .pd-info-fields {
+        grid-template-columns: minmax(0, 1fr);
+        column-gap: 0;
+    }
+}
+@media (max-width: 600px) {
+    .pd-info-field {
+        grid-template-columns: 128px minmax(0, 1fr);
+        column-gap: 10px;
+    }
+}
+@media (max-width: 420px) {
+    .pd-info-field {
+        grid-template-columns: minmax(0, 1fr);
+        row-gap: 2px;
+    }
 }
 
 .pd-badge {
@@ -312,6 +377,24 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 10px;
+}
+
+/* Bite incidents render each case as a Bite Case Details sheet panel. */
+#bite-incidents .pd-section-body {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+}
+#bite-incidents .pd-case {
+    gap: 0;
+}
+#bite-incidents .pd-case + .pd-case {
+    padding-top: 0;
+    border-top: 0;
+}
+#bite-incidents .pd-case-head {
+    padding-bottom: 18px;
 }
 
 /* Clinical assessment groups */

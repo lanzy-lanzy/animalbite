@@ -1,5 +1,8 @@
+from decimal import Decimal, ROUND_HALF_UP
+
 from django import forms
 from django.utils import timezone
+from utils.names import format_person_name
 from utils.phone import normalize_to_09, validate_ph_number
 from .models import Patient, Barangay, VitalSign
 
@@ -56,6 +59,25 @@ class PatientForm(forms.ModelForm):
         n09 = normalize_to_09(val)
         return n09 or val
 
+    def _clean_name(self, field):
+        value = self.cleaned_data.get(field, '')
+        # Existing names are left exactly as stored unless the user edits them.
+        if self.instance.pk and value == getattr(self.instance, field, ''):
+            return value
+        return format_person_name(value)
+
+    def clean_first_name(self):
+        return self._clean_name('first_name')
+
+    def clean_middle_name(self):
+        return self._clean_name('middle_name')
+
+    def clean_last_name(self):
+        return self._clean_name('last_name')
+
+    def clean_suffix(self):
+        return self._clean_name('suffix')
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if not self.is_bound and self.instance.pk and self.instance.barangay_id:
@@ -81,6 +103,21 @@ class PatientForm(forms.ModelForm):
 
 
 class VitalSignForm(forms.ModelForm):
+    # Mirrors the min/max constraints declared on the widgets so the same
+    # limits are enforced when JavaScript or browser validation is bypassed.
+    NUMERIC_RANGES = {
+        'bp_systolic': (50, 300, 'Systolic blood pressure'),
+        'bp_diastolic': (30, 200, 'Diastolic blood pressure'),
+        'temperature': (Decimal('30'), Decimal('45'), 'Temperature'),
+        'pulse_rate': (30, 220, 'Pulse rate'),
+        'respiratory_rate': (8, 60, 'Respiratory rate'),
+        'spo2': (70, 100, 'SpO₂'),
+        'weight': (Decimal('1'), Decimal('300'), 'Weight'),
+        'height': (Decimal('30'), Decimal('250'), 'Height'),
+        'pain_score': (0, 10, 'Pain score'),
+        'blood_glucose': (Decimal('20'), Decimal('600'), 'Blood glucose'),
+    }
+
     class Meta:
         model = VitalSign
         fields = ['taken_at', 'bp_systolic', 'bp_diastolic', 'temperature', 'pulse_rate', 'respiratory_rate', 'spo2', 'weight', 'height', 'bmi', 'pain_score', 'blood_glucose', 'glucose_type', 'general_appearance', 'notes']
@@ -94,7 +131,7 @@ class VitalSignForm(forms.ModelForm):
             'spo2': forms.NumberInput(attrs={'class': 'form-input', 'placeholder': '98', 'min': '70', 'max': '100'}),
             'weight': forms.NumberInput(attrs={'class': 'form-input', 'placeholder': '68.5', 'step': '0.1', 'min': '1', 'max': '300'}),
             'height': forms.NumberInput(attrs={'class': 'form-input', 'placeholder': '165', 'step': '0.1', 'min': '30', 'max': '250'}),
-            'bmi': forms.NumberInput(attrs={'class': 'form-input', 'placeholder': 'Auto', 'step': '0.01', 'min': '10', 'max': '60'}),
+            'bmi': forms.NumberInput(attrs={'class': 'form-input', 'placeholder': 'Auto', 'step': '0.01', 'min': '10', 'max': '60', 'readonly': 'readonly'}),
             'pain_score': forms.NumberInput(attrs={'class': 'form-input', 'placeholder': '0-10', 'min': '0', 'max': '10'}),
             'blood_glucose': forms.NumberInput(attrs={'class': 'form-input', 'placeholder': '95', 'step': '0.1', 'min': '20', 'max': '600'}),
             'glucose_type': forms.Select(attrs={'class': 'form-input'}),
@@ -114,3 +151,23 @@ class VitalSignForm(forms.ModelForm):
         # Make taken_at required but provide default
         self.fields['taken_at'].required = True
         # Style: add required asterisk handled in template
+
+    def clean(self):
+        cleaned_data = super().clean()
+        for name, (minimum, maximum, label) in self.NUMERIC_RANGES.items():
+            value = cleaned_data.get(name)
+            if value is None:
+                continue
+            if value < minimum or value > maximum:
+                self.add_error(
+                    name,
+                    f'{label} must be between {minimum:g} and {maximum:g}.',
+                )
+        weight = cleaned_data.get('weight')
+        height = cleaned_data.get('height')
+        if weight is not None and height is not None and weight > 0 and height > 0:
+            height_m = height / Decimal('100')
+            cleaned_data['bmi'] = (
+                weight / (height_m * height_m)
+            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        return cleaned_data

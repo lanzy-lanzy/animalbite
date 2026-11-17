@@ -2,6 +2,7 @@ from datetime import date
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET
 
@@ -80,32 +81,71 @@ def dashboard(request):
     return render(request, 'nurse/dashboard.html', context)
 
 
+def _finalized_doctor_assessments():
+    """Assessments the Nurse may review, excluding drafts and incomplete data."""
+    from doctor.models import ClinicalAssessment
+
+    return (
+        ClinicalAssessment.objects.filter(
+            bite_case__isnull=False,
+            assessed_by__role='doctor',
+            is_finalized=True,
+            status='final',
+            finalized_at__isnull=False,
+        )
+        .exclude(chief_complaint='')
+        .exclude(exposure_narrative='')
+        .exclude(category_confirmed='')
+        .exclude(treatment_plan='')
+        .exclude(bite_case__case_status='archived')
+        .select_related(
+            'patient__barangay', 'bite_case', 'assessed_by',
+        )
+        .order_by('-finalized_at', '-pk')
+    )
+
+
+@login_required
+@nurse_required
+@require_GET
+def doctor_finding_list(request):
+    assessments = _finalized_doctor_assessments()
+    page_obj = Paginator(assessments, 20).get_page(request.GET.get('page'))
+    return render(request, 'nurse/doctor_findings.html', {
+        'assessments': page_obj,
+        'page_obj': page_obj,
+    })
+
+
 @login_required
 @nurse_required
 @require_GET
 def doctor_finding_detail(request, case_pk):
-    """Nurse Portal: the doctor's saved findings for one bite case, read-only.
+    """Nurse Portal: one finalized Doctor assessment, strictly read-only.
 
     The page is case-scoped so records from another bite case of the same
     patient are never mixed in. It renders exactly what is stored and never
     writes patient, assessment, dose, prescription, or inventory data.
     """
-    from bite_cases.models import AnimalBiteCase
-    from vaccination.views import build_record_context
-
-    bite_case = get_object_or_404(
-        AnimalBiteCase.objects.select_related(
-            'patient__barangay', 'patient__created_by', 'created_by',
-        ),
-        pk=case_pk,
+    assessment = get_object_or_404(
+        _finalized_doctor_assessments(),
+        bite_case_id=case_pk,
     )
+    bite_case = assessment.bite_case
     if bite_case.is_archived:
         messages.error(
             request,
             'This bite case has been archived and is available to the System Administrator only.',
         )
-        return redirect('bite_cases:case_list')
+        return redirect('nurse:doctor_finding_list')
+
+    from vaccination.views import build_record_context
 
     context = build_record_context(bite_case)
-    context.update({'nurse_view': True, 'cases': [bite_case]})
+    context.update({
+        'assessment': assessment,
+        'assessment_only': True,
+        'nurse_view': True,
+        'cases': [bite_case],
+    })
     return render(request, 'vaccination/record_detail.html', context)

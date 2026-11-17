@@ -1,31 +1,38 @@
 from functools import wraps
+from datetime import date, datetime, timedelta
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db.models import Count, Q, Sum
-from django.db.models.functions import Trim
-from django.http import HttpResponse
+from django.db.models.functions import Lower, Trim
+from django.http import Http404, HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
-from datetime import date, timedelta, datetime
 from patients.models import Patient
 import csv
 import io
 from bite_cases.models import AnimalBiteCase
-from vaccination.models import VaccineDose, FollowUpRecord
+from vaccination.models import VaccineDose
+from vaccination.missed_appointments import missed_vaccination_doses
 from inventory.models import MedicineInventory, VaccineInventory
 from inventory.notifications import get_expiry_warning_days
 
 from .pdf import build_official_pdf
 from .services import (
-    animal_type_distribution, barangay_distribution, completed_schedule_case_ids,
+    barangay_distribution, completed_schedule_case_ids,
     effective_status, grouped_medicine_products, grouped_totals,
     grouped_vaccine_products, inventory_summary, patient_treatment_summary,
     stock_alert_sections,
 )
 
 REPORTS_ROLES = {'admin', 'nurse', 'health_worker', 'encoder'}
+RECORD_REPORT_PERIODS = (
+    ('daily', 'Today'),
+    ('weekly', 'This Week'),
+    ('monthly', 'This Month'),
+    ('all', 'All Time'),
+)
 SEARCH_FIELDS = {
     'all': 'All Fields',
     'patient_name': 'Patient Name',
@@ -524,7 +531,9 @@ def _build_pdf(title, subtitle, headers, rows, summary_lines=None, landscape=Fal
     return build_official_pdf(title, subtitle, headers, rows, summary_lines)
 
 
-def _render_report_print(request, title, meta, headers, rows, summary_lines=None):
+def _render_report_print(
+        request, title, meta, headers, rows, summary_lines=None,
+        summary_at_bottom=False):
     """Render the official HTML print document for a report (browser Print)."""
     return render(request, 'reports/print_official.html', {
         'document_title': title,
@@ -533,43 +542,255 @@ def _render_report_print(request, title, meta, headers, rows, summary_lines=None
         'headers': headers,
         'rows': rows,
         'printed_at': timezone.localtime(),
+        'summary_at_bottom': summary_at_bottom,
     })
+
+
+def _record_report_period(request, queryset, date_field):
+    """Apply a report period to a timestamp field and return its display label."""
+    start, end, report_type, label = _parse_dates(request, simplified=True)
+    tz = timezone.get_current_timezone()
+    if start:
+        queryset = queryset.filter(**{
+            f'{date_field}__gte': timezone.make_aware(
+                datetime.combine(start, datetime.min.time()), tz),
+        })
+    if end:
+        queryset = queryset.filter(**{
+            f'{date_field}__lte': timezone.make_aware(
+                datetime.combine(end, datetime.max.time()), tz),
+        })
+    return queryset, report_type, label
+
+
+def _patient_records_query(request):
+    patients, report_type, label = _record_report_period(
+        request, Patient.objects.select_related('barangay'),
+        'created_at')
+    query = request.GET.get('q', '').strip()
+    if query:
+        normalized_query = ' '.join(query.split())
+        sex = _choice_value(Patient.SEX_CHOICES, normalized_query)
+        if sex:
+            patients = patients.filter(sex=sex)
+        else:
+            patients = patients.filter(
+                Q(patient_number__icontains=query)
+                | Q(contact_number__icontains=query)
+                | Q(address__icontains=query)
+                | Q(barangay__name__icontains=query)
+                | _name_query(normalized_query, prefix='')
+            )
+    return patients.distinct().order_by('last_name', 'first_name', 'pk'), report_type, label
+
+
+def _bite_case_records_query(request):
+    cases, report_type, label = _record_report_period(
+        request, AnimalBiteCase.objects.select_related(
+            'patient', 'patient__barangay'),
+        'date_time_bite')
+    query = request.GET.get('q', '').strip()
+    if query:
+        normalized_query = ' '.join(query.split())
+        animal = _choice_value(AnimalBiteCase.ANIMAL_TYPES, normalized_query)
+        exposure = _choice_value(AnimalBiteCase.EXPOSURE_TYPE, normalized_query)
+        status = _choice_value(AnimalBiteCase.CASE_STATUS, normalized_query)
+        query_filter = (
+            Q(case_number__icontains=query)
+            | Q(incident_barangay__icontains=query)
+            | Q(patient__barangay__name__icontains=query)
+            | Q(animal_other__icontains=query)
+            | _name_query(normalized_query)
+        )
+        if animal:
+            query_filter |= Q(animal_type=animal)
+        else:
+            query_filter |= Q(animal_type__icontains=query)
+        if exposure:
+            query_filter |= Q(exposure_type=exposure)
+        else:
+            query_filter |= Q(exposure_type__icontains=query)
+        if status:
+            query_filter |= Q(case_status=status)
+        else:
+            query_filter |= Q(case_status__icontains=query)
+        cases = cases.filter(query_filter)
+    return cases.order_by('-date_time_bite', '-pk'), report_type, label
+
+
+@reports_access
+def patients_report(request):
+    patients, report_type, label = _patient_records_query(request)
+    total = patients.count()
+    export = request.GET.get('export')
+    if export in ('print', 'pdf'):
+        generated_at = timezone.localtime()
+        rows = [
+            [
+                index, patient.patient_number, patient.full_name(),
+                patient.age, patient.get_sex_display(),
+                patient.barangay.name if patient.barangay else '',
+                patient.contact_display,
+                timezone.localtime(patient.created_at).strftime('%b %d, %Y'),
+            ]
+            for index, patient in enumerate(patients, start=1)
+        ]
+        headers = [
+            'No.', 'Patient ID', 'Patient Name', 'Age', 'Sex',
+            'Barangay', 'Contact Number', 'Registration Date',
+        ]
+        summary_lines = [('Total Patients', str(total))]
+        if export == 'print':
+            return _render_report_print(
+                request, 'PATIENTS REPORT',
+                f'{label} · Generated {generated_at:%B %d, %Y}',
+                headers, rows, summary_lines, summary_at_bottom=True)
+        pdf = _build_pdf(
+            'PATIENTS REPORT', label, headers, rows, summary_lines)
+        return _pdf_response(
+            pdf, f"ABTC_Patients_{date.today().isoformat()}.pdf",
+            inline=request.GET.get('preview') == '1')
+
+    page_obj = Paginator(patients, 25).get_page(request.GET.get('page'))
+    return render(request, 'reports/patients_report.html', {
+        'page_obj': page_obj,
+        'total': total,
+        'q': request.GET.get('q', '').strip(),
+        'report_type': report_type,
+        'label': label,
+        'period_options': RECORD_REPORT_PERIODS,
+    })
+
+
+@reports_access
+def animal_bite_cases_report(request):
+    cases, report_type, label = _bite_case_records_query(request)
+    total = cases.count()
+    export = request.GET.get('export')
+    if export in ('print', 'pdf'):
+        generated_at = timezone.localtime()
+        rows = [
+            [
+                index, case.case_number, case.patient.full_name(),
+                timezone.localtime(case.date_time_bite).strftime('%b %d, %Y'),
+                _animal_label(case), case.get_exposure_type_display(),
+                case.incident_barangay, case.get_case_status_display(),
+            ]
+            for index, case in enumerate(cases, start=1)
+        ]
+        headers = [
+            'No.', 'Case Number', 'Patient Name', 'Date of Incident',
+            'Animal Type', 'Exposure Type', 'Barangay', 'Case Status',
+        ]
+        summary_lines = [('Total Animal Bite Cases', str(total))]
+        if export == 'print':
+            return _render_report_print(
+                request, 'ANIMAL BITE CASES REPORT',
+                f'{label} · Generated {generated_at:%B %d, %Y}',
+                headers, rows, summary_lines, summary_at_bottom=True)
+        pdf = _build_pdf(
+            'ANIMAL BITE CASES REPORT', label, headers, rows, summary_lines)
+        return _pdf_response(
+            pdf, f"ABTC_Animal_Bite_Cases_{date.today().isoformat()}.pdf",
+            inline=request.GET.get('preview') == '1')
+
+    page_obj = Paginator(cases, 25).get_page(request.GET.get('page'))
+    for case in page_obj:
+        case.report_animal = _animal_label(case)
+    return render(request, 'reports/animal_bite_cases_report.html', {
+        'page_obj': page_obj,
+        'total': total,
+        'q': request.GET.get('q', '').strip(),
+        'report_type': report_type,
+        'label': label,
+        'period_options': RECORD_REPORT_PERIODS,
+    })
+
 
 @reports_access
 def reports_index(request):
     start, end, rtype, label = _parse_dates(request)
     q = request.GET.get('q', '').strip()
-    search_field = _search_field(request)
     cases = _case_search_queryset(
-        q, start, end, search_field) if q else _period_case_filter(
+        q, start, end, 'all') if q else _period_case_filter(
         AnimalBiteCase.objects.all(), start, end)
     completed_ids = completed_schedule_case_ids()
     summary = patient_treatment_summary(cases, completed_ids)
     inventory = inventory_summary()
+    patient_page = case_page = dose_page = vaccine_page = medicine_page = None
     result_count = 0
     if q:
-        result_count = cases.count()
+        normalized_query = ' '.join(q.split())
+        sex = _choice_value(Patient.SEX_CHOICES, normalized_query)
+        if sex:
+            patients = Patient.objects.filter(sex=sex)
+        else:
+            patients = Patient.objects.filter(
+                Q(patient_number__icontains=q)
+                | Q(address__icontains=q)
+                | Q(contact_number__icontains=q)
+                | Q(barangay__name__icontains=q)
+                | _name_query(normalized_query, prefix='')
+            )
+        patients = patients.distinct().order_by(
+            'last_name', 'first_name', 'pk')
 
-    case_page = Paginator(
-        cases.select_related('patient', 'patient__barangay').order_by(
-            '-date_time_bite', '-pk'), 20).get_page(
-                request.GET.get('cases_page')) if q else None
-    if case_page:
+        doses = _dose_search_queryset(q, start, end).select_related(
+            'schedule__bite_case__patient')
+        today = timezone.localdate()
+        vaccine_search, medicine_search = _inventory_search_query(q, today)
+        vaccines = VaccineInventory.objects.filter(
+            vaccine_search).order_by('vaccine_name', 'brand', 'batch_number')
+        medicines = MedicineInventory.objects.filter(
+            medicine_search).order_by(
+                'medicine_name', 'expiration_date', 'batch_number')
+
+        patient_page = Paginator(patients, 20).get_page(
+            request.GET.get('patients_page'))
+        case_page = Paginator(
+            cases.select_related('patient', 'patient__barangay').order_by(
+                '-date_time_bite', '-pk'), 20).get_page(
+                    request.GET.get('cases_page'))
+        dose_page = Paginator(
+            doses.order_by('schedule__bite_case__case_number', 'id'), 20
+        ).get_page(request.GET.get('vaccinations_page'))
+        vaccine_page = Paginator(vaccines, 20).get_page(
+            request.GET.get('vaccines_page'))
+        medicine_page = Paginator(medicines, 20).get_page(
+            request.GET.get('medicines_page'))
+
         for case in case_page:
             case.report_status = effective_status(case, completed_ids)
             case.report_animal = _animal_label(case)
-            case.report_barangay = _search_result_barangay(
-                case, q, search_field)
+            case.report_barangay = _search_result_barangay(case, q, 'all')
+        for vaccine in vaccine_page:
+            if vaccine.expiration_date < today:
+                vaccine.report_stock_status = 'Expired'
+            elif vaccine.quantity_available <= 0:
+                vaccine.report_stock_status = 'Out of Stock'
+            elif vaccine.quantity_available <= vaccine.reorder_level:
+                vaccine.report_stock_status = 'Low Stock'
+            else:
+                vaccine.report_stock_status = 'Available'
+        for medicine in medicine_page:
+            medicine.report_stock_status = medicine.stock_status()
+
+        result_count = sum((
+            patients.count(), cases.count(), doses.count(),
+            vaccines.count(), medicines.count(),
+        ))
     context = {
         'summary': summary,
         'inventory': inventory,
         'report_type': rtype, 'label': label,
         'q': q,
-        'search_field': search_field,
-        'search_fields': SEARCH_FIELDS,
         'today': timezone.localdate(),
         'search_submitted': bool(q),
+        'patient_page': patient_page,
         'case_page': case_page,
+        'dose_page': dose_page,
+        'vaccine_page': vaccine_page,
+        'medicine_page': medicine_page,
         'result_count': result_count,
     }
     return render(request, 'reports/index.html', context)
@@ -656,18 +877,40 @@ def cases_report(request):
 @reports_access
 def vaccine_report(request):
     start, end, report_type, label = _parse_dates(request)
-    # For vaccine, filter by date_received if date range given
-    items = VaccineInventory.objects.all().order_by('vaccine_name')
+    items = VaccineInventory.objects.all().order_by(
+        'vaccine_name', 'brand', 'batch_number')
     if start and end:
         items = items.filter(date_received__gte=start, date_received__lte=end)
     elif start:
         items = items.filter(date_received__gte=start)
+    elif end:
+        items = items.filter(date_received__lte=end)
 
-    # allow vaccine name filter?
-    q = request.GET.get('q','').strip()
+    q = request.GET.get('q', '').strip()
     if q:
-        vaccine_q, _ = _inventory_search_query(q, timezone.localdate())
-        items = items.filter(vaccine_q)
+        search_q = (
+            Q(vaccine_name__icontains=q)
+            | Q(brand__icontains=q)
+            | Q(batch_number__icontains=q)
+        )
+        if q.isdecimal():
+            quantity = int(q)
+            search_q |= (
+                Q(quantity_received=quantity)
+                | Q(quantity_used=quantity)
+                | Q(quantity_available=quantity)
+            )
+        for date_format in (
+            '%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y',
+            '%b %d, %Y', '%B %d, %Y',
+        ):
+            try:
+                expiry_date = datetime.strptime(q, date_format).date()
+            except ValueError:
+                continue
+            search_q |= Q(expiration_date=expiry_date)
+            break
+        items = items.filter(search_q)
 
     total_received = items.aggregate(total=Sum('quantity_received'))['total'] or 0
     total_used = items.aggregate(total=Sum('quantity_used'))['total'] or 0
@@ -709,53 +952,382 @@ def vaccine_report(request):
         'start_date': start.strftime('%Y-%m-%d') if start else '',
         'end_date': end.strftime('%Y-%m-%d') if end else '',
         'q': q, 'has_filters': bool(start or end or q),
+        'period_type': request.GET.get('type', report_type),
     })
 
 @reports_access
 def missed_appointments_report(request):
-    start, end, report_type, label = _parse_dates(request, simplified=True)
-    qs = FollowUpRecord.objects.filter(status='missed').select_related('bite_case__patient')
-    if start and end:
-        qs = qs.filter(follow_up_date__gte=start, follow_up_date__lte=end)
-    elif start:
-        qs = qs.filter(follow_up_date__gte=start)
-    q = request.GET.get('q','').strip()
-    if q:
-        qs = qs.filter(Q(bite_case__patient__first_name__icontains=q) | Q(bite_case__patient__last_name__icontains=q) | Q(bite_case__case_number__icontains=q))
-    qs = qs.order_by('-follow_up_date')
+    return _vaccination_followup_report(request, 'missed')
 
-    export = request.GET.get('export','')
-    preview = request.GET.get('preview','')
-    if export == 'csv':
-        resp = HttpResponse(content_type='text/csv')
-        resp['Content-Disposition'] = f'attachment; filename="missed_appointments_{date.today().isoformat()}.csv"'
-        w = csv.writer(resp)
-        w.writerow(['Patient','Case #','Follow-Up Date','Status','Contact'])
-        for r in qs[:5000]:
-            w.writerow([r.bite_case.patient.full_name(), r.bite_case.case_number, r.follow_up_date, r.get_status_display(), r.bite_case.patient.contact_number])
-        return resp
-    if export in ('pdf', 'print'):
-        headers = ["Patient", "Case #", "Follow-Up Date", "Status", "Contact"]
-        rows = [[r.bite_case.patient.full_name(), r.bite_case.case_number, r.follow_up_date.strftime('%Y-%m-%d'), r.get_status_display(), r.bite_case.patient.contact_number] for r in qs[:1500]]
-        subtitle = label + f" · {qs.count()} missed"
-        summary = [("Date range", label), ("Total missed", str(qs.count()))]
-        if q:
-            summary.append(("Search", q))
+
+@reports_access
+def completed_vaccinations_report(request):
+    return _vaccination_followup_report(request, 'completed')
+
+
+@reports_access
+def under_treatment_report(request):
+    return _vaccination_followup_report(request, 'treatment')
+
+
+def _ordinal_label(position):
+    suffix = 'th'
+    if position % 100 not in (11, 12, 13):
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(position % 10, 'th')
+    return f'{position}{suffix} Dose'
+
+
+def _search_report_values(query, values):
+    if not query:
+        return True
+    keyword = ' '.join(query.casefold().split())
+    return any(keyword in ' '.join(str(value or '').casefold().split())
+               for value in values)
+
+
+def _date_search_values(value):
+    if not value:
+        return []
+    return [
+        value.isoformat(),
+        value.strftime('%b %d, %Y'),
+        value.strftime('%B %d, %Y'),
+        value.strftime('%m/%d/%Y'),
+    ]
+
+
+def _missed_row_matches(query, cells, scheduled_date):
+    if not query:
+        return True
+
+    keyword = ' '.join(query.casefold().split())
+    numeric_keyword = None
+    try:
+        numeric_keyword = int(keyword)
+    except ValueError:
+        pass
+
+    if numeric_keyword is not None and numeric_keyword in (cells[0], cells[7]):
+        return True
+
+    date_keyword = None
+    for date_format in (
+            '%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y', '%b %d, %Y',
+            '%B %d, %Y'):
+        try:
+            date_keyword = datetime.strptime(query.strip(), date_format).date()
+            break
+        except ValueError:
+            continue
+    if date_keyword is not None and scheduled_date == date_keyword:
+        return True
+
+    text_cells = (cells[1], cells[2], cells[3], cells[4], cells[6])
+    if _search_report_values(query, text_cells):
+        return True
+
+    return (
+        date_keyword is None
+        and not query.strip().isdigit()
+        and _search_report_values(
+        query, _date_search_values(scheduled_date))
+    )
+
+
+def _parse_report_search_date(query):
+    for date_format in (
+            '%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y', '%b %d, %Y',
+            '%B %d, %Y'):
+        try:
+            return datetime.strptime(query.strip(), date_format).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _completed_row_matches(query, cells, scheduled_date, actual_date):
+    if not query:
+        return True
+
+    keyword = ' '.join(query.casefold().split())
+    try:
+        row_number = int(keyword)
+    except ValueError:
+        row_number = None
+    if row_number is not None:
+        return row_number == cells[0]
+
+    date_keyword = _parse_report_search_date(query)
+    if date_keyword is not None:
+        return date_keyword in (scheduled_date, actual_date)
+
+    text_cells = (*cells[1:5], *cells[7:9])
+    if _search_report_values(query, text_cells):
+        return True
+
+    return _search_report_values(
+        query,
+        _date_search_values(scheduled_date)
+        + _date_search_values(actual_date),
+    )
+
+
+def _dose_position_map(doses):
+    positions = {}
+    counts = {}
+    for dose in doses:
+        counts[dose.schedule_id] = counts.get(dose.schedule_id, 0) + 1
+        positions[dose.pk] = _ordinal_label(counts[dose.schedule_id])
+    return positions
+
+
+def _vaccination_followup_report(request, kind):
+    start, end, report_type, label = _parse_dates(request, simplified=True)
+    query = request.GET.get('q', '').strip()
+    today = timezone.localdate()
+    headers_by_kind = {
+        'missed': [
+            'No.', 'Patient Name', 'Case Number', 'Contact Number',
+            'Dose Number', 'Scheduled Date', 'Administration Status',
+            'Days Overdue',
+        ],
+        'completed': [
+            'No.', 'Patient Name', 'Case Number', 'Vaccine Name / Brand',
+            'Dose Number', 'Scheduled Date', 'Actual Administration Date',
+            'Administered By', 'Status',
+        ],
+        'treatment': [
+            'No.', 'Patient Name', 'Case Number', 'Animal Type',
+            'Total Required Doses', 'Completed Doses', 'Remaining Doses',
+            'Next Scheduled Dose', 'Next Schedule Date', 'Treatment Status',
+        ],
+    }
+    titles = {
+        'missed': 'Missed Appointments',
+        'completed': 'Completed Vaccinations',
+        'treatment': 'Under Treatment',
+    }
+    descriptions = {
+        'missed': 'Patients with overdue scheduled vaccine doses that were not administered.',
+        'completed': 'Patients with successfully administered and recorded vaccine doses.',
+        'treatment': 'Patients with active vaccination treatment plans and remaining scheduled doses.',
+    }
+    badge_classes = {
+        'missed': 'bg-red-100 text-red-800',
+        'completed': 'bg-emerald-100 text-emerald-800',
+        'treatment': 'bg-amber-100 text-amber-800',
+    }
+    status_indexes = {'missed': 6, 'completed': 8, 'treatment': 9}
+    rows = []
+
+    if kind in ('missed', 'completed'):
+        date_field = 'scheduled_date' if kind == 'missed' else 'actual_date'
+        if kind == 'missed':
+            doses = missed_vaccination_doses(today=today)
+            if start:
+                doses = [dose for dose in doses if dose.scheduled_date >= start]
+            if end:
+                doses = [dose for dose in doses if dose.scheduled_date <= end]
+        else:
+            doses = VaccineDose.objects.select_related(
+                'schedule__bite_case__patient', 'administered_by'
+            ).prefetch_related('schedule__doses')
+            if start:
+                doses = doses.filter(**{f'{date_field}__gte': start})
+            if end:
+                doses = doses.filter(**{f'{date_field}__lte': end})
+            doses = doses.filter(
+                dose_status='completed', actual_date__isnull=False,
+            ).order_by('schedule_id', 'pk')
+
+        dose_list = list(doses) if kind == 'missed' else list(doses.distinct())
+        scheduled_doses = []
+        seen_schedules = set()
+        for dose in dose_list:
+            if dose.schedule_id not in seen_schedules:
+                scheduled_doses.extend(dose.schedule.doses.all())
+                seen_schedules.add(dose.schedule_id)
+        positions = _dose_position_map(scheduled_doses)
+        for dose in dose_list:
+            case = dose.schedule.bite_case
+            patient = case.patient
+            dose_number = positions[dose.pk]
+            scheduled = dose.scheduled_date
+            if kind == 'missed':
+                status = 'Missed Appointment'
+                overdue = max((today - scheduled).days, 0)
+                cells = [
+                    0, patient.full_name(), case.case_number,
+                    patient.contact_display, dose_number,
+                    scheduled.strftime('%b %d, %Y'), status, overdue,
+                ]
+                search_values = cells + _date_search_values(scheduled)
+            else:
+                status = 'Completed'
+                course_doses = [
+                    item for item in dose.schedule.doses.all()
+                    if item.dose_status != 'cancelled'
+                ]
+                course_completed = bool(course_doses) and all(
+                    item.dose_status == 'completed'
+                    and item.actual_date is not None
+                    for item in course_doses
+                )
+                vaccine = dose.vaccine_brand or '—'
+                administered_by = (
+                    dose.administered_by.get_full_name()
+                    or dose.administered_by.username
+                    if dose.administered_by else '—'
+                )
+                cells = [
+                    0, patient.full_name(), case.case_number, vaccine,
+                    dose_number,
+                    scheduled.strftime('%b %d, %Y') if scheduled else '—',
+                    dose.actual_date.strftime('%b %d, %Y'),
+                    administered_by,
+                    'Treatment Course Completed' if course_completed else status,
+                ]
+                search_values = cells + _date_search_values(scheduled)
+                search_values += _date_search_values(dose.actual_date)
+            if kind == 'missed':
+                rows.append({
+                    'cells': cells,
+                    'status': status,
+                    'search_values': search_values,
+                    'scheduled_date': scheduled,
+                })
+            else:
+                rows.append({
+                    'cells': cells,
+                    'status': status,
+                    'search_values': search_values,
+                    'scheduled_date': scheduled,
+                    'actual_date': dose.actual_date,
+                })
+    else:
+        cases = AnimalBiteCase.objects.filter(
+            case_status__in=('new', 'under_treatment'),
+            vaccination_schedule__isnull=False,
+        ).select_related(
+            'patient', 'vaccination_schedule',
+        ).prefetch_related(
+            'vaccination_schedule__doses',
+        ).order_by('date_time_bite', 'case_number', 'pk')
+        cases = _period_case_filter(cases, start, end)
+        for case in cases:
+            all_doses = list(case.vaccination_schedule.doses.all())
+            required_doses = [
+                dose for dose in all_doses
+                if dose.dose_status != 'cancelled'
+            ]
+            completed_doses = [
+                dose for dose in required_doses
+                if dose.dose_status == 'completed'
+                and dose.actual_date is not None
+            ]
+            remaining = len(required_doses) - len(completed_doses)
+            if not required_doses or remaining <= 0:
+                continue
+            positions = _dose_position_map(all_doses)
+            next_dose = min(
+                (
+                    dose for dose in required_doses
+                    if dose not in completed_doses and dose.scheduled_date
+                ),
+                key=lambda dose: dose.scheduled_date,
+                default=None,
+            )
+            next_label = (
+                positions[next_dose.pk] if next_dose else '—'
+            )
+            next_date = next_dose.scheduled_date if next_dose else None
+            status = 'Under Treatment'
+            cells = [
+                0, case.patient.full_name(), case.case_number,
+                case.get_animal_type_display(), len(required_doses),
+                len(completed_doses), remaining, next_label,
+                next_date.strftime('%b %d, %Y') if next_date else '—',
+                status,
+            ]
+            search_values = cells + _date_search_values(next_date)
+            search_values += _date_search_values(
+                timezone.localtime(case.date_time_bite).date()
+                if case.date_time_bite else None)
+            if _search_report_values(query, search_values):
+                rows.append({
+                    'cells': cells,
+                    'status': status,
+                    'search_values': search_values,
+                })
+
+    if kind == 'missed':
+        matching_rows = []
+        for index, row in enumerate(rows, start=1):
+            row['cells'][0] = index
+            if _missed_row_matches(
+                    query, row['cells'], row['scheduled_date']):
+                matching_rows.append(row)
+        rows = matching_rows
+    elif kind == 'completed':
+        matching_rows = []
+        for index, row in enumerate(rows, start=1):
+            row['cells'][0] = index
+            if _completed_row_matches(
+                    query, row['cells'], row['scheduled_date'],
+                    row['actual_date']):
+                matching_rows.append(row)
+        rows = matching_rows
+    else:
+        for index, row in enumerate(rows, start=1):
+            row['cells'][0] = index
+
+    count = len(rows)
+    export = request.GET.get('export', '')
+    headers = headers_by_kind[kind]
+    title = titles[kind]
+    if export in ('print', 'pdf', 'csv'):
+        export_rows = [row['cells'] for row in rows]
+        summary = [
+            ('Reporting Period', label),
+            ('Total Records', str(count)),
+        ]
+        if query:
+            summary.append(('Search', query))
+        if export == 'csv':
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = (
+                f'attachment; filename="{kind}_vaccination_report_'
+                f'{today.isoformat()}.csv"')
+            writer = csv.writer(response)
+            writer.writerow(headers)
+            writer.writerows(export_rows)
+            return response
         if export == 'print':
             return _render_report_print(
-                request, "Missed Follow-Up Report", subtitle, headers, rows,
-                summary)
-        pdf = _build_pdf("Missed Follow-Up Report", subtitle, headers, rows, summary_lines=summary)
-        inline = preview=='1' or request.GET.get('inline')=='1'
-        filename = f"ABTC_Missed_{start.isoformat() if start else 'all'}_{end.isoformat() if end else 'all'}.pdf"
-        return _pdf_response(pdf, filename, inline=inline)
+                request, title, label, headers, export_rows, summary)
+        pdf = _build_pdf(title, label, headers, export_rows,
+                         summary_lines=summary)
+        return _pdf_response(
+            pdf, f'ABTC_{kind.title()}_{today.isoformat()}.pdf',
+            inline=request.GET.get('preview') == '1')
 
     from django.core.paginator import Paginator
-    paginator = Paginator(qs, 20)
+    paginator = Paginator(rows, 25)
     page_obj = paginator.get_page(request.GET.get('page'))
-    return render(request, 'reports/missed_appointments.html', {
-        'records': page_obj, 'page_obj': page_obj,
-        'label': label, 'report_type': report_type, 'q': q,
+    return render(request, 'reports/vaccination_followup_report.html', {
+        'headers': headers,
+        'rows': page_obj,
+        'page_obj': page_obj,
+        'total': count,
+        'title': title,
+        'description': descriptions[kind],
+        'label': label,
+        'report_type': report_type,
+        'period_options': RECORD_REPORT_PERIODS,
+        'q': query,
+        'kind': kind,
+        'badge_class': badge_classes[kind],
+        'status_index': status_indexes[kind],
     })
 
 
@@ -1006,21 +1578,47 @@ def medicine_inventory_report(request):
 @reports_access
 def stock_alerts_report(request):
     sections = stock_alert_sections()
-    total = sum(len(section['rows']) for section in sections)
+    total = sum(
+        len(section['rows'])
+        for section in sections if section['key'] != 'pulled_out'
+    )
+    pulled_out_total = next(
+        (len(section['rows']) for section in sections
+         if section['key'] == 'pulled_out'),
+        0,
+    )
     today = timezone.localdate()
     label = f"Current inventory snapshot · {today:%b %d, %Y}"
     export = request.GET.get('export', '')
     preview = request.GET.get('preview', '')
     headers = [
-        'Inventory Type', 'Product Name', 'Batch Number',
-        'Available / Affected Quantity', 'Expiration Date', 'Stock Status',
+        'Medicine / Vaccine', 'Form', 'Unit', 'Batches', 'Available',
+        'Expiry',
     ]
     rows = [
         [
-            row['module_label'], row['product'], row['batch'],
-            row['quantity'],
-            row['expiration'].strftime('%Y-%m-%d') if row['expiration'] else '',
-            row['status'],
+            f"{row['module_label']}: {row['product']} · {section['title']}",
+            row['form'], row['unit'],
+            (
+                (
+                    f"{row['batch_summary']}; "
+                    f"Pull-out date: {row['pull_out_date']:%b %d, %Y}; "
+                    f"Reason: {row['reason']}; "
+                    f"Responsible: {row['responsible']}; "
+                    f"Transaction Reference: {row['reference']}"
+                )
+                if section['key'] == 'pulled_out'
+                else row.get('batch_summary') or row['batch']
+            ),
+            f"{row['available']} {row['unit']}".strip(),
+            (
+                row.get('expiry_summary') or
+                (row['expiration'].strftime('%Y-%m-%d')
+                 if row.get('expiration') else '')
+                if section['key'] != 'pulled_out'
+                else row['expiration'].strftime('%Y-%m-%d')
+                if row.get('expiration') else ''
+            ),
         ]
         for section in sections for row in section['rows']
     ]
@@ -1034,6 +1632,8 @@ def stock_alerts_report(request):
         summary_lines += [
             (section['title'], str(len(section['rows']))) for section in sections
         ]
+        summary_lines.insert(
+            0, ('Active alerts', str(total)))
         if export == 'print':
             return _render_report_print(
                 request, "Stock Alerts Report", label, headers, rows,
@@ -1048,6 +1648,7 @@ def stock_alerts_report(request):
     return render(request, 'reports/stock_alerts.html', {
         'sections': sections,
         'total': total,
+        'pulled_out_total': pulled_out_total,
         'snapshot_date': today,
         'label': label,
         'pdf_title': 'Stock Alerts Report',
@@ -1067,95 +1668,276 @@ def _distribution_context(request, distribution, label, report_type):
     }
 
 
+def _barangay_case_groups(cases):
+    groups = {}
+    for case in cases.select_related('patient').order_by(
+            'date_time_bite', 'case_number', 'pk'):
+        name = (case.incident_barangay or '').strip() or 'Unspecified'
+        key = name.casefold()
+        group = groups.setdefault(key, {'name': name, 'cases': []})
+        group['cases'].append(case)
+    return sorted(
+        (
+            {'name': group['name'], 'cases': group['cases'],
+             'total': len(group['cases'])}
+            for group in groups.values()
+        ),
+        key=lambda group: group['name'].casefold(),
+    )
+
+
+def _animal_type_case_groups(cases):
+    groups = {}
+    for case in cases.select_related('patient').order_by(
+            'date_time_bite', 'case_number', 'pk'):
+        key = case.animal_type
+        group = groups.setdefault(key, {
+            'name': case.get_animal_type_display(), 'cases': [],
+        })
+        group['cases'].append(case)
+    return sorted(
+        (
+            {'key': key, 'name': group['name'], 'cases': group['cases'],
+             'total': len(group['cases'])}
+            for key, group in groups.items()
+        ),
+        key=lambda group: group['name'].casefold(),
+    )
+
+
+def _animal_report_cases(request, start, end):
+    cases = _filter_cases(
+        AnimalBiteCase.objects.all(), request, start, end,
+        extra_filters=False)
+    query = request.GET.get('q', '').strip()
+    if query:
+        animal_type_matches = _period_case_filter(
+            AnimalBiteCase.objects.all().filter(
+                animal_type__icontains=query),
+            start, end,
+        )
+        cases = (cases | animal_type_matches).distinct()
+    return cases
+
+
 @reports_access
 def barangay_report(request):
+    if getattr(request.user, 'role', '') not in {'admin', 'nurse'}:
+        raise PermissionDenied
     start, end, report_type, label = _parse_dates(request, simplified=True)
     qs = _filter_cases(
         AnimalBiteCase.objects.all(), request, start, end, extra_filters=False)
     distribution = barangay_distribution(qs)
+    rows = sorted(
+        distribution['rows'], key=lambda row: row['name'].casefold())
     export = request.GET.get('export', '')
-    preview = request.GET.get('preview', '')
-    headers = ['Barangay', 'Cases', 'Percentage']
-    rows = [
-        [row['name'], row['count'], f"{row['pct']}%"]
-        for row in distribution['rows']
+    headers = ['No.', 'Barangay', 'Total Cases']
+    export_rows = [
+        [index, row['name'], row['count']]
+        for index, row in enumerate(rows, start=1)
     ]
-
     if export == 'csv':
         return _csv_response(
-            f"ABTC_Barangay_{date.today().isoformat()}.csv", headers, rows)
-
+            f"ABTC_Barangay_{date.today().isoformat()}.csv",
+            headers, export_rows)
     if export in ('pdf', 'print'):
         summary_lines = _case_filter_summary(
             request, label, extra_filters=False) + [
-            ('Total cases', str(distribution['total'])),
-            ('Barangays', str(len(distribution['rows']))),
-        ]
-        if distribution['top']:
-            summary_lines.append((
-                'Highest',
-                f"{distribution['top']['name']} ({distribution['top']['count']})",
-            ))
+                ('Total cases', str(distribution['total'])),
+                ('Barangays', str(len(rows))),
+            ]
         if export == 'print':
             return _render_report_print(
-                request, "Animal Bite Cases by Barangay", label, headers, rows,
-                summary_lines)
+                request, 'Cases by Barangay Report', label,
+                headers, export_rows, summary_lines)
         pdf = _build_pdf(
-            "Animal Bite Cases by Barangay", label, headers, rows,
+            'Cases by Barangay Report', label, headers, export_rows,
             summary_lines=summary_lines)
         s, e = _export_period(start, end)
-        inline = preview == '1' or request.GET.get('inline') == '1'
+        inline = request.GET.get('preview') == '1' or request.GET.get(
+            'inline') == '1'
         return _pdf_response(
-            pdf, f"ABTC_Barangay_{s}_{e}.pdf", inline=inline)
-
+            pdf, f'ABTC_Barangay_{s}_{e}.pdf', inline=inline)
+    if export == 'print-sheet':
+        groups = _barangay_case_groups(qs)
+        return render(request, 'reports/barangay_print_sheet.html', {
+            'document_title': 'CASES BY BARANGAY REPORT',
+            'groups': groups,
+            'grand_total': sum(group['total'] for group in groups),
+            'reporting_period': label,
+            'search_keyword': request.GET.get('q', '').strip(),
+            'printed_at': timezone.localtime(),
+        })
     context = _distribution_context(
         request, distribution, label, report_type)
-    context['pdf_title'] = 'Animal Bite Cases by Barangay'
+    context['rows'] = rows
+    context['period_options'] = RECORD_REPORT_PERIODS
+    context['search_field'] = _search_field(request)
+    context['pdf_title'] = 'Cases by Barangay Report'
     return render(request, 'reports/barangay_report.html', context)
+
+
+@reports_access
+def barangay_detail_report(request, barangay):
+    if getattr(request.user, 'role', '') not in {'admin', 'nurse'}:
+        raise PermissionDenied
+    start, end, report_type, label = _parse_dates(request, simplified=True)
+    cases = _filter_cases(
+        AnimalBiteCase.objects.select_related('patient'),
+        request, start, end, extra_filters=False,
+    )
+    distribution = barangay_distribution(cases)
+    selected_key = (barangay or '').strip().casefold()
+    selected = next(
+        (row for row in distribution['rows']
+         if row['name'].casefold() == selected_key),
+        None,
+    )
+    if selected is None:
+        raise Http404
+
+    cases = cases.annotate(
+        normalized_incident_barangay=Lower(Trim('incident_barangay')))
+    if selected['name'].casefold() == 'unspecified':
+        cases = cases.filter(
+            Q(normalized_incident_barangay='')
+            | Q(normalized_incident_barangay='unspecified'))
+    else:
+        cases = cases.filter(
+            normalized_incident_barangay=selected['name'].strip().casefold())
+    cases = cases.order_by('date_time_bite', 'case_number', 'pk')
+
+    if request.GET.get('export') == 'print':
+        headers = [
+            'No.', 'Case Number', 'Patient Name', 'Date of Incident',
+            'Animal Type', 'Exposure Type', 'Case Status',
+        ]
+        rows = [
+            [
+                index, case.case_number, case.patient.full_name(),
+                timezone.localtime(case.date_time_bite).strftime('%b %d, %Y')
+                if case.date_time_bite else '',
+                case.get_animal_type_display(),
+                case.get_exposure_type_display(),
+                case.get_case_status_display(),
+            ]
+            for index, case in enumerate(cases, start=1)
+        ]
+        summary_lines = [
+            ('Selected Barangay', selected['name']),
+            ('Reporting Period', label),
+            ('Date Generated', timezone.localtime().strftime(
+                '%B %d, %Y · %I:%M %p')),
+            ('Total Number of Cases', str(len(rows))),
+        ]
+        return _render_report_print(
+            request, 'CASES BY BARANGAY REPORT', label,
+            headers, rows, summary_lines)
+
+    return render(request, 'reports/barangay_detail_report.html', {
+        'barangay': selected['name'],
+        'cases': cases,
+        'total': cases.count(),
+        'label': label,
+        'report_type': report_type,
+        'q': request.GET.get('q', '').strip(),
+        'search_field': _search_field(request),
+    })
 
 
 @reports_access
 def animal_type_report(request):
     start, end, report_type, label = _parse_dates(request, simplified=True)
-    qs = _filter_cases(
-        AnimalBiteCase.objects.all(), request, start, end, extra_filters=False)
-    distribution = animal_type_distribution(qs)
+    qs = _animal_report_cases(request, start, end)
+    groups = _animal_type_case_groups(qs)
+    total = sum(group['total'] for group in groups)
+    rows = [
+        {'key': group['key'], 'name': group['name'], 'count': group['total']}
+        for group in groups
+    ]
     export = request.GET.get('export', '')
     preview = request.GET.get('preview', '')
-    headers = ['Animal Type', 'Cases', 'Percentage']
-    rows = [
-        [row['name'], row['count'], f"{row['pct']}%"]
-        for row in distribution['rows']
+    headers = ['No.', 'Animal Type', 'Total Cases']
+    export_rows = [
+        [index, row['name'], row['count']]
+        for index, row in enumerate(rows, start=1)
     ]
 
     if export == 'csv':
         return _csv_response(
-            f"ABTC_Animal_Type_{date.today().isoformat()}.csv", headers, rows)
+            f"ABTC_Animal_Type_{date.today().isoformat()}.csv",
+            headers, export_rows)
 
     if export in ('pdf', 'print'):
         summary_lines = _case_filter_summary(
             request, label, extra_filters=False) + [
-            ('Total cases', str(distribution['total'])),
-            ('Animal types', str(len(distribution['rows']))),
+            ('Total cases', str(total)),
+            ('Animal types', str(len(rows))),
         ]
-        if distribution['top']:
-            summary_lines.append((
-                'Highest',
-                f"{distribution['top']['name']} ({distribution['top']['count']})",
-            ))
         if export == 'print':
             return _render_report_print(
-                request, "Animal Bite Cases by Animal Type", label, headers,
-                rows, summary_lines)
+                request, "Cases by Animal Type Report", label, headers,
+                export_rows, summary_lines)
         pdf = _build_pdf(
-            "Animal Bite Cases by Animal Type", label, headers, rows,
+            "Cases by Animal Type Report", label, headers, export_rows,
             summary_lines=summary_lines)
         s, e = _export_period(start, end)
         inline = preview == '1' or request.GET.get('inline') == '1'
         return _pdf_response(
             pdf, f"ABTC_Animal_Type_{s}_{e}.pdf", inline=inline)
 
-    context = _distribution_context(
-        request, distribution, label, report_type)
-    context['pdf_title'] = 'Animal Bite Cases by Animal Type'
-    return render(request, 'reports/animal_type_report.html', context)
+    if export == 'print-sheet':
+        return render(request, 'reports/animal_type_print_sheet.html', {
+            'groups': groups,
+            'grand_total': total,
+            'reporting_period': label,
+            'search_keyword': request.GET.get('q', '').strip(),
+            'printed_at': timezone.localtime(),
+            'document_title': 'CASES BY ANIMAL TYPE REPORT',
+        })
+
+    return render(request, 'reports/animal_type_report.html', {
+        'rows': rows,
+        'total': total,
+        'label': label,
+        'report_type': report_type,
+        'period_options': RECORD_REPORT_PERIODS,
+        'q': request.GET.get('q', '').strip(),
+        'search_field': 'all',
+    })
+
+
+@reports_access
+def animal_type_detail_report(request, animal_type):
+    animal_labels = dict(AnimalBiteCase.ANIMAL_TYPES)
+    if animal_type not in animal_labels:
+        raise Http404
+
+    start, end, report_type, label = _parse_dates(request, simplified=True)
+    cases = _animal_report_cases(request, start, end).filter(
+        animal_type=animal_type).select_related('patient')
+    if not cases.exists():
+        raise Http404
+    cases = cases.order_by('date_time_bite', 'case_number', 'pk')
+
+    if request.GET.get('export') == 'print-sheet':
+        group = _animal_type_case_groups(cases)[0]
+        return render(request, 'reports/animal_type_print_sheet.html', {
+            'groups': [group],
+            'grand_total': group['total'],
+            'reporting_period': label,
+            'search_keyword': request.GET.get('q', '').strip(),
+            'printed_at': timezone.localtime(),
+            'document_title': 'CASES BY ANIMAL TYPE REPORT',
+        })
+
+    return render(request, 'reports/animal_type_detail_report.html', {
+        'animal_type': animal_type,
+        'animal_label': animal_labels[animal_type],
+        'cases': cases,
+        'total': cases.count(),
+        'label': label,
+        'report_type': report_type,
+        'q': request.GET.get('q', '').strip(),
+        'search_field': 'all',
+    })

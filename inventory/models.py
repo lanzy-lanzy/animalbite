@@ -41,7 +41,7 @@ class VaccineInventory(models.Model):
         return f"{self.vaccine_name} ({self.brand}) - Batch: {self.batch_number}"
 
     def is_expired(self):
-        return self.expiration_date < timezone.localdate()
+        return self.expiration_date <= timezone.localdate()
 
     def is_low_stock(self):
         return self.quantity_available <= self.reorder_level
@@ -122,7 +122,7 @@ class MedicineInventory(models.Model):
         return ' '.join(parts)
 
     def is_expired(self):
-        return self.expiration_date < timezone.localdate()
+        return self.expiration_date <= timezone.localdate()
 
     def is_out_of_stock(self):
         return self.quantity_available <= 0

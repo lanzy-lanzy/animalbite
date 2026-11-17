@@ -1,99 +1,120 @@
 {% extends 'base.html' %}
-{% block title %}Animal Bite Cases by Animal Type — ABTC{% endblock %}
+{% block title %}Cases by Animal Type Report — ABTC{% endblock %}
+{% block extra_head %}
+<style>
+    .animal-type-view-button,
+    .animal-type-view-button:link,
+    .animal-type-view-button:visited,
+    .animal-type-view-button:focus,
+    .animal-type-view-button:active {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 10px 22px;
+        border: 0;
+        border-radius: 999px;
+        background-color: #0D382C !important;
+        color: #FFFFFF !important;
+        font-weight: 600;
+        white-space: nowrap;
+        text-decoration: none;
+        transition: background-color .2s ease, box-shadow .2s ease;
+    }
+    .animal-type-view-button svg { color: #FFFFFF !important; flex: 0 0 auto; }
+    .animal-type-view-button:hover,
+    .animal-type-view-button:focus-visible {
+        background-color: #0C543F !important;
+        color: #FFFFFF !important;
+        box-shadow: 0 3px 8px rgba(8, 32, 26, .24);
+    }
+    .animal-type-view-button:focus-visible {
+        outline: 2px solid #0C543F;
+        outline-offset: 3px;
+    }
+</style>
+{% endblock %}
 {% block content %}
-<div x-data="reportPreview()" class="space-y-5">
-
-    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+<div class="space-y-5">
+    <header class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
             <a href="{% url 'reports:reports_index' %}" class="inline-flex items-center gap-1.5 text-xs font-bold text-muted hover:text-ink">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg> Reports Center
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                Reports Center
             </a>
-            <h1 class="font-display text-2xl font-bold text-ink mt-1">Animal Bite Cases by Animal Type</h1>
-            <p class="text-sm font-medium text-muted">{{ label }} · <span class="text-ink font-bold">{{ total }}</span> case{{ total|pluralize }} · {{ rows|length }} animal type{{ rows|length|pluralize }}</p>
+            <h1 class="font-display text-2xl font-bold text-ink mt-1">Cases by Animal Type Report</h1>
+            <p class="text-sm font-medium text-muted">{{ label }} · Total recorded cases: <strong class="text-ink">{{ total }}</strong></p>
         </div>
-        {% include 'reports/_report_toolbar.html' %}
-    </div>
+        <div class="flex justify-end no-print">
+            <a href="?{% for k,v in request.GET.items %}{% if k != 'export' and k != 'preview' %}{{ k }}={{ v|urlencode }}&amp;{% endif %}{% endfor %}export=print-sheet"
+               target="_blank" rel="noopener"
+               class="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-950 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-900">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9V3h12v6M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h20a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v7H6z"/></svg>
+                Print Sheet
+            </a>
+        </div>
+    </header>
 
-    {% include 'reports/_case_filters.html' %}
+    <section class="card">
+        <h2 class="font-display text-sm font-bold text-ink mb-3">Reporting Period</h2>
+        <nav class="flex flex-wrap gap-2 mb-4" aria-label="Cases by animal type reporting period">
+            {% for value, text in period_options %}
+            <a href="?type={{ value }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
+               class="px-3 py-1.5 rounded-full text-xs font-bold border {% if report_type == value %}bg-emerald-950 text-white border-emerald-950{% else %}bg-white text-ink border-line hover:bg-sage-50{% endif %}">{{ text }}</a>
+            {% endfor %}
+        </nav>
+        <form method="get" class="flex flex-col sm:flex-row gap-2">
+            <input type="hidden" name="type" value="{{ report_type }}">
+            <input type="hidden" name="search_field" value="all">
+            <label class="sr-only" for="animal-type-report-search">Search animal type cases</label>
+            <input id="animal-type-report-search" type="search" name="q" value="{{ q }}"
+                   placeholder="Search animal type, case number, or patient..." class="form-input min-w-0 flex-1">
+            <button type="submit" class="btn-primary shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                Search
+            </button>
+        </form>
+    </section>
 
-    <div class="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        <div class="card text-center p-4">
-            <p class="text-[11px] font-bold tracking-widest uppercase text-muted">Total Cases</p>
-            <p class="font-display text-2xl font-bold text-ink">{{ total }}</p>
-        </div>
-        <div class="card text-center p-4">
-            <p class="text-[11px] font-bold tracking-widest uppercase text-muted">Animal Types</p>
-            <p class="font-display text-2xl font-bold text-ink">{{ rows|length }}</p>
-        </div>
-        <div class="card text-center p-4 bg-emerald-950 border-emerald-950 text-white">
-            <p class="text-[11px] font-bold tracking-widest uppercase text-sage-300">Highest</p>
-            <p class="font-display text-lg font-bold leading-tight mt-1">{{ top.name|default:'—' }}</p>
-            <p class="text-xs font-medium text-sage-200">{{ top.count|default:0 }} case{{ top.count|pluralize }}</p>
-        </div>
-    </div>
-
-    <div id="report-print-area" class="space-y-4">
-        <div class="card p-0 overflow-hidden">
-            <div class="px-5 py-4 border-b border-line bg-sage-50 flex items-center justify-between">
-                <div>
-                    <h3 class="font-display text-sm font-bold text-ink">Cases by Animal Type · {{ label }}</h3>
-                    <p class="text-xs font-medium text-muted">Saved animal type per recorded bite case</p>
-                </div>
-                <span class="hidden sm:inline-flex items-center gap-1.5 text-xs font-bold tracking-widest uppercase text-emerald-700 bg-white border border-line px-2.5 py-1 rounded-full">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Live preview
-                </span>
+    <section class="card p-0 overflow-hidden">
+        <div class="px-4 sm:px-5 py-4 border-b border-line bg-sage-50 flex flex-wrap items-center justify-between gap-2">
+            <div>
+                <h2 class="font-display text-sm font-bold text-ink">Animal Type Case Summary</h2>
+                <p class="text-xs font-medium text-muted mt-1">Total Cases: <strong class="text-ink">{{ total }}</strong></p>
             </div>
-            <div class="overflow-x-auto">
-                <table class="w-full">
-                    <thead>
-                        <tr class="border-b border-line bg-sage-50">
-                            <th class="table-header">Animal Type</th>
-                            <th class="table-header">Cases</th>
-                            <th class="table-header">Percentage</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-sage-100">
-                        {% for row in rows %}
-                        <tr class="hover:bg-sage-50">
-                            <td class="table-cell font-bold text-ink">{{ row.name }}</td>
-                            <td class="table-cell">{{ row.count }}</td>
-                            <td class="table-cell">{{ row.pct }}%</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="3" class="text-center py-12">
-                            <p class="text-sm font-semibold text-ink">No cases found for this period.</p>
-                            <p class="text-xs text-muted mt-1">Try a different search or reporting period.</p>
-                        </td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+            <span class="text-xs font-semibold text-muted">{{ label }}</span>
         </div>
-
-        <div class="card">
-            <h3 class="font-display text-sm font-bold text-ink mb-3">Distribution — horizontal bars</h3>
-            <div class="space-y-2.5">
-                {% for row in rows %}
-                <div class="flex items-center gap-3">
-                    <span class="text-xs font-semibold text-ink w-28 w-40 truncate">{{ row.name }}</span>
-                    <div class="flex-1 h-2 bg-sage-100 rounded-full overflow-hidden">
-                        <div class="h-full bg-emerald-700 rounded-full" style="width: {{ row.pct }}%"></div>
-                    </div>
-                    <span class="text-xs font-bold text-ink w-16 text-right">{{ row.count }} · {{ row.pct }}%</span>
-                </div>
-                {% empty %}
-                <p class="text-sm text-muted text-center py-4">No data</p>
-                {% endfor %}
-            </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-line bg-sage-50">
+                        <th class="table-header">No.</th>
+                        <th class="table-header">Animal Type</th>
+                        <th class="table-header">Total Cases</th>
+                        <th class="table-header">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-sage-100">
+                    {% for row in rows %}
+                    <tr class="hover:bg-sage-50">
+                        <td class="table-cell">{{ forloop.counter }}</td>
+                        <td class="table-cell font-bold text-ink">{{ row.name }}</td>
+                        <td class="table-cell">{{ row.count }}</td>
+                        <td class="table-cell">
+                            <a href="{% url 'reports:animal_type_detail_report' animal_type=row.key %}?type={{ report_type }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
+                               class="animal-type-view-button"
+                               aria-label="View {{ row.name }} cases">
+                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.25 12s3.5-6.75 9.75-6.75S21.75 12 21.75 12s-3.5 6.75-9.75 6.75S2.25 12 2.25 12z"/><circle cx="12" cy="12" r="3" stroke-width="2"/></svg>
+                                View
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" class="text-center py-12 text-sm font-medium text-muted">No cases found for this period.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
-    </div>
-
-    <div class="flex flex-wrap gap-2 text-xs font-medium text-muted">
-        <span>Generated {% now "M d, Y h:i A" %}</span>
-        <span class="opacity-40">·</span>
-        <span>ABTC System · Confidential</span>
-    </div>
-
-    {% include 'reports/_pdf_modal.html' %}
+    </section>
 </div>
 {% endblock %}

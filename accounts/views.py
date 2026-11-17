@@ -2,8 +2,13 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import login, logout, authenticate, get_user_model, update_session_auth_hash
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib import messages
-from django.contrib.auth.forms import PasswordChangeForm
-from .forms import LoginForm, ProfileEditForm, UserCreateForm, UserEditForm
+from django.core.exceptions import PermissionDenied
+from django.urls import reverse
+from django.utils.cache import add_never_cache_headers
+from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
+from django.views.decorators.http import require_POST
+from utils.credentials import generate_temp_password
+from .forms import AccountPasswordChangeForm, LoginForm, ProfileEditForm, UserCreateForm, UserEditForm
 
 User = get_user_model()
 
@@ -172,10 +177,11 @@ def patient_qr(request):
         'qr_data_uri': qr_uri,
     })
 
+@sensitive_post_parameters('old_password', 'new_password1', 'new_password2')
 @login_required
 def change_password(request):
     if request.method == 'POST':
-        form = PasswordChangeForm(request.user, request.POST)
+        form = AccountPasswordChangeForm(request.user, request.POST)
         # Style widgets to match app design system
         for fname, field in form.fields.items():
             field.widget.attrs.update({
@@ -189,7 +195,7 @@ def change_password(request):
             messages.success(request, 'Password changed successfully.')
             return redirect('accounts:profile')
     else:
-        form = PasswordChangeForm(request.user)
+        form = AccountPasswordChangeForm(request.user)
         for fname, field in form.fields.items():
             field.widget.attrs.update({
                 'class': 'form-input pr-10',
@@ -213,6 +219,63 @@ def user_list(request):
 
 @login_required
 @user_passes_test(is_admin)
+def user_detail(request, pk):
+    account = get_object_or_404(User, pk=pk)
+    return _render_user_detail(request, account)
+
+
+def _render_user_detail(request, account, temp_password=None, password_event=''):
+    patient = getattr(account, 'patient_profile', None) if account.role == 'patient' else None
+    portal_login_url = (
+        request.build_absolute_uri(reverse('accounts:login'))
+        if account.role == 'patient' else ''
+    )
+    response = render(request, 'accounts/user_detail.html', {
+        'account': account,
+        'patient': patient,
+        'full_name': (patient.full_name() if patient else '') or account.get_full_name() or account.username,
+        'portal_login_url': portal_login_url,
+        'temp_password': temp_password,
+        'password_event': password_event,
+    })
+    if temp_password:
+        add_never_cache_headers(response)
+    return response
+
+
+def _client_ip(request):
+    return request.META.get('REMOTE_ADDR') or None
+
+
+@sensitive_variables('temp_password')
+@login_required
+@user_passes_test(is_admin)
+@require_POST
+def user_reset_password(request, pk):
+    account = get_object_or_404(User, pk=pk)
+    if account.role != 'patient':
+        raise PermissionDenied('Only patient portal passwords can be reset here.')
+    temp_password = generate_temp_password()
+    account.set_password(temp_password)
+    account.must_change_password = True
+    account.save(update_fields=['password', 'must_change_password', 'updated_at'])
+
+    from audit.models import AuditLog
+    patient = getattr(account, 'patient_profile', None)
+    subject = f'{patient.patient_number} ({patient.full_name()})' if patient else account.get_full_name() or account.username
+    AuditLog.objects.create(
+        user=request.user,
+        action='RESET_PATIENT_PASSWORD',
+        description=f'Reset portal password for {subject} -> {account.username}; patient must change it at next login',
+        target_type='patient' if patient else '',
+        target_id=patient.pk if patient else None,
+        ip_address=_client_ip(request),
+    )
+    return _render_user_detail(request, account, temp_password=temp_password, password_event='reset')
+
+@sensitive_post_parameters('password1', 'password2')
+@login_required
+@user_passes_test(is_admin)
 def user_create(request):
     if request.method == 'POST':
         form = UserCreateForm(request.POST)
@@ -221,6 +284,12 @@ def user_create(request):
             from audit.models import AuditLog
             AuditLog.objects.create(user=request.user, action='CREATE_USER', description=f'Created user {user.username}')
             messages.success(request, f'User {user.username} created successfully.')
+            if user.role == 'patient':
+                return _render_user_detail(
+                    request, user,
+                    temp_password=form.cleaned_data['password1'],
+                    password_event='created',
+                )
             return redirect('accounts:user_list')
     else:
         form = UserCreateForm()

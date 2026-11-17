@@ -1,4 +1,5 @@
 import datetime
+import re
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -12,8 +13,9 @@ U = get_user_model()
 
 class VitalFormPrintTests(TestCase):
     """The Admin Add Vital Signs page gains a Print Vital Forms button that opens
-    an official blank A4 form. The input form, other roles, and the Edit page are
-    untouched, and printing never writes a VitalSign record."""
+    the official A4 form. The form renders the latest saved encounter, the input
+    form, other roles, and the Edit page are untouched, and printing never writes
+    a VitalSign record."""
 
     def setUp(self):
         self.admin = U.objects.create_user("admin.vf", password="pw12345678", role="admin")
@@ -125,6 +127,114 @@ class VitalFormPrintTests(TestCase):
         self.assertIn('<div class="vf-box"></div>', html)
         for invented in ("120/80", "36.8", "98.6", "example", "Example"):
             self.assertNotIn(invented, html)
+        # No checkbox is selected without a saved value.
+        self.assertEqual(html.count('aria-checked="true"'), 0)
+        # Placeholder model values never leak into the document.
+        for leaked in ("None", "null", "undefined"):
+            self.assertNotIn(leaked, html)
+
+    def test_print_form_renders_latest_saved_encounter(self):
+        VitalSign.objects.create(
+            patient=self.patient,
+            taken_at=timezone.make_aware(datetime.datetime(2026, 9, 1, 8, 0)),
+            temperature=35.1,
+            notes="Earlier encounter note",
+            taken_by=self.admin,
+        )
+        latest = VitalSign.objects.create(
+            patient=self.patient,
+            taken_at=timezone.make_aware(datetime.datetime(2026, 10, 1, 9, 0)),
+            bp_systolic=128, bp_diastolic=82, temperature=37.4,
+            pulse_rate=88, respiratory_rate=18, spo2=98,
+            weight=64.5, height=162.0, bmi=24.58, pain_score=3,
+            blood_glucose=104.0, glucose_type="fasting",
+            general_appearance="ill",
+            notes="Latest encounter note",
+            taken_by=self.admin,
+        )
+        html = self._get(self.admin, self._print_url()).content.decode()
+        # Values from the newest encounter.
+        self.assertIn("10/01/2026", html)
+        self.assertIn("128", html)
+        self.assertIn("82", html)
+        self.assertIn("37.4", html)
+        self.assertIn("88", html)
+        self.assertIn("18", html)
+        self.assertIn("98", html)
+        self.assertIn("64.5", html)
+        self.assertIn("162", html)
+        self.assertIn("24.58", html)
+        self.assertIn("104", html)
+        self.assertIn("Latest encounter note", html)
+        # The older encounter is not mixed into this sheet.
+        self.assertNotIn("35.1", html)
+        self.assertNotIn("Earlier encounter note", html)
+        # Saved checkbox choices are the only ones selected.
+        self.assertEqual(
+            re.findall(r'aria-checked="(true|false)"', html),
+            ["false", "true", "false", "true", "false"],
+        )
+        self.assertIn("vf-check__box--on", html)
+        # The recorder and timestamp are shown in the signature block.
+        self.assertIn("admin.vf", html)
+        self.assertIn("October 1, 2026 · 9:00 AM", html)
+        # Every recorded value came from the saved record, not a copy.
+        self.assertEqual(VitalSign.objects.filter(patient=self.patient).count(), 2)
+        latest.refresh_from_db()
+        self.assertEqual(latest.bp_systolic, 128)
+
+    def test_print_form_leaves_unmeasured_fields_empty(self):
+        VitalSign.objects.create(
+            patient=self.patient,
+            taken_at=timezone.make_aware(datetime.datetime(2026, 10, 2, 10, 30)),
+            bp_systolic=118, bp_diastolic=76,
+            taken_by=self.admin,
+        )
+        html = self._get(self.admin, self._print_url()).content.decode()
+        self.assertIn("118", html)
+        self.assertIn("76", html)
+        # Unmeasured boxes stay blank instead of showing None/0.
+        self.assertIn('<div class="vf-box"></div>', html)
+        for leaked in ("None", "null", "undefined"):
+            self.assertNotIn(leaked, html)
+        # No checkbox is invented for an unrecorded choice.
+        self.assertEqual(html.count('aria-checked="true"'), 0)
+
+    def test_print_form_shows_the_saved_encounter_date(self):
+        VitalSign.objects.create(
+            patient=self.patient,
+            taken_at=timezone.make_aware(datetime.datetime(2026, 9, 12, 10, 0)),
+            pulse_rate=74,
+            taken_by=self.admin,
+        )
+        html = self._get(self.admin, self._print_url()).content.decode()
+        self.assertIn("Date of Assessment", html)
+        self.assertIn("September 12, 2026", html)
+
+    def test_print_form_leaves_assessment_date_blank_without_vitals(self):
+        from doctor.models import ClinicalAssessment
+
+        assessment = ClinicalAssessment.objects.create(patient=self.patient)
+        ClinicalAssessment.objects.filter(pk=assessment.pk).update(
+            encounter_date=timezone.make_aware(datetime.datetime(2026, 9, 12, 10, 0)),
+        )
+        html = self._get(self.admin, self._print_url()).content.decode()
+        # A clinical assessment from another encounter must not fill this sheet.
+        self.assertNotIn("September 12, 2026", html)
+
+    def test_print_form_shows_current_local_date_printed(self):
+        html = self._get(self.admin, self._print_url()).content.decode()
+        self.assertIn("Date Printed:", html)
+        # Django renders the date in the configured Asia/Manila timezone.
+        local_today = timezone.localtime(timezone.now())
+        self.assertIn(str(local_today.year), html)
+
+    def test_print_form_uses_print_safe_a4_css(self):
+        html = self._get(self.admin, self._print_url()).content.decode()
+        self.assertIn("@page { size: A4 portrait; margin: 8mm; }", html)
+        self.assertIn("print-color-adjust: exact", html)
+        self.assertIn(".no-print { display: none !important; }", html)
+        self.assertIn("box-shadow: none !important", html)
 
     def test_print_form_works_without_any_vitals_and_creates_none(self):
         self.assertEqual(VitalSign.objects.filter(patient=self.patient).count(), 0)

@@ -1,7 +1,7 @@
 /* ABTC Official Print Template — shared by every printable document. */
 @page {
   size: A4 portrait;
-  margin: 15mm;
+  margin: 8mm;
 }
 
 :root {
@@ -440,3 +440,416 @@ body.abtc-print-body {
     text-decoration: none !important;
   }
 }
+
+/* ==========================================================================
+   ABTC MASTER PRINT SYSTEM
+   Mirrors the approved Patient Vital Signs Form. Every official sheet shares
+   this frame, letterhead, banner, section bar, table grid, signature and
+   footer so printed documents read as one form collection.
+   ========================================================================== */
+
+:root {
+  --abtc-dark: #0D382C;
+  --abtc-accent: #8BB86A;
+  --abtc-pale: #EAF3EC;
+  --abtc-grid-line: #5E7A6D;
+}
+
+body.abtc-print-body {
+  font-size: 9.4pt;
+  line-height: 1.32;
+}
+
+.abtc-doc {
+  border: 1.5px solid var(--abtc-ink);
+  background: #FFFFFF;
+}
+
+/* ---------- Letterhead ---------- */
+.abtc-letterhead {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  text-align: left;
+}
+
+.abtc-logo {
+  width: 90px;
+  height: 90px;
+  flex: 0 0 90px;
+  object-fit: contain;
+}
+
+.abtc-letterhead__divider {
+  width: 2px;
+  height: 96px;
+  flex: 0 0 2px;
+  margin: 0 22px 0 40px;
+  background: var(--abtc-ink);
+}
+
+.abtc-letterhead__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-right: 28px;
+  text-align: center;
+}
+
+.abtc-org {
+  margin: 0;
+  font-size: 18pt;
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: .01em;
+  color: var(--abtc-ink);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.abtc-office {
+  margin: 2px 0 0;
+  font-size: 12.5pt;
+  font-weight: 500;
+  line-height: 1.2;
+  color: #1F2A25;
+}
+
+.abtc-doc-title {
+  position: relative;
+  overflow: hidden;
+  margin: 8px 0 0;
+  padding: 6px 46px;
+  background: var(--abtc-ink);
+  color: #FFFFFF;
+  font-size: 17pt;
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: .05em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.abtc-doc-title::before,
+.abtc-doc-title::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  bottom: -5px;
+  width: 28px;
+  background: repeating-linear-gradient(90deg, var(--abtc-accent) 0 6px, transparent 6px 11px);
+  transform: skewX(-20deg);
+}
+
+.abtc-doc-title::before { left: 9px; }
+.abtc-doc-title::after { right: 9px; }
+
+.abtc-rule {
+  height: 2px;
+  margin: 8px 0 0;
+  background: var(--abtc-ink);
+}
+
+.abtc-doc-meta {
+  margin: 0;
+  font-size: 9.6pt;
+  font-weight: 600;
+  color: var(--abtc-muted, #496458);
+}
+
+.abtc-doc-meta--printed {
+  padding: 5px 0 6px;
+  border: 0;
+  font-size: 10pt;
+  font-weight: 700;
+  color: #111111;
+  text-align: left;
+}
+
+/* ---------- Section bars ---------- */
+.abtc-section {
+  margin: 0 0 10px;
+}
+
+.abtc-section-title {
+  position: relative;
+  margin: 8px 0 0;
+  padding: 6px 12px 6px 34px;
+  background: var(--abtc-dark);
+  color: #FFFFFF;
+  border: 0;
+  font-size: 12pt;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+.abtc-section-title::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  transform: translateY(-50%);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.abtc-subhead {
+  margin: 8px 0 0;
+  padding: 4px 10px;
+  background: var(--abtc-pale);
+  border: 1px solid var(--abtc-grid-line);
+  border-bottom: 0;
+  color: var(--abtc-dark);
+  font-size: 9.4pt;
+  font-weight: 800;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+/* ---------- Information grids ---------- */
+.abtc-panel {
+  padding: 0;
+  background: #FFFFFF;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--abtc-body);
+}
+
+.abtc-panel--plain {
+  padding: 8px 10px;
+  border: 1px solid var(--abtc-grid-line);
+  background: #FFFFFF;
+}
+
+.abtc-panel > .abtc-note,
+.abtc-panel > .abtc-table + .abtc-note {
+  margin: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--abtc-grid-line);
+  border-top: 0;
+  font-size: 8.4pt;
+  font-weight: 600;
+  color: #111111;
+}
+
+.abtc-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--abtc-grid-line);
+  border-left: 1px solid var(--abtc-grid-line);
+}
+
+.abtc-summary__row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  padding: 0;
+  border-right: 1px solid var(--abtc-grid-line);
+  border-bottom: 1px solid var(--abtc-grid-line);
+}
+
+.abtc-summary__row span {
+  flex: 0 0 44%;
+  margin: 0;
+  padding: 5px 8px;
+  background: var(--abtc-pale);
+  border-right: 1px solid var(--abtc-grid-line);
+  color: #111111;
+  font-size: 8.6pt;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.abtc-summary__row strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  color: #111111;
+  font-size: 9.2pt;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.abtc-summary__row--full {
+  grid-column: 1 / -1;
+}
+
+.abtc-summary__row--stacked {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.abtc-summary__row--stacked span {
+  border-right: 0;
+  border-bottom: 1px solid var(--abtc-grid-line);
+}
+
+.abtc-summary__row--stacked strong {
+  display: block;
+}
+
+.abtc-summary-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border-top: 1px solid var(--abtc-grid-line);
+  border-left: 1px solid var(--abtc-grid-line);
+}
+
+.abtc-summary-col {
+  min-width: 0;
+  border-right: 1px solid var(--abtc-grid-line);
+  border-bottom: 1px solid var(--abtc-grid-line);
+}
+
+.abtc-summary-col--divided {
+  padding-left: 0;
+  border-left: 0;
+}
+
+/* ---------- Tables ---------- */
+.abtc-table {
+  font-size: 9pt;
+}
+
+.abtc-table th {
+  padding: 5px 8px;
+  background: var(--abtc-pale);
+  border: 1px solid var(--abtc-grid-line);
+  color: #111111;
+  font-size: 8.4pt;
+  font-weight: 800;
+  letter-spacing: .03em;
+}
+
+.abtc-table td {
+  padding: 5px 8px;
+  border: 1px solid var(--abtc-grid-line);
+  color: #111111;
+  font-size: 9pt;
+  font-weight: 600;
+}
+
+.abtc-cell-note {
+  font-size: 7.8pt;
+  font-weight: 600;
+  color: var(--abtc-muted, #496458);
+}
+
+.abtc-status {
+  border-radius: 2px;
+  border-color: var(--abtc-grid-line);
+  background: var(--abtc-pale);
+  color: #111111;
+  font-size: 8.4pt;
+}
+
+.abtc-empty {
+  padding: 10px;
+  border: 1px solid var(--abtc-grid-line);
+  border-radius: 0;
+  background: #FFFFFF;
+  color: var(--abtc-muted, #496458);
+}
+
+/* ---------- Footer ---------- */
+.abtc-footer {
+  position: relative;
+  overflow: hidden;
+  margin: 16px 0 0;
+  padding: 8px 52px;
+  border: 1px solid var(--abtc-dark);
+  background: var(--abtc-pale);
+  color: var(--abtc-dark);
+  text-align: center;
+  font-size: 9pt;
+  line-height: 1.35;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.abtc-footer__org {
+  font-size: 10pt;
+  font-weight: 800;
+}
+
+.abtc-footer__meta {
+  font-size: 9pt;
+  font-style: italic;
+  font-weight: 600;
+}
+
+.abtc-footer::before,
+.abtc-footer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 52px;
+  background: linear-gradient(115deg, var(--abtc-dark) 0 22px, var(--abtc-accent) 22px 29px, transparent 29px);
+}
+
+.abtc-footer::before { left: 0; }
+.abtc-footer::after { right: 0; transform: scaleX(-1); }
+
+/* ---------- Screen preview ---------- */
+@media screen {
+  body.abtc-print-body {
+    background: #EEF1ED;
+    padding: 24px 12px;
+  }
+
+  body.abtc-print-body .abtc-doc {
+    max-width: 210mm;
+    padding: 7mm 8mm;
+    border: 1.5px solid var(--abtc-ink);
+    box-shadow: 0 10px 30px rgba(8, 41, 31, .12);
+  }
+}
+
+/* ---------- Print ---------- */
+@media print {
+  body.abtc-print-body {
+    background: #FFFFFF !important;
+    padding: 0 !important;
+  }
+
+  body.abtc-print-body .abtc-doc {
+    width: auto;
+    max-width: none;
+    margin: 0;
+    padding: 5mm 6mm;
+    border: 1.5px solid var(--abtc-ink);
+    box-shadow: none !important;
+  }
+
+  .abtc-section-title,
+  .abtc-subhead {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .abtc-panel,
+  .abtc-summary,
+  .abtc-summary-split,
+  .abtc-summary__row,
+  .abtc-table tr,
+  .abtc-footer {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+}
+

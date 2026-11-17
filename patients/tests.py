@@ -8,10 +8,11 @@ assessments — block deletion so the admin can archive instead.
 import datetime
 import re
 from datetime import date
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db.models import Q
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -23,8 +24,29 @@ from pre_registrations.models import PreRegistration
 from vaccination.models import SMSLog, VaccinationSchedule, VaccineDose
 
 from .models import Barangay, Patient, VitalSign
+from utils.names import format_person_name
 
 U = get_user_model()
+
+
+class PersonNameFormattingTests(SimpleTestCase):
+    def test_expected_title_case_examples(self):
+        self.assertEqual(format_person_name("john paul r borling"), "John Paul R Borling")
+        self.assertEqual(format_person_name("lai d sil"), "Lai D Sil")
+        self.assertEqual(format_person_name("joseph y araneta"), "Joseph Y Araneta")
+
+    def test_suffixes_hyphens_and_apostrophes(self):
+        self.assertEqual(format_person_name("maria-clara o'brien jr"), "Maria-Clara O'Brien Jr.")
+        self.assertEqual(format_person_name("santos sr."), "Santos Sr.")
+        self.assertEqual(format_person_name("rex iii"), "Rex III")
+
+    def test_intentional_mixed_case_is_preserved(self):
+        self.assertEqual(format_person_name("McDonald"), "McDonald")
+        self.assertEqual(format_person_name("DelaCruz"), "DelaCruz")
+
+    def test_whitespace_and_empty_values_are_unchanged(self):
+        self.assertEqual(format_person_name("  john   paul  "), "  John   Paul  ")
+        self.assertEqual(format_person_name(""), "")
 
 
 class PatientDeleteTestCase(TestCase):
@@ -190,7 +212,7 @@ class PatientDeleteTestCase(TestCase):
 
 class PatientDeletePermissionTests(PatientDeleteTestCase):
 
-    def test_only_admin_sees_the_delete_controls(self):
+    def test_delete_triggers_hidden_and_modal_remains_admin_only(self):
         url = reverse("patients:patient_list")
         delete_url = reverse("patients:patient_delete", args=[self.patient.pk])
         for user, visible in ((self.admin, True), (self.doctor, False), (self.nurse, False)):
@@ -198,7 +220,7 @@ class PatientDeletePermissionTests(PatientDeleteTestCase):
             response = self.client.get(url)
             self.assertEqual(response.status_code, 200)
             html = response.content.decode()
-            self.assertEqual(delete_url in html, visible, user.role)
+            self.assertNotIn(delete_url, html, user.role)
             self.assertEqual(
                 "Delete Patient and All Related Records?" in html, visible, user.role)
 
@@ -402,12 +424,8 @@ class PatientRegistrationSidebarTests(PatientDeleteTestCase):
         create_url = reverse("patients:patient_create")
         self.assertIn(create_url, links)
         self.assertEqual(links.index(create_url), links.index(reverse("dashboard:index")) + 1)
-        self.assertEqual(
-            links.index(create_url) + 1,
-            links.index(reverse("pre_registrations:staff_list")))
-        self.assertEqual(
-            links.index(list_url),
-            links.index(reverse("pre_registrations:staff_list")) + 1)
+        self.assertNotIn(reverse("pre_registrations:staff_list"), links)
+        self.assertEqual(links.index(list_url), links.index(create_url) + 1)
         self.assertIn("Register Patient", html)
 
     def test_active_state_follows_the_open_page(self):
@@ -422,15 +440,33 @@ class PatientRegistrationSidebarTests(PatientDeleteTestCase):
         self.assertIn('href="%s" class="sidebar-link active"' % list_url, html)
         self.assertNotIn('href="%s" class="sidebar-link active"' % create_url, html)
 
-    def test_other_portals_keep_their_header_button_and_no_sidebar_item(self):
-        create_url = reverse("patients:patient_create")
-        for user in (self.doctor, self.nurse):
-            with self.subTest(role=user.role):
-                html = self._page(user)
-                self.assertIn("+ Register Patient", html)
-                self.assertIn("Scan QR", html)
-                self.assertIn("Vaccination Schedules", html)
-                self.assertNotIn(create_url, self._sidebar_links(html))
+    def test_doctor_keeps_header_buttons_and_no_sidebar_item(self):
+        html = self._page(self.doctor)
+        self.assertIn("+ Register Patient", html)
+        self.assertIn("Scan QR", html)
+        self.assertIn("Vaccination Schedules", html)
+        self.assertNotIn(reverse("patients:patient_create"), self._sidebar_links(html))
+
+    def test_nurse_header_shows_scan_qr_only_and_keeps_the_list_tools(self):
+        html = self._page(self.nurse)
+        header = html[html.index("<h1"):html.index('<div class="card mb-6">')]
+        self.assertIn("Patient Records", header)
+        self.assertIn("window.ABTCScan.open()", header)
+        self.assertIn("Scan QR", header)
+        self.assertNotIn("+ Register Patient", html)
+        self.assertNotIn("Vaccination Schedules", html)
+        self.assertNotIn('href="%s"' % reverse("patients:patient_create"), html)
+        self.assertNotIn('href="%s" class="hidden' % reverse("vaccination:patient_schedule_list"), html)
+        self.assertIn('placeholder="Search by name, ID, contact, barangay, or address..."', html)
+        self.assertIn('name="barangay"', html)
+        self.assertIn('<a href="%s" class="btn-view"><svg' % reverse(
+            "patients:patient_detail", args=[self.patient.pk]), html)
+
+    def test_hiding_nurse_buttons_does_not_change_route_access(self):
+        self.client.force_login(self.nurse)
+        for name in ("patients:patient_create", "vaccination:patient_schedule_list"):
+            with self.subTest(route=name):
+                self.assertEqual(self.client.get(reverse(name)).status_code, 200)
 
 @override_settings(SEMAPHORE_ENABLED=False)
 class PatientRegistrationFlowTests(TestCase):
@@ -566,6 +602,43 @@ class PatientDemographicsFormTests(TestCase):
         listing = self.client.get(reverse("patients:patient_list"), {"q": "New Manual"})
         self.assertContains(listing, "PAT-90001")
 
+    def test_registration_capitalizes_each_name_word(self):
+        self.client.post(self.create_url, self._payload(
+            first_name="john paul r", middle_name="d", last_name="borling", suffix="jr"),
+            follow=True)
+
+        patient = Patient.objects.get(last_name="Borling")
+        self.assertEqual(patient.first_name, "John Paul R")
+        self.assertEqual(patient.middle_name, "D")
+        self.assertEqual(patient.suffix, "Jr.")
+
+    def test_registration_keeps_hyphens_apostrophes_and_mixed_case(self):
+        self.client.post(self.create_url, self._payload(
+            first_name="maria-clara", middle_name="McDonald", last_name="o'brien"),
+            follow=True)
+
+        patient = Patient.objects.get(last_name="O'Brien")
+        self.assertEqual(patient.first_name, "Maria-Clara")
+        self.assertEqual(patient.middle_name, "McDonald")
+
+    def test_editing_other_fields_does_not_rewrite_legacy_names(self):
+        barangay = Barangay.objects.create(name="Poblacion")
+        patient = Patient.objects.create(
+            patient_number="PAT-90002", first_name="legacy", middle_name="q",
+            last_name="name", birthdate=datetime.date(1990, 1, 1), sex="male",
+            contact_number="09170000333", address="Purok 3", barangay=barangay)
+        url = reverse("patients:patient_edit", args=[patient.pk])
+
+        self.client.post(url, self._payload(
+            first_name="legacy", middle_name="q", last_name="name",
+            address="Purok 4"), follow=True)
+
+        patient.refresh_from_db()
+        self.assertEqual(patient.first_name, "legacy")
+        self.assertEqual(patient.middle_name, "q")
+        self.assertEqual(patient.last_name, "name")
+        self.assertEqual(patient.address, "Purok 4")
+
 
 class PatientListNurseActionsTests(PatientDeleteTestCase):
     """The nurse patient list exposes one View pill per row and nothing else."""
@@ -593,11 +666,49 @@ class PatientListNurseActionsTests(PatientDeleteTestCase):
         self.assertNotIn("View on Live", html)
         self.assertEqual(html.count('class="btn-view"'), 4)
 
-    def test_admin_keeps_every_row_action(self):
+    def test_admin_rows_show_only_the_view_pill(self):
         html = self._list(self.admin)
-        for url in self._row_action_urls(self.patient):
-            self.assertIn(url, html)
-        self.assertIn(">Edit</a>", html)
+        for patient in (self.patient, self.other_patient):
+            detail_url = reverse("patients:patient_detail", args=[patient.pk])
+            self.assertEqual(html.count(f'<a href="{detail_url}" class="btn-view"><svg'), 2)
+            for url in self._row_action_urls(patient):
+                self.assertNotIn(url, html)
+            self.assertNotIn(reverse("patients:patient_delete", args=[patient.pk]), html)
+        action_cells = re.findall(r'<td class="table-cell text-right">(.*?)</td>', html, re.S)
+        self.assertEqual(len(action_cells), 2)
+        for cell in action_cells:
+            self.assertEqual(len(re.findall(r'<(?:a|button)\b', cell)), 1)
+            self.assertIn('class="btn-view"><svg', cell)
+            self.assertIn('stroke="currentColor"', cell)
+            self.assertIn('justify-end', cell)
+        self.assertNotIn("View on Live", html)
+        self.assertEqual(html.count('class="btn-view"'), 4)
+        self.assertEqual(html.count('class="table-header'), 10)
+
+    def test_admin_search_barangay_pagination_and_numbering_remain(self):
+        barangay = Barangay.objects.create(name="List Filter")
+        self.patient.barangay = barangay
+        self.patient.save(update_fields=["barangay"])
+        for index in range(20):
+            patient = self._make_patient(f"PAT-LIST-{index}", f"List{index}")
+            patient.barangay = barangay
+            patient.save(update_fields=["barangay"])
+        self.client.force_login(self.admin)
+        url = reverse("patients:patient_list")
+        filters = {"q": "Test", "barangay": barangay.pk}
+        first = self.client.get(url, filters)
+        self.assertEqual(first.context["patients"].paginator.count, 21)
+        self.assertEqual(len(first.context["patients"]), 20)
+        self.assertContains(first, ">Next</a>")
+        second = self.client.get(url, {**filters, "page": 2})
+        self.assertEqual(len(second.context["patients"]), 1)
+        self.assertContains(second, 'class="table-cell table-cell-num text-muted">21</td>')
+        self.assertContains(second, 'class="btn-view"', count=2)
+        self.assertContains(second, ">Previous</a>")
+        self.assertNotContains(second, self.other_patient.patient_number)
+        empty = self.client.get(url, {"q": "no-such-patient"})
+        self.assertContains(empty, "No patients found.")
+        self.assertNotContains(empty, 'class="btn-view"')
 
     def test_nurse_can_still_open_the_record_and_add_vitals_there(self):
         self.client.force_login(self.nurse)
@@ -605,6 +716,238 @@ class PatientListNurseActionsTests(PatientDeleteTestCase):
             reverse("patients:patient_detail", args=[self.patient.pk]))
         self.assertContains(
             detail, reverse("patients:patient_vital_create", args=[self.patient.pk]))
+
+
+@override_settings(SEMAPHORE_ENABLED=False)
+class UnifiedAdminPatientListTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = U.objects.create_user('review.admin', role='admin')
+        cls.nurse = U.objects.create_user('review.nurse', role='nurse')
+        cls.barangay = Barangay.objects.create(name='Review North')
+        cls.onsite = Patient.objects.create(
+            patient_number='PAT-00001', first_name='Onsite', last_name='Person',
+            birthdate=date(1990, 1, 1), sex='female', contact_number='09170000001',
+            address='North', barangay=cls.barangay,
+        )
+        cls.official = Patient.objects.create(
+            patient_number='PAT-00002', first_name='Approved', last_name='Person',
+            birthdate=date(1990, 1, 1), sex='female', contact_number='09170000002',
+            address='North', barangay=cls.barangay,
+        )
+        cls.pending = cls.make_registration('Pending')
+        cls.rejected = cls.make_registration(
+            'Rejected', status=PreRegistration.Status.REJECTED,
+            rejection_reason='Incomplete registration information.',
+            rejected_by=cls.admin, rejected_at=timezone.now(),
+        )
+        cls.approved = cls.make_registration(
+            'Approved', status=PreRegistration.Status.CONVERTED,
+            converted_patient=cls.official,
+        )
+
+    @classmethod
+    def make_registration(cls, first_name, **overrides):
+        fields = dict(
+            first_name=first_name, last_name='Person', birthdate=date(1990, 1, 1),
+            sex='female', contact_number='09172223333', address='Original address',
+            barangay='Review North', medical_history='None', allergy_info='None',
+            previous_rabies_vax='None', bite_datetime=timezone.now(),
+            incident_place='Original incident place', incident_barangay='Review North',
+            animal_type='dog', animal_ownership='stray', animal_vaccination_status='unknown',
+            animal_condition='missing', exposure_type='bite', body_part_affected='Left leg',
+            number_of_wounds=1, consent_given=True,
+        )
+        fields.update(overrides)
+        return PreRegistration.objects.create(**fields)
+
+    def page(self, params=None, user=None):
+        self.client.force_login(user or self.admin)
+        return self.client.get(reverse('patients:patient_list'), params or {})
+
+    def action_cell(self, response, name):
+        html = response.content.decode()
+        rows = re.findall(r'<tr class="hover:bg-sage-50 transition-colors">(.*?)</tr>', html, re.S)
+        row = next(row for row in rows if f'{name} Person' in row)
+        return row, re.findall(r'<td class="table-cell text-right">(.*?)</td>', row, re.S)[0]
+
+    def test_pending_has_approve_reject_and_no_view_or_official_number(self):
+        response = self.page()
+        row, cell = self.action_cell(response, 'Pending')
+        self.assertIn('>Approve</button>', cell)
+        self.assertIn('>Reject</button>', cell)
+        self.assertNotIn('class="btn-view"', cell)
+        self.assertEqual(len(re.findall(r'<(?:a|button)\b', cell)), 2)
+        self.assertIn('Not assigned', row)
+        self.assertIn(self.pending.pre_registration_number, row)
+        self.assertIn('>Online</td>', row)
+        self.assertIn('>Pending</span>', row)
+        self.assertEqual(Patient.objects.count(), 2)
+        self.assertEqual(AnimalBiteCase.objects.count(), 0)
+
+    def test_onsite_approved_and_rejected_have_only_view(self):
+        response = self.page()
+        for name, status, url in (
+            ('Onsite', 'Official', reverse('patients:patient_detail', args=[self.onsite.pk])),
+            ('Approved', 'Approved', reverse('patients:patient_detail', args=[self.official.pk])),
+            ('Rejected', 'Rejected', reverse('pre_registrations:staff_detail', args=[self.rejected.pk]) + '?from=patients'),
+        ):
+            row, cell = self.action_cell(response, name)
+            self.assertEqual(len(re.findall(r'<(?:a|button)\b', cell)), 1)
+            self.assertIn(f'href="{url}" class="btn-view"><svg', cell)
+            self.assertIn(f'>{status}</span>', row)
+        self.assertNotIn(self.official.patient_number, self.action_cell(response, 'Rejected')[0])
+        self.assertEqual(response.context['patients'].paginator.count, 4)
+
+    def test_many_converted_registrations_share_one_official_patient_row(self):
+        self.make_registration('Another approved', status=PreRegistration.Status.CONVERTED,
+                               converted_patient=self.official)
+        response = self.page()
+        rows = response.context['patients'].object_list
+        self.assertEqual(sum(isinstance(row, Patient) and row.pk == self.official.pk for row in rows), 1)
+        self.assertEqual(len(rows), 4)
+
+    def test_concurrent_conversion_does_not_crash_or_show_stale_actions(self):
+        from django.db.models.query import QuerySet
+        original_in_bulk = QuerySet.in_bulk
+
+        def convert_during_hydration(queryset, *args, **kwargs):
+            if queryset.model is PreRegistration:
+                PreRegistration.objects.filter(pk=self.pending.pk).update(
+                    status=PreRegistration.Status.CONVERTED, converted_patient=self.official,
+                )
+            return original_in_bulk(queryset, *args, **kwargs)
+
+        with patch.object(QuerySet, 'in_bulk', convert_during_hydration):
+            response = self.page()
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, f'data-registration-number="{self.pending.pre_registration_number}"')
+        self.assertEqual(sum(isinstance(row, Patient) and row.pk == self.official.pk
+                             for row in response.context['patients']), 1)
+
+    def test_required_columns_and_modal_controls(self):
+        response = self.page()
+        html = response.content.decode()
+        headers = re.findall(r'<th class="table-header[^"]*">(.*?)</th>', html)
+        self.assertEqual(headers, ['No.', 'Patient #', 'Name', 'Age/Sex', 'Barangay',
+                                  'Contact', 'Registration Date', 'Remarks', 'Status', 'Actions'])
+        for text in ('Approve Online Registration', 'Reject Online Registration',
+                     'Reason for Rejection *', 'Confirm Approval', 'Confirm Reject',
+                     'Please explain why this online registration is being rejected...',
+                     'Are you sure you want to approve this online registration and convert it into an official patient record?'):
+            self.assertIn(text, html)
+        self.assertIn('id="registrationReviewConfirm" class="registration-review-button" disabled', html)
+        self.assertIn('name="return_to" value="patients"', html)
+        self.assertIn('csrfmiddlewaretoken', html)
+
+    def test_online_and_official_search_and_barangay_filters(self):
+        for record in (self.pending, self.approved, self.rejected):
+            response = self.page({'q': record.pre_registration_number})
+            self.assertEqual(response.context['patients'].paginator.count, 1)
+        response = self.page({'q': '09172223333'})
+        self.assertEqual(response.context['patients'].paginator.count, 2)
+        response = self.page({'barangay': self.barangay.pk})
+        self.assertEqual(response.context['patients'].paginator.count, 4)
+        self.assertEqual(self.page({'q': 'does-not-exist'}).context['patients'].paginator.count, 0)
+
+    def test_online_only_barangay_filter_does_not_create_barangay(self):
+        self.make_registration('Elsewhere', barangay='Online Only')
+        before = Barangay.objects.count()
+        response = self.page({'barangay': 'online:Online Only'})
+        self.assertEqual(response.context['patients'].paginator.count, 1)
+        self.assertContains(response, 'value="online:Online Only" selected')
+        self.assertEqual(Barangay.objects.count(), before)
+        self.assertEqual(self.page({'barangay': 'invalid'}).context['patients'].paginator.count, 0)
+
+    def test_pagination_keeps_filters_and_continuous_numbering(self):
+        for index in range(20):
+            self.make_registration(f'Extra{index}')
+        filters = {'q': 'Person', 'barangay': self.barangay.pk}
+        response = self.page(filters)
+        self.assertEqual(response.context['patients'].paginator.count, 24)
+        self.assertContains(response, f'&barangay={self.barangay.pk}')
+        second = self.page({**filters, 'page': 2})
+        self.assertEqual(len(second.context['patients']), 4)
+        self.assertContains(second, 'class="table-cell table-cell-num text-muted">21</td>')
+
+    def test_other_roles_keep_official_list_without_review_controls(self):
+        response = self.page(user=self.nurse)
+        self.assertEqual(response.context['patients'].paginator.count, 2)
+        self.assertNotContains(response, self.pending.pre_registration_number)
+        self.assertNotContains(response, 'data-review-kind=')
+        self.assertNotContains(response, 'pending online registration')
+        self.assertEqual(response.content.decode().count('class="table-header'), 8)
+
+    def test_badge_only_counts_pending_unlinked_active_online_records(self):
+        self.make_registration('Verify', status=PreRegistration.Status.FOR_VERIFICATION)
+        self.make_registration('Verified', status=PreRegistration.Status.VERIFIED)
+        self.make_registration('Cancelled', status=PreRegistration.Status.CANCELLED)
+        self.make_registration('Archived', is_archived=True)
+        self.make_registration('Linked', converted_patient=self.official)
+        response = self.page()
+        self.assertEqual(response.context['pending_online_registration_count'], 2)
+        self.assertContains(response, 'aria-label="2 pending online registrations"')
+
+    def test_rejection_updates_row_badge_and_keeps_original_data(self):
+        self.page()
+        response = self.client.post(reverse('pre_registrations:staff_reject', args=[self.pending.pk]),
+                                    {'reason': 'Incomplete information', 'return_to': 'patients'}, follow=True)
+        self.pending.refresh_from_db()
+        self.assertEqual(self.pending.status, PreRegistration.Status.REJECTED)
+        self.assertEqual(self.pending.address, 'Original address')
+        self.assertEqual(self.pending.incident_place, 'Original incident place')
+        self.assertEqual(Patient.objects.count(), 2)
+        self.assertEqual(AnimalBiteCase.objects.count(), 0)
+        self.assertEqual(response.context['pending_online_registration_count'], 0)
+        self.assertNotContains(response, 'aria-label="0 pending online registration')
+        self.assertIn('class="btn-view"', self.action_cell(response, 'Pending')[1])
+        details = self.client.get(reverse('pre_registrations:staff_detail', args=[self.pending.pk]) + '?from=patients')
+        self.assertContains(details, 'Incomplete information')
+        self.assertContains(details, 'Original incident place')
+        self.assertNotContains(details, 'Convert to Official Case')
+
+    def test_approval_updates_row_once_with_official_number_and_badge(self):
+        self.page()
+        url = reverse('pre_registrations:convert', args=[self.pending.pk])
+        response = self.client.post(url, {'return_to': 'patients'}, follow=True)
+        self.pending.refresh_from_db()
+        self.assertEqual(self.pending.status, PreRegistration.Status.CONVERTED)
+        self.assertEqual(Patient.objects.count(), 3)
+        self.assertEqual(AnimalBiteCase.objects.count(), 1)
+        self.assertEqual(response.context['patients'].paginator.count, 4)
+        self.assertEqual(response.context['pending_online_registration_count'], 0)
+        row, cell = self.action_cell(response, 'Pending')
+        self.assertIn(self.pending.converted_patient.patient_number, row)
+        self.assertIn('>Approved</span>', row)
+        self.assertIn('class="btn-view"', cell)
+        self.client.post(url, {'return_to': 'patients'})
+        self.assertEqual(Patient.objects.count(), 3)
+        self.assertEqual(AnimalBiteCase.objects.count(), 1)
+
+    def test_badge_remains_when_another_pending_registration_exists(self):
+        self.make_registration('Still pending')
+        self.page()
+        response = self.client.post(
+            reverse('pre_registrations:staff_reject', args=[self.pending.pk]),
+            {'reason': 'Missing required information', 'return_to': 'patients'}, follow=True,
+        )
+        self.assertEqual(response.context['pending_online_registration_count'], 1)
+        self.assertContains(response, 'aria-label="1 pending online registration"')
+
+    def test_verified_registration_is_approved_without_assigning_patient_number(self):
+        record = self.make_registration('Verified', status=PreRegistration.Status.VERIFIED)
+        response = self.page({'q': record.pre_registration_number})
+        row, cell = self.action_cell(response, 'Verified')
+        self.assertIn('Not assigned', row)
+        self.assertIn('>Approved</span>', row)
+        self.assertIn('class="btn-view"', cell)
+        self.assertNotIn('data-review-kind=', cell)
+        self.assertEqual(Patient.objects.count(), 2)
+
+    def test_onsite_view_still_opens_existing_patient(self):
+        self.page()
+        response = self.client.get(reverse('patients:patient_detail', args=[self.onsite.pk]))
+        self.assertContains(response, self.onsite.patient_number)
 
 
 class PatientDeleteModalTests(PatientDeleteTestCase):
@@ -671,3 +1014,69 @@ class PatientDeleteModalTests(PatientDeleteTestCase):
             "Permanent deletion is not permitted for this patient",
             response.content.decode(),
         )
+
+
+class PatientDetailInformationSheetTests(TestCase):
+    """Patient View shows read-only details as two-column information rows,
+    matching the Admin Bite Case Details sheet instead of field cards."""
+
+    def setUp(self):
+        self.admin = U.objects.create_user(
+            "sheet.admin", password="pw12345678", role="admin")
+        self.barangay = Barangay.objects.create(name="Balamban")
+        self.patient = Patient.objects.create(
+            patient_number="PAT-SHEET-01", first_name="Frank L", last_name="Capote Jr",
+            birthdate=date(2000, 4, 16), contact_number="09327785197",
+            sex="male", civil_status="single", barangay=self.barangay,
+            address="Purok 1, Balamban, Mahayag ZDS",
+            medical_history="Asthma", allergy_info="None known",
+            previous_rabies_vax="None", remarks="Healthy",
+        )
+        self.client.force_login(self.admin)
+
+    def _detail(self, patient=None):
+        return self.client.get(
+            reverse("patients:patient_detail", args=[(patient or self.patient).pk])
+        ).content.decode()
+
+    def test_read_only_details_use_information_rows_instead_of_field_cards(self):
+        content = self._detail()
+        for marker in (
+            'class="pd-info-fields"',
+            'class="pd-info-field"',
+            'class="pd-info-label"',
+            'class="pd-info-value"',
+        ):
+            self.assertIn(marker, content)
+        for legacy in ("pd-tile", "pd-label", "pd-value ", "pd-cred-tile"):
+            self.assertNotIn(legacy, content)
+
+    def test_patient_and_medical_history_fields_follow_the_sheet_order(self):
+        content = self._detail()
+        positions = [
+            content.index(f'class="pd-info-label">{label}</p>')
+            for label in (
+                "Patient ID", "Full Name", "Birthdate", "Age", "Sex",
+                "Civil Status", "Contact Number", "Barangay", "Complete Address",
+                "Parent / Guardian", "Emergency Contact", "Medical History",
+                "Previous Rabies Vaccination", "Allergies", "Remarks",
+            )
+        ]
+        self.assertEqual(positions, sorted(positions))
+        for value in (
+            "PAT-SHEET-01", "Frank L Capote Jr", "April 16, 2000",
+            "0932 778 5197", "Balamban", "Purok 1, Balamban, Mahayag ZDS",
+            "Asthma", "None known", "None", "Healthy",
+        ):
+            self.assertIn(value, content)
+
+    def test_missing_details_render_as_muted_notes_without_inputs(self):
+        blank = Patient.objects.create(
+            patient_number="PAT-SHEET-02", first_name="Blank", last_name="Record",
+            birthdate=date(1990, 1, 1), sex="female", contact_number="09170000001",
+            address="Unknown",
+        )
+        content = self._detail(blank)
+        self.assertIn('class="pd-info-value pd-info-empty">Not recorded</p>', content)
+        for field in ("medical_history", "allergy_info", "remarks", "address"):
+            self.assertNotIn(f'name="{field}"', content)

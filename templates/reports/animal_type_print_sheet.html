@@ -1,0 +1,150 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ document_title }} — ABTC</title>
+    <link rel="stylesheet" href="{% static 'css/print_official.css' %}">
+    <style>
+        .animal-print-group { margin: 0 0 18px; }
+        .animal-print-heading {
+            margin: 0 0 4px;
+            padding: 0 0 5px;
+            border-bottom: 1px solid #C9D3CC;
+            color: #08291F;
+            font-size: 13pt;
+            font-weight: 800;
+            text-transform: uppercase;
+            break-after: avoid;
+            page-break-after: avoid;
+        }
+        .animal-print-total {
+            margin: 0 0 7px;
+            color: #496458;
+            font-size: 9.5pt;
+            font-weight: 700;
+            break-after: avoid;
+            page-break-after: avoid;
+        }
+        .animal-print-group table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: auto;
+            font-size: 8.5pt;
+        }
+        .animal-print-group thead { display: table-header-group; }
+        .animal-print-group tr {
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+        .animal-print-group th,
+        .animal-print-group td {
+            padding: 5px 6px;
+            border: 1px solid #C9D3CC;
+            text-align: left;
+            vertical-align: top;
+            overflow-wrap: anywhere;
+        }
+        .animal-print-group th {
+            background: #F3F0E7;
+            color: #08291F;
+            font-weight: 800;
+        }
+        .animal-grand-total {
+            margin-top: 20px;
+            padding: 12px 14px;
+            border: 1px solid #DFCDAA;
+            border-radius: 8px;
+            background: #FAF8F2;
+            color: #08291F;
+            font-size: 13pt;
+            font-weight: 800;
+            text-align: right;
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+        @media screen {
+            body.abtc-print-body { padding: 22px 0; background: #eef1ed; }
+            .abtc-doc { padding: 18mm 15mm; box-shadow: 0 4px 24px rgba(8,41,31,.12); }
+        }
+        @media print {
+            .animal-print-heading,
+            .animal-print-total { break-after: avoid; page-break-after: avoid; }
+        }
+    </style>
+</head>
+<body class="abtc-print-body">
+    <div class="abtc-toolbar abtc-no-print">
+        <span>Official report · A4 Portrait</span>
+        <span>
+            <button type="button" onclick="window.print()">Print</button>
+            <button type="button" class="abtc-toolbar__ghost" onclick="window.close()">Close</button>
+        </span>
+    </div>
+
+    <main class="abtc-doc">
+        {% include 'print/_official_head.html' with document_title="CASES BY ANIMAL TYPE REPORT" %}
+        <p class="abtc-note">
+            Animal Type: {% if groups|length == 1 %}{{ groups.0.name }}{% else %}All Animal Types{% endif %}
+            &nbsp;·&nbsp; Reporting Period: {{ reporting_period }}
+            {% if search_keyword %}&nbsp;·&nbsp; Search: {{ search_keyword }}{% else %}&nbsp;·&nbsp; Search: All matching records{% endif %}
+            &nbsp;·&nbsp; Date Generated: {{ printed_at|date:"F d, Y · g:i A" }}
+        </p>
+
+        <section class="abtc-section">
+            {% for group in groups %}
+            <section class="animal-print-group">
+                <h2 class="animal-print-heading">{{ group.name }}</h2>
+                <p class="animal-print-total">Total {{ group.name }} Cases: {{ group.total }}</p>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>No.</th>
+                            <th>Case Number</th>
+                            <th>Patient Name</th>
+                            <th>Date of Incident</th>
+                            <th>Barangay</th>
+                            <th>Exposure Type</th>
+                            <th>Case Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for case in group.cases %}
+                        <tr>
+                            <td>{{ forloop.counter }}</td>
+                            <td>{{ case.case_number }}</td>
+                            <td>{{ case.patient.full_name }}</td>
+                            <td>{{ case.date_time_bite|date:"M d, Y" }}</td>
+                            <td>{{ case.incident_barangay|default:"Unspecified" }}</td>
+                            <td>{{ case.get_exposure_type_display }}</td>
+                            <td>{{ case.get_case_status_display }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </section>
+            {% empty %}
+            <p class="abtc-note">No cases match this reporting period and search.</p>
+            {% endfor %}
+        </section>
+
+        <p class="animal-grand-total">GRAND TOTAL: {{ grand_total }} {% if grand_total == 1 %}CASE{% else %}CASES{% endif %}</p>
+        {% include 'print/_official_footer.html' with confidential=True %}
+    </main>
+
+    <script>
+        (function () {
+            var printed = false;
+            function openPrintDialog() {
+                if (printed) return;
+                printed = true;
+                window.setTimeout(function () { window.print(); }, 350);
+            }
+            window.addEventListener('load', openPrintDialog, { once: true });
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') window.close();
+            });
+        })();
+    </script>
+</body>
+</html>

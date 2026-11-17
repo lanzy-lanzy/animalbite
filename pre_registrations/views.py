@@ -1,13 +1,19 @@
+import re
+from copy import copy
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required, user_passes_test
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from audit.models import AuditLog
@@ -22,11 +28,16 @@ from .forms import (
 )
 from .models import PreRegistration
 from .services import (
+    PENDING_STATUSES,
+    DuplicateConfirmationRequired,
     RegistrationDeletionBlocked,
     archive_pre_registration,
+    conversion_patient,
     convert_to_official_case,
     delete_pre_registration,
     registration_retention_blockers,
+    reject_pre_registration,
+    require_review_admin,
     retrieve_pre_registration,
 )
 
@@ -180,6 +191,7 @@ def staff_list(request):
     page = paginator.get_page(request.GET.get("page"))
     for record in page:
         record.retention_blocked = bool(registration_retention_blockers(record))
+        record.can_convert = _can_convert(record, request.user)
     return render(
         request,
         "pre_registrations/staff_list.html",
@@ -272,122 +284,199 @@ def staff_retrieve(request, pk):
     return redirect_back(request, "audit:audit_list")
 
 
+def _can_convert(record, user):
+    if getattr(user, "role", "") != "admin" or record.status == PreRegistration.Status.CONVERTED:
+        return False
+    try:
+        patient = conversion_patient(record)
+    except ValidationError:
+        return False
+    return not patient or not patient.is_archived
+
+
+def _review_navigation(request):
+    source = request.POST if request.method == "POST" else request.GET
+    from_patients = source.get("return_to") == "patients" or (
+        request.method == "GET" and source.get("from") == "patients"
+    )
+    target = source.get("next", "") if from_patients else ""
+    if not url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        target = ""
+    return {
+        "return_to": "patients" if from_patients else "",
+        "next": target,
+        "back_url": (target or reverse("patients:patient_list")) if from_patients
+        else reverse("pre_registrations:staff_list"),
+    }
+
+
+def _review_redirect(request, record):
+    if request.POST.get("return_to") == "patients":
+        return redirect_back(request, "patients:patient_list")
+    return redirect("pre_registrations:staff_detail", pk=record.pk)
+
+
+def _detail_context(request, record, reject_form=None):
+    # Exact token boundaries exclude, for example, AB-...-00010 from ...-0001.
+    number_pattern = rf"(?<![\w-]){re.escape(record.pre_registration_number)}(?![\w-])"
+    history = AuditLog.objects.filter(
+        Q(target_type="pre_registration", target_id=record.pk)
+        | Q(target_type="", target_id__isnull=True, description__regex=number_pattern)
+    ).select_related("user").order_by("-created_at", "-pk")
+    can_convert = _can_convert(record, request.user)
+    return {
+        "record": record,
+        "duplicates": record.possible_duplicates() if can_convert and record.bite_datetime else [],
+        "reject_form": reject_form if reject_form is not None else RejectPreRegistrationForm(),
+        "can_convert": can_convert,
+        "can_reject": (
+            getattr(request.user, "role", "") == "admin" and not record.is_archived
+            and record.status in PENDING_STATUSES
+            and not record.converted_patient_id and not record.converted_case_id
+        ),
+        "can_edit": record.status != PreRegistration.Status.REJECTED and not record.is_archived,
+        "history": history,
+        **_review_navigation(request),
+    }
+
+
 @login_required
 @user_passes_test(is_authorized_staff)
 def staff_detail(request, pk):
     record = get_object_or_404(PreRegistration, pk=pk)
-    return render(
-        request,
-        "pre_registrations/staff_detail.html",
-        {
-            "record": record,
-            "duplicates": record.possible_duplicates(),
-            "reject_form": RejectPreRegistrationForm(),
-        },
-    )
+    return render(request, "pre_registrations/staff_detail.html", _detail_context(request, record))
 
 
 @login_required
-@user_passes_test(is_authorized_staff)
+@transaction.atomic
 def staff_edit(request, pk):
-    record = get_object_or_404(PreRegistration, pk=pk)
+    if not is_authorized_staff(request.user):
+        raise PermissionDenied
+    records = PreRegistration.objects.select_for_update() if request.method == "POST" else PreRegistration.objects
+    record = get_object_or_404(records, pk=pk)
+    admin = getattr(request.user, "role", "") == "admin"
+    if record.is_archived or (record.status == PreRegistration.Status.REJECTED and not admin):
+        raise PermissionDenied("This registration is read-only.")
     if request.method == "POST":
-        form = StaffPreRegistrationForm(request.POST, instance=record)
-        if form.is_valid():
-            updated = form.save()
-            if (
-                updated.status == PreRegistration.Status.REJECTED
-                and not updated.rejected_at
-            ):
-                updated.rejected_by = request.user
-                updated.rejected_at = timezone.now()
-                updated.save(
-                    update_fields=["rejected_by", "rejected_at", "updated_at"]
+        if not admin and any(
+            field in request.POST and request.POST[field] != getattr(record, field)
+            for field in ("status", "rejection_reason")
+        ):
+            raise PermissionDenied("Only an Admin can change review status or reason.")
+        if (
+            request.POST.get("status") == PreRegistration.Status.CONVERTED
+            and record.status != PreRegistration.Status.CONVERTED
+        ) or (
+            record.status == PreRegistration.Status.CONVERTED
+            and request.POST.get("status", record.status) != record.status
+        ):
+            raise PermissionDenied("Official record status can only be set by conversion.")
+        if record.status == PreRegistration.Status.REJECTED:
+            status = request.POST.get("status")
+            if status in PENDING_STATUSES and not record.converted_patient_id and not record.converted_case_id:
+                # A rejected intake may itself be invalid. Reopening validates
+                # only the transition, never re-cleans or writes its source data.
+                PreRegistration.objects.filter(pk=record.pk).update(status=status, updated_at=timezone.now())
+                AuditLog.objects.create(
+                    user=request.user,
+                    action="UPDATE_PRE_REGISTRATION",
+                    target_type="pre_registration",
+                    target_id=record.pk,
+                    description=(
+                        f"Reopened online registration {record.pre_registration_number}: rejected -> {status}. "
+                        f"Previous rejection by {record.rejected_by} at {record.rejected_at}: {record.rejection_reason}"
+                    ),
                 )
-            AuditLog.objects.create(
-                user=request.user,
-                action="UPDATE_PRE_REGISTRATION",
-                description=f"Updated online registration {updated.pre_registration_number}",
-            )
+                messages.success(request, "Online registration reopened as pending. The original rejection history was preserved.")
+                return redirect("pre_registrations:staff_detail", pk=record.pk)
+            messages.error(request, "Rejected registrations are read-only. An Admin may reopen an unlinked registration as pending.")
+            form = StaffPreRegistrationForm(instance=record, user=request.user)
+            return render(request, "pre_registrations/staff_form.html", {"form": form, "record": record})
+        form = StaffPreRegistrationForm(request.POST, instance=copy(record), user=request.user)
+        if form.is_valid():
+            status = form.cleaned_data["status"]
+            if status == PreRegistration.Status.REJECTED:
+                try:
+                    reject_pre_registration(record, request.user, form.cleaned_data["rejection_reason"])
+                except ValidationError as exc:
+                    messages.error(request, " ".join(exc.messages))
+                    return _review_redirect(request, record)
+            else:
+                old_status = record.status
+                updated = form.save(commit=False)
+                if status == PreRegistration.Status.VERIFIED and old_status != status:
+                    updated.verified_by = request.user
+                    updated.verified_at = timezone.now()
+                updated.save()
+                detail = (
+                    f"Updated online registration {record.pre_registration_number}: {old_status} -> {status}. "
+                    f"Fields: {', '.join(form.changed_data) or 'none'}."
+                )
+                AuditLog.objects.create(
+                    user=request.user,
+                    action="UPDATE_PRE_REGISTRATION",
+                    target_type="pre_registration",
+                    target_id=record.pk,
+                    description=detail,
+                )
             messages.success(request, "Online registration updated.")
             return redirect("pre_registrations:staff_detail", pk=record.pk)
+        messages.error(request, form.errors.as_text())
     else:
-        form = StaffPreRegistrationForm(instance=record)
+        form = StaffPreRegistrationForm(instance=record, user=request.user)
     return render(request, "pre_registrations/staff_form.html", {"form": form, "record": record})
 
 
 @login_required
-@user_passes_test(is_authorized_staff)
+@require_POST
 def staff_reject(request, pk):
+    require_review_admin(request.user)
     record = get_object_or_404(PreRegistration, pk=pk)
-    if record.converted_case_id:
-        messages.error(request, "Converted registrations cannot be rejected.")
-        return redirect("pre_registrations:staff_detail", pk=record.pk)
-    if request.method != "POST":
-        return redirect("pre_registrations:staff_detail", pk=record.pk)
-
     form = RejectPreRegistrationForm(request.POST)
     if form.is_valid():
-        record.status = PreRegistration.Status.REJECTED
-        record.rejection_reason = form.cleaned_data["reason"]
-        record.rejected_by = request.user
-        record.rejected_at = timezone.now()
-        record.save(
-            update_fields=[
-                "status",
-                "rejection_reason",
-                "rejected_by",
-                "rejected_at",
-                "updated_at",
-            ]
-        )
-        AuditLog.objects.create(
-            user=request.user,
-            action="REJECT_PRE_REGISTRATION",
-            description=(
-                f"Rejected online registration {record.pre_registration_number}: "
-                f"{record.rejection_reason}"
-            ),
-        )
-        messages.success(
-            request,
-            f"Online registration {record.pre_registration_number} rejected. "
-            "The patient will see the reason when checking its status.",
-        )
-        return redirect("pre_registrations:staff_detail", pk=record.pk)
+        try:
+            record, changed = reject_pre_registration(record, request.user, form.cleaned_data["reason"])
+        except ValidationError as exc:
+            messages.error(request, " ".join(exc.messages))
+        else:
+            if changed:
+                messages.success(
+                    request,
+                    f"Online registration {record.pre_registration_number} rejected. "
+                    "The patient will see the reason when checking its status.",
+                )
+            else:
+                messages.info(request, "This registration was already rejected; the original review was preserved.")
+        return _review_redirect(request, record)
 
-    messages.error(request, "Please provide a reason for rejecting this registration.")
-    return render(
-        request,
-        "pre_registrations/staff_detail.html",
-        {
-            "record": record,
-            "duplicates": record.possible_duplicates(),
-            "reject_form": form,
-        },
-    )
+    messages.error(request, "Please provide a meaningful reason for rejecting this registration.")
+    return render(request, "pre_registrations/staff_detail.html", _detail_context(request, record, form))
 
 
 @login_required
-@user_passes_test(is_authorized_staff)
+@require_POST
 def convert(request, pk):
+    require_review_admin(request.user)
     record = get_object_or_404(PreRegistration, pk=pk)
-    if record.status == PreRegistration.Status.REJECTED:
-        messages.error(
-            request,
-            "This online registration was rejected. Change its status before "
-            "converting it to an official case.",
+    try:
+        # The service owns one transaction for the fresh state, duplicate check,
+        # patient/account lookup, conversion and audit entry.
+        patient, case = convert_to_official_case(
+            record, request.user, confirm_duplicates=request.POST.get("confirm_duplicates") == "1"
         )
-        return redirect("pre_registrations:staff_detail", pk=record.pk)
-    duplicates = record.possible_duplicates()
-    if duplicates.exists() and request.POST.get("confirm_duplicates") != "1":
+    except DuplicateConfirmationRequired as exc:
         return render(
-            request,
-            "pre_registrations/convert_confirm.html",
-            {"record": record, "duplicates": duplicates},
+            request, "pre_registrations/convert_confirm.html",
+            {"record": exc.record, "duplicates": exc.duplicates, **_review_navigation(request)},
         )
-
-    patient, case = convert_to_official_case(record, request.user)
+    except ValidationError as exc:
+        messages.error(request, "Conversion blocked: " + " ".join(exc.messages))
+        return _review_redirect(request, record)
+    except IntegrityError:
+        messages.error(request, "Conversion could not be completed because another record changed. Nothing was saved; please review and retry.")
+        return _review_redirect(request, record)
     # If auto-created login (patient had no account), surface temp credentials
     # No SMS is sent for pre-registration credentials — patient already provided
     # username/password during public signup; staff shares temp creds verbally if needed.
@@ -405,6 +494,8 @@ def convert(request, pk):
     else:
         messages.success(request, f"Online registration converted to official case {case.case_number}.")
     messages.info(request, "Vaccination schedule is not set automatically — a nurse must trigger it from the case page or Nurse Portal.")
+    if request.POST.get("return_to") == "patients":
+        return redirect_back(request, "patients:patient_list")
     return redirect("bite_cases:case_detail", pk=case.pk)
 
 

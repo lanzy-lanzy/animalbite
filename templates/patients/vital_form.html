@@ -8,18 +8,54 @@
   .vital-print-btn svg{width:16px; height:16px; flex:0 0 auto}
 </style>
 <style>
-  .section{border:1px solid rgba(255,255,255,.62); border-radius:16px; overflow:hidden; background:linear-gradient(152deg, rgba(255,255,255,.70) 0%, rgba(253,250,244,.48) 45%, rgba(228,243,236,.50) 100%); backdrop-filter:blur(18px) saturate(175%); -webkit-backdrop-filter:blur(18px) saturate(175%); box-shadow:18px 18px 40px -22px rgba(146,124,84,.46), -14px -14px 34px -22px rgba(255,255,255,.95); margin-top:16px}
-  .section-head{background:linear-gradient(150deg,#17614b,#08201a);box-shadow:inset 0 -1px 0 rgba(201,162,39,.55), inset 0 1px 0 rgba(255,255,255,.18);color:white;
-  .section-head h3{margin:0; font-size:11px; font-weight:800; letter-spacing:.10em; text-transform:uppercase; display:flex; align-items:center; gap:8px}
-  .section-head .hint{font-size:10px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:rgba(235,215,155,.85); opacity:.95}
-  .vitals-grid-form{display:grid; grid-template-columns:repeat(2,1fr); gap:12px}
-  @media(min-width:768px){ .vitals-grid-form{grid-template-columns:repeat(4,1fr)} }
-  .vital-input-card{border:1px solid rgba(255,255,255,.8); border-radius:14px; padding:10px; background:linear-gradient(145deg,#f4edde,#fefcf6); display:flex; flex-direction:column; gap:6px; box-shadow:inset 5px 5px 12px -9px rgba(146,124,84,.55), inset -5px -5px 12px -9px rgba(255,255,255,.95), 0 0 0 1px rgba(255,255,255,.5)}
-  .vital-input-card label{font-size:10px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; color:var(--emerald-700)}
+  .vf-page{max-width:1000px; margin:0 auto}
+  .vf-card{border:1px solid #E7DFCF; border-radius:18px; overflow:hidden; background:#FFFFFF; box-shadow:0 20px 46px -30px rgba(8,41,31,.38)}
+  .vf-card-head{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 20px; background:#08291F; color:#FFFFFF}
+  .vf-card-head h2{margin:0; font-size:12.5px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; display:flex; align-items:center; gap:10px; min-width:0}
+  .vf-num{width:24px; height:24px; border-radius:7px; background:rgba(255,255,255,.14); border:1px solid rgba(201,162,39,.5); display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:#F1E2B7; flex:0 0 auto}
+  .vf-role-tag{font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:#EBD9A6; border:1px solid rgba(235,217,166,.42); border-radius:999px; padding:4px 10px; white-space:nowrap; flex:0 0 auto}
+  .vf-card-body{padding:20px; background:linear-gradient(180deg,#FFFFFF 0%,#FDFBF5 100%)}
+  .vf-top-grid{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 18px}
+  .vf-subhead{display:flex; align-items:center; gap:10px; margin:24px 0 12px; font-size:10.5px; font-weight:800; letter-spacing:.11em; text-transform:uppercase; color:#08291F}
+  .vf-subhead::after{content:''; height:1px; flex:1; background:#EDE5D6}
+  .vf-grid{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 18px}
+  .vf-field{min-width:0; display:flex; flex-direction:column}
+  .vf-field--full{grid-column:1 / -1}
+  .vf-label{display:block; font-size:12px; font-weight:700; letter-spacing:.02em; color:#22362F; margin-bottom:6px}
+  .vf-req{color:#B08A2E}
+  .vf-soft{font-weight:600; color:#7C8F88}
+  .vf-help{margin:6px 0 0; font-size:11px; font-weight:500; line-height:1.45; color:#7C8F88}
+  .vf-error{margin:6px 0 0; font-size:11.5px; font-weight:600; color:#B42318}
+  .vf-field textarea.form-input{min-height:112px; resize:vertical}
+  .vf-readonly{display:flex; align-items:center; gap:10px; min-height:42px; padding:9px 13px; border-radius:.85rem; border:1px dashed #D9CEB8; background:#FAF6EE; color:#08291F; font-size:13px; font-weight:700}
+  .vf-readonly svg{width:16px; height:16px; color:#0D382C; flex:0 0 auto}
+  .vf-readonly .vf-auto{margin-left:auto; font-size:9.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:#8A9A93; white-space:nowrap}
+  .vf-bmi .form-input{background:#F4F1E7; color:#0D382C; font-weight:700; cursor:default}
+  .vf-info{display:flex; align-items:flex-start; gap:11px; margin-top:18px; padding:12px 15px; border-radius:14px; background:#EDF6F0; border:1px solid #D5E7DC}
+  .vf-info-icon{width:22px; height:22px; border-radius:999px; background:#0D382C; color:#FFFFFF; display:flex; align-items:center; justify-content:center; flex:0 0 auto}
+  .vf-info-icon svg{width:13px; height:13px}
+  .vf-info p{margin:0; font-size:12.5px; font-weight:600; line-height:1.5; color:#315C4C}
+  .vf-actions{display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding-top:20px}
+  .vf-btn{display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:11px 22px; border-radius:999px; font-size:13px; font-weight:800; letter-spacing:.02em; line-height:1; text-decoration:none; cursor:pointer; border:1px solid transparent; transition:background .18s ease, transform .18s ease, box-shadow .18s ease}
+  .vf-btn svg{width:16px; height:16px; flex:0 0 auto}
+  .vf-btn--save{background:linear-gradient(160deg,#0D382C,#08291F); color:#FFFFFF; border-color:rgba(201,162,39,.35); box-shadow:0 12px 26px -18px rgba(8,41,31,.75)}
+  .vf-btn--save:hover{transform:translateY(-1px); box-shadow:0 16px 30px -18px rgba(8,41,31,.85)}
+  .vf-btn--save:disabled{opacity:.65; cursor:wait; transform:none}
+  .vf-btn--cancel{background:#FFFFFF; color:#0D382C; border-color:#D8CDB6; box-shadow:0 8px 18px -16px rgba(8,41,31,.45)}
+  .vf-btn--cancel:hover{background:#FAF6EE}
+  .vf-new-link{margin-left:auto; font-size:11.5px; font-weight:800; color:#0D382C; text-decoration:none}
+  .vf-new-link:hover{text-decoration:underline}
+  @media (max-width:760px){
+    .vf-top-grid, .vf-grid{grid-template-columns:1fr}
+    .vf-card-body{padding:16px}
+    .vf-card-head{padding:13px 15px; gap:8px}
+    .vf-card-head h2{font-size:11.5px}
+    .vf-new-link{margin-left:0}
+  }
 </style>
 {% endblock %}
 {% block content %}
-<div class="max-w-[850px] mx-auto">
+<div class="vf-page">
   {% if is_create and request.user.role == 'admin' %}
   <div class="flex items-center justify-between gap-3 mb-4">
     <div class="flex items-center gap-3 min-w-0">
@@ -63,7 +99,7 @@
   </div>
   {% endif %}
 
-  <form method="POST" class="space-y-0">
+  <form method="POST" id="vital-form" class="space-y-0">
     {% csrf_token %}
     {% if next_url %}
       <input type="hidden" name="next" value="{{ next_url }}">
@@ -74,125 +110,129 @@
     </div>
     {% endif %}
 
-    <!-- Section 2 style -->
-    <div class="section">
-      <div class="section-head">
-        <h3><span style="width:22px; height:22px; background:white; color:#143d33; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; font-size:11px;">2</span> Vital Signs & Baseline</h3>
-        <span class="hint">Admin input — appears on print</span>
+    <section class="vf-card" aria-labelledby="vf-section-title">
+      <div class="vf-card-head">
+        <h2 id="vf-section-title"><span class="vf-num">2</span> Vital Signs &amp; Baseline</h2>
+        <span class="vf-role-tag">Admin Input</span>
       </div>
-      <div class="p-4 space-y-4">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label class="form-label">Date / Time Taken *</label>
+      <div class="vf-card-body">
+        <div class="vf-top-grid">
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.taken_at.id_for_label }}">Date / Time Taken <span class="vf-req">*</span></label>
             {{ form.taken_at }}
-            {% if form.taken_at.errors %}<p class="text-red-600 text-xs mt-1">{{ form.taken_at.errors.0 }}</p>{% endif %}
+            {% for e in form.taken_at.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
-          <div class="flex items-end">
-            <p class="text-xs font-medium text-muted bg-sage-50 border border-line rounded-lg px-3 py-2">Taken by: <b class="text-ink">{{ request.user.get_full_name|default:request.user.username }}</b> · will be saved automatically.</p>
+          <div class="vf-field">
+            <span class="vf-label">Taken By</span>
+            <div class="vf-readonly" aria-readonly="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span>{{ request.user.get_full_name|default:request.user.username }}</span>
+              <span class="vf-auto">Auto</span>
+            </div>
+            <p class="vf-help">Recorded automatically from your signed-in account.</p>
           </div>
         </div>
 
-        <div class="vitals-grid-form">
-          <!-- BP as two fields in one card -->
-          <div class="vital-input-card">
-            <label>Blood Pressure <span class="font-normal normal-case tracking-normal text-muted2">(mmHg)</span></label>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-xs font-semibold text-muted">Systolic</label>
-                {{ form.bp_systolic }}
-                {% if form.bp_systolic.errors %}<p class="text-red-600 text-xs">{{ form.bp_systolic.errors.0 }}</p>{% endif %}
-              </div>
-              <div>
-                <label class="text-xs font-semibold text-muted">Diastolic</label>
-                {{ form.bp_diastolic }}
-                {% if form.bp_diastolic.errors %}<p class="text-red-600 text-xs">{{ form.bp_diastolic.errors.0 }}</p>{% endif %}
-              </div>
-            </div>
-            <p class="text-xs text-muted">e.g. 120 / 80</p>
+        <h3 class="vf-subhead">Vital Measurements</h3>
+        <div class="vf-grid">
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.bp_systolic.id_for_label }}">Systolic <span class="vf-soft">(mmHg)</span></label>
+            {{ form.bp_systolic }}
+            {% for e in form.bp_systolic.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
+          </div>
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.bp_diastolic.id_for_label }}">Diastolic <span class="vf-soft">(mmHg)</span></label>
+            {{ form.bp_diastolic }}
+            {% for e in form.bp_diastolic.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
 
-          <div class="vital-input-card">
-            <label>Temperature (°C)</label>
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.temperature.id_for_label }}">Temperature <span class="vf-soft">(°C)</span></label>
             {{ form.temperature }}
-            {% if form.temperature.errors %}<p class="text-red-600 text-xs">{{ form.temperature.errors.0 }}</p>{% endif %}
+            {% for e in form.temperature.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
-
-          <div class="vital-input-card">
-            <label>Pulse Rate (bpm)</label>
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.pulse_rate.id_for_label }}">Pulse Rate <span class="vf-soft">(bpm)</span></label>
             {{ form.pulse_rate }}
-            {% if form.pulse_rate.errors %}<p class="text-red-600 text-xs">{{ form.pulse_rate.errors.0 }}</p>{% endif %}
+            {% for e in form.pulse_rate.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
 
-          <div class="vital-input-card">
-            <label>Respiratory Rate (/min)</label>
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.respiratory_rate.id_for_label }}">Respiratory Rate <span class="vf-soft">(/min)</span></label>
             {{ form.respiratory_rate }}
-            {% if form.respiratory_rate.errors %}<p class="text-red-600 text-xs">{{ form.respiratory_rate.errors.0 }}</p>{% endif %}
+            {% for e in form.respiratory_rate.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
-
-          <div class="vital-input-card">
-            <label>SpO₂ (%)</label>
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.spo2.id_for_label }}">SpO₂ <span class="vf-soft">(%)</span></label>
             {{ form.spo2 }}
+            {% for e in form.spo2.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
 
-          <div class="vital-input-card">
-            <label>Weight (kg)</label>
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.weight.id_for_label }}">Weight <span class="vf-soft">(kg)</span></label>
             {{ form.weight }}
+            {% for e in form.weight.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
-
-          <div class="vital-input-card">
-            <label>Height (cm)</label>
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.height.id_for_label }}">Height <span class="vf-soft">(cm)</span></label>
             {{ form.height }}
+            {% for e in form.height.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
 
-          <div class="vital-input-card">
-            <label>BMI</label>
+          <div class="vf-field vf-bmi">
+            <label class="vf-label" for="{{ form.bmi.id_for_label }}">BMI <span class="vf-soft">(Auto-calculated)</span></label>
             {{ form.bmi }}
-            <p class="text-xs text-muted">Auto if blank (from WT/HT)</p>
+            {% for e in form.bmi.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
+            <p class="vf-help">Auto-calculated from Weight and Height.</p>
           </div>
-
-          <div class="vital-input-card">
-            <label>Pain Score (0-10)</label>
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.pain_score.id_for_label }}">Pain Score <span class="vf-soft">(0–10)</span></label>
             {{ form.pain_score }}
+            {% for e in form.pain_score.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
+        </div>
 
-          <div class="vital-input-card">
-            <label>Blood Glucose (mg/dL)</label>
+        <h3 class="vf-subhead">Additional Assessment</h3>
+        <div class="vf-grid">
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.blood_glucose.id_for_label }}">Blood Glucose <span class="vf-soft">(mg/dL)</span></label>
             {{ form.blood_glucose }}
-            <div class="mt-2">
-              <label class="text-xs font-semibold text-muted">Type</label>
-              {{ form.glucose_type }}
-            </div>
+            {% for e in form.blood_glucose.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
-
-          <div class="vital-input-card">
-            <label>General Appearance</label>
+          <div class="vf-field">
+            <label class="vf-label" for="{{ form.glucose_type.id_for_label }}">Blood Glucose Type</label>
+            {{ form.glucose_type }}
+            {% for e in form.glucose_type.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
+          </div>
+          <div class="vf-field vf-field--full">
+            <label class="vf-label" for="{{ form.general_appearance.id_for_label }}">General Appearance</label>
             {{ form.general_appearance }}
+            {% for e in form.general_appearance.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
+          </div>
+          <div class="vf-field vf-field--full">
+            <label class="vf-label" for="{{ form.notes.id_for_label }}">Additional Notes / Allergy Re-check</label>
+            {{ form.notes }}
+            {% for e in form.notes.errors %}<p class="vf-error">{{ e }}</p>{% endfor %}
           </div>
         </div>
-
-        <div>
-          <label class="form-label">Additional Notes / Allergy Re-check</label>
-          {{ form.notes }}
-        </div>
       </div>
+    </section>
+
+    <div class="vf-info" role="note">
+      <span class="vf-info-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+      </span>
+      <p>Saved values will automatically appear on the print sheet. Blank fields will remain empty for manual writing when needed.</p>
     </div>
 
-    <div class="mt-4 rounded-xl bg-sage-50 border border-line border-dashed p-3 flex gap-3">
-      <div class="w-8 h-8 rounded-lg bg-emerald-950 text-white flex items-center justify-center shrink-0">✓</div>
-      <div>
-        <p class="text-sm font-bold text-ink">Appears instantly on print sheet</p>
-        <p class="text-xs font-medium text-muted mt-0.5">After save, open <b class="text-ink">Print Preview</b> from Patient List → values fill the vital grid and PDF. Leave fields blank if not taken — sheet stays blank for handwriting.</p>
-      </div>
-    </div>
-
-    <div class="flex flex-wrap gap-2 pt-5">
-      <button type="submit" class="btn-primary inline-flex items-center gap-1.5">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-        {% if is_create %}Save Vital Signs{% else %}Update Vital Signs{% endif %}
+    <div class="vf-actions">
+      <button type="submit" id="vf-save-btn" class="vf-btn vf-btn--save">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+        <span>{% if is_create %}Save Vital Signs{% else %}Update Vital Signs{% endif %}</span>
       </button>
-      <a href="{% if next_url %}{{ next_url }}{% else %}{% url 'patients:patient_detail' patient.pk %}{% endif %}" class="btn-secondary">Cancel</a>
+      <a href="{% if next_url %}{{ next_url }}{% else %}{% url 'patients:patient_detail' patient.pk %}{% endif %}" class="vf-btn vf-btn--cancel">Cancel</a>
       {% if not is_create %}
-      <a href="{% url 'patients:patient_vital_create' patient.pk %}?next={{ next_url|default:request.path|urlencode }}" class="ml-auto text-xs font-bold text-emerald-700 hover:underline">+ Add new entry instead</a>
+      <a href="{% url 'patients:patient_vital_create' patient.pk %}?next={{ next_url|default:request.path|urlencode }}" class="vf-new-link">+ Add new entry instead</a>
       {% endif %}
     </div>
   </form>
@@ -200,24 +240,40 @@
 {% endblock %}
 {% block extra_scripts %}
 <script>
-  (function(){
-    const wEl = document.querySelector('[name="weight"]');
-    const hEl = document.querySelector('[name="height"]');
-    const bmiEl = document.querySelector('[name="bmi"]');
-    function calcBMI(){
-      const w = parseFloat(wEl?.value);
-      const h = parseFloat(hEl?.value);
-      if(w && h && h>0 && bmiEl){
-        const v = (w / ((h/100)*(h/100))).toFixed(2);
-        if(!bmiEl.value) bmiEl.value = v;
-        else if(Math.abs(parseFloat(bmiEl.value) - parseFloat(v)) > 0.3){
-          // suggest update but don't override if user manually set
-          if(confirm('Auto-update BMI to ' + v + ' (from ' + w + 'kg / ' + h + 'cm)?')) bmiEl.value = v;
-        }
+  (function () {
+    var form = document.getElementById('vital-form');
+    var weightEl = document.querySelector('[name="weight"]');
+    var heightEl = document.querySelector('[name="height"]');
+    var bmiEl = document.querySelector('[name="bmi"]');
+    var saveBtn = document.getElementById('vf-save-btn');
+
+    function calcBMI() {
+      if (!bmiEl) return;
+      var w = parseFloat(weightEl && weightEl.value);
+      var h = parseFloat(heightEl && heightEl.value);
+      if (isFinite(w) && isFinite(h) && w > 0 && h > 0) {
+        bmiEl.value = (w / ((h / 100) * (h / 100))).toFixed(2);
+      } else {
+        bmiEl.value = '';
       }
     }
-    wEl?.addEventListener('blur', calcBMI);
-    hEl?.addEventListener('blur', calcBMI);
+
+    if (weightEl && heightEl && bmiEl) {
+      ['input', 'change'].forEach(function (evt) {
+        weightEl.addEventListener(evt, calcBMI);
+        heightEl.addEventListener(evt, calcBMI);
+      });
+      if (weightEl.value && heightEl.value) calcBMI();
+    }
+
+    if (form && saveBtn) {
+      form.addEventListener('submit', function () {
+        if (saveBtn.disabled) return;
+        saveBtn.disabled = true;
+        var label = saveBtn.querySelector('span');
+        if (label) label.textContent = 'Saving…';
+      });
+    }
   })();
 </script>
 {% endblock %}

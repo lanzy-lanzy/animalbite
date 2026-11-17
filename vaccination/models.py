@@ -82,6 +82,25 @@ class VaccineDose(models.Model):
             return 'Scheduled'
         return 'Pending Scheduling'
 
+    def appointment_status(self, today=None):
+        from zoneinfo import ZoneInfo
+        from django.utils import timezone
+
+        if self.actual_date is not None or self.dose_status == 'completed':
+            return 'completed'
+        if self.dose_status == 'cancelled':
+            return 'cancelled'
+        if not self.scheduled_date:
+            return 'pending'
+        today = today or timezone.localdate(timezone=ZoneInfo('Asia/Manila'))
+        if self.scheduled_date < today:
+            return 'missed'
+        return 'rescheduled' if self.dose_status == 'rescheduled' else 'scheduled'
+
+    @property
+    def effective_status(self):
+        return dict(self.DOSE_STATUS)[self.appointment_status()]
+
     def expected_date(self):
         """Protocol date for this dose, measured from the 1st dose."""
         from datetime import timedelta
@@ -136,6 +155,7 @@ class SMSLog(models.Model):
         ('schedule_set', 'Schedule Set'),
         ('3days_before', '3 Days Before'),
         ('on_day', 'On Day'),
+        ('missed_appointment', 'Automatic Missed Appointment'),
         ('manual_immediate', 'Manual – Send Now'),
         ('manual_2days_before', 'Manual – 2 Days Before'),
         ('manual_1day_before', 'Manual – 1 Day Before'),
@@ -146,6 +166,8 @@ class SMSLog(models.Model):
         ('queued', 'Queued'),
         ('sent', 'Sent'),
         ('failed', 'Failed'),
+        ('unknown', 'Outcome Unknown'),
+        ('skipped', 'Skipped'),
     ]
 
     dose = models.ForeignKey(VaccineDose, on_delete=models.CASCADE, related_name='sms_logs', null=True, blank=True)
@@ -158,6 +180,8 @@ class SMSLog(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     semaphore_message_id = models.CharField(max_length=100, blank=True)
     api_response = models.TextField(blank=True)
+    event_key = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
     sent_at = models.DateTimeField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

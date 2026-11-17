@@ -157,7 +157,6 @@ class PatientDetailRecordTests(TestCase):
             'id="bite-incidents"',
             'id="vitals"',
             'id="clinical-assessment"',
-            'id="portal-access"',
         ]
         positions = [content.index(anchor) for anchor in anchors]
         self.assertEqual(positions, sorted(positions))
@@ -193,25 +192,46 @@ class PatientDetailRecordTests(TestCase):
         self.assertIn("Civil Status", content)
         self.assertNotIn("Age / Sex", content)
 
-    def test_bite_incident_fields_are_not_combined(self):
+    def test_bite_incident_uses_the_bite_case_sheet_sections(self):
         response = self._get()
         content = response.content.decode()
-        for label in [
-            "Date of Incident", "Time of Incident", "Place of Incident",
-            "Animal Type", "Ownership", "Animal Condition",
-            "Animal Vaccination Status", "Exposure Type", "Number of Wounds",
-            "Date of Consultation", "Wound Washed Immediately", "First Aid Given",
-        ]:
-            self.assertIn(label, content)
-        for value in [
-            "October 1, 2026", "9:30 AM", "Barangay Hall grounds", "Poblacion",
-            "Dog", "Owned", "Under Observation", "Unknown", "Bite",
-            "right forearm", "Two puncture wounds",
-            "Wound cleaned with soap and water", "Referred to ABTC immediately",
-        ]:
-            self.assertIn(value, content)
-        self.assertNotIn("Date &amp; Time of Bite</p>", content)
-        self.assertNotIn("Animal</p>", content)
+        section = content[
+            content.index('id="bite-incidents"'):content.index('id="vitals"')]
+        self.assertIn('class="pd-case bcs-panel"', section)
+        self.assertIn('class="bcs-section-title"', section)
+        for heading in (
+            "Incident Information",
+            "Animal Information",
+            "Exposure &amp; Wound Information",
+        ):
+            self.assertIn(heading, section)
+        for label in (
+            "Patient Name", "Patient Number", "Place of Incident", "Barangay",
+            "Date of Consultation", "Animal Type", "Ownership", "Animal Condition",
+            "Animal Vaccination Status", "Exposure Type", "Bite Location / Body Part",
+            "Number of Wounds", "Wound Washed Immediately", "Wound Description",
+            "First Aid Given",
+        ):
+            self.assertIn(f'class="bcs-label">{label}</span>', section)
+        for value in (
+            self.patient.full_name(), self.patient.patient_number,
+            "Barangay Hall grounds", "Poblacion", "Dog", "Owned",
+            "Under Observation", "Unknown", "Bite", "right forearm",
+            "Two puncture wounds", "Wound cleaned with soap and water",
+        ):
+            self.assertIn(value, section)
+        for hidden in (
+            "Date of Incident", "Time of Incident", "Initial Consultation Notes",
+            "Case Number", "Case Status",
+        ):
+            self.assertNotIn(f'class="bcs-label">{hidden}</span>', section)
+        self.assertNotIn("Referred to ABTC immediately", section)
+        # The case header and its standalone sheet link are preserved.
+        self.assertIn("Bite Case 1 of 1", section)
+        self.assertIn(self.case.case_number, section)
+        self.assertIn(self.case.get_case_status_display(), section)
+        self.assertIn(
+            reverse("bite_cases:case_detail", args=[self.case.pk]), section)
 
     def test_vitals_show_latest_record_with_all_fields(self):
         response = self._get()
@@ -274,7 +294,7 @@ class PatientDetailRecordTests(TestCase):
         response = self._get()
         content = response.content.decode()
         start = content.index('id="clinical-assessment"')
-        section = content[start:content.index('id="portal-access"')]
+        section = content[start:]
 
         self.assertIn('<span class="pd-group-letter pd-group-letter--round">A</span>', section)
         self.assertIn('<span class="pd-group-letter pd-group-letter--round">B</span>', section)
@@ -373,7 +393,7 @@ class PatientDetailRecordTests(TestCase):
         response = self._get()
         content = response.content.decode()
         start = content.index('<span class="pd-group-letter">F</span>')
-        section = content[start:content.index('id="portal-access"')]
+        section = content[start:]
 
         self.assertIn("Treatment Plan", section)
         self.assertIn(self.assessment.treatment_plan, section)
@@ -482,55 +502,28 @@ class PatientDetailRecordTests(TestCase):
         width, height = (float(value) for value in match.groups())
         self.assertLess(width, height)
 
-    def test_portal_access_is_last_and_does_not_repeat_stored_password(self):
+    def test_portal_access_section_is_hidden(self):
         response = self._get()
         content = response.content.decode()
-        self.assertGreater(
-            content.index('id="portal-access"'), content.index('id="clinical-assessment"'))
-        self.assertIn("Patient Portal Access", content)
-        self.assertIn(self.portal.username, content)
-        self.assertIn("Reset Temporary Password", content)
-        self.assertIn("Open Login Page", content)
-        self.assertNotIn("Temporary Password (shown once)", content)
-        self.assertNotIn("Bite Cases &amp; Vaccination Schedules", content)
-        self.assertNotIn("Bite Cases & Vaccination Schedules", content)
+        for hidden in (
+            'id="portal-access"',
+            "Patient Portal Access",
+            "Has Login",
+            "Patient Login Access",
+            self.portal.username,
+            self.portal.email,
+            "Reset Temporary Password",
+            "Open Login Page",
+            "Account Status",
+            "Patient Login Details",
+            "Patient login QR code",
+            "Scan for Login",
+            reverse("accounts:login"),
+            reverse("patients:patient_reset_password", args=[self.patient.pk]),
+        ):
+            self.assertNotIn(hidden, content)
 
-    def test_existing_patient_shows_full_portal_panel_without_password(self):
-        response = self._get()
-        content = response.content.decode()
-        login_url = response.wsgi_request.build_absolute_uri(reverse("accounts:login"))
-        # Restored light-green panel heading and the three white information cards.
-        self.assertIn("Patient Login Access", content)
-        self.assertIn("Share these credentials securely with the patient.", content)
-        self.assertIn('class="pd-cred-grid"', content)
-        self.assertIn(">Username</p>", content)
-        self.assertIn(">Login URL</p>", content)
-        self.assertIn(login_url, content)
-        # Existing accounts never reveal a stored/regenerated password.
-        self.assertIn("Shown only when created or reset", content)
-        self.assertIn("pd-value--muted", content)
-        self.assertNotIn("pd-value--secret", content)
-        self.assertNotIn("pw12345678", content)
-        # Restored white Scan-for-Login QR container with a URL-only QR.
-        self.assertIn("Scan for Login", content)
-        self.assertIn(
-            "Point a phone camera at this QR code to open the Patient Portal login page.",
-            content)
-        self.assertIn('alt="Patient login QR code"', content)
-        self.assertIn("data:image/png;base64,", content)
-        self.assertIn("ABTC Patient Portal", content)
-        self.assertIn("Download QR", content)
-        self.assertIn('download="ABTC_login_', content)
-        self.assertIn("window.print()", content)
-        # SMS line and the three cream summary cards remain below the panel.
-        self.assertIn("SMS reminders are also sent to", content)
-        self.assertIn("Account Status", content)
-        self.assertIn("Patient Login Details", content)
-        # The persistent QR encodes only the login URL — no reusable secret.
-        from utils.qr import qr_data_uri
-        self.assertIn(qr_data_uri(login_url), content)
-
-    def test_one_time_credentials_shown_after_reset(self):
+    def test_one_time_credentials_are_not_displayed(self):
         self.client.force_login(self.admin)
         session = self.client.session
         session[f"temp_creds_{self.patient.pk}"] = {
@@ -543,30 +536,18 @@ class PatientDetailRecordTests(TestCase):
         response = self.client.get(
             reverse("patients:patient_detail", args=[self.patient.pk]))
         content = response.content.decode()
-        self.assertIn("Password Reset", content)
-        self.assertIn("One-Time Credentials", content)
-        self.assertIn("Temporary Password (shown once)", content)
-        self.assertIn("OneTime-Temp-999", content)
-        self.assertIn("pd-value--secret", content)
-        # The one-time print sheet carries the password row.
-        self.assertIn("One-Time Login Credentials", content)
-        # Consuming the record a second time must not repeat the password.
-        again = self.client.get(
-            reverse("patients:patient_detail", args=[self.patient.pk]))
-        self.assertNotIn("OneTime-Temp-999", again.content.decode())
-        self.assertIn("Shown only when created or reset", again.content.decode())
+        self.assertNotIn("One-Time Credentials", content)
+        self.assertNotIn("OneTime-Temp-999", content)
+        self.assertNotIn("pd-info-value--secret", content)
 
-    def test_print_sheet_present_for_existing_patient_without_password(self):
+    def test_page_does_not_print_portal_credentials(self):
         response = self._get()
         content = response.content.decode()
-        self.assertIn('class="abtc-print-only pd-cred-print"', content)
-        self.assertIn("Patient Portal Login Information", content)
-        self.assertIn("Existing Login", content)
-        self.assertIn(self.portal.username, content)
-        self.assertIn(reverse("accounts:login"), content)
-        # No temporary-password row is printed for an existing login.
-        self.assertNotIn(">Temporary Password</span>", content)
+        self.assertNotIn('class="abtc-print-only pd-cred-print"', content)
+        self.assertNotIn("Patient Portal Login Information", content)
+        self.assertNotIn("Patient Login Information", content)
         self.assertNotIn("One-Time Login Credentials", content)
+        self.assertNotIn(self.portal.username, content)
 
     def test_actions_and_qr_remain_available(self):
         response = self._get()
@@ -670,4 +651,3 @@ class PatientDetailRecordTests(TestCase):
         self.assertIn("No doctor assessment has been recorded for this case.", content)
         self.assertIn("Not recorded", content)
         self.assertNotIn("No allergies", content)
-        self.assertIn("Allergy status is not documented", content)

@@ -16,6 +16,7 @@ from bite_cases.models import AnimalBiteCase, ExposureClassification
 from inventory.models import MedicineInventory
 from .models import ClinicalAssessment, DOSE_PROTOCOLS, Prescription
 from .forms import ClinicalAssessmentForm, PrescriptionFormSet
+from .queue import doctor_queue_cases
 from audit.models import AuditLog
 from vaccination.models import VaccineDose, VaccinationSchedule
 from vaccination.schedule_utils import (
@@ -419,9 +420,7 @@ def queue_list(request):
     status = request.GET.get('status', '')  # pending, draft, final, all
     category = request.GET.get('category', '')
     # Own-usage scope: unclaimed OR mine
-    cases = AnimalBiteCase.objects.filter(
-        Q(clinical_assessment__isnull=True) | Q(clinical_assessment__assessed_by=request.user)
-    ).select_related('patient')
+    cases = doctor_queue_cases(request.user).select_related('patient')
     if q:
         cases = cases.filter(
             Q(case_number__icontains=q) |

@@ -3,7 +3,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models import Count, Exists, F, OuterRef, Q, Subquery, Value
+from django.db.models.functions import Coalesce
 from django.http import HttpResponse
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -73,23 +74,110 @@ def generate_patient_number():
         num = 1
     return f"PAT-{num:05d}"
 
+def _admin_patient_page(request, patients_qs, query, barangay_name):
+    from pre_registrations.models import PreRegistration
+    from pre_registrations.services import PENDING_STATUSES
+    from utils.phone import normalize_to_09
+
+    registrations = PreRegistration.objects.filter(
+        is_archived=False, converted_patient__isnull=True,
+    )
+    if query:
+        registrations = registrations.filter(
+            Q(pre_registration_number__icontains=query) |
+            Q(first_name__icontains=query) | Q(middle_name__icontains=query) |
+            Q(last_name__icontains=query) | Q(contact_number__icontains=query) |
+            Q(contact_number__icontains=normalize_to_09(query) or query) |
+            Q(address__icontains=query) | Q(barangay__icontains=query)
+        )
+    if barangay_name is not None:
+        registrations = registrations.filter(barangay__iexact=barangay_name)
+
+    sources = PreRegistration.objects.filter(
+        converted_patient_id=OuterRef('pk'), status=PreRegistration.Status.CONVERTED,
+    ).order_by('submitted_at', 'pk')
+    official = Patient.objects.filter(pk__in=patients_qs.values('pk')).annotate(
+        row_kind=Value('patient'),
+        registration_date=Coalesce(Subquery(sources.values('submitted_at')[:1]), F('created_at')),
+    ).order_by().values('pk', 'row_kind', 'registration_date')
+    online = registrations.annotate(
+        row_kind=Value('online'), registration_date=F('submitted_at'),
+    ).order_by().values('pk', 'row_kind', 'registration_date')
+    paginator = Paginator(official.union(online, all=True).order_by(
+        '-registration_date', 'row_kind', '-pk'), 20)
+    page = paginator.get_page(request.GET.get('page'))
+    keys = list(page.object_list)
+    patient_ids = [row['pk'] for row in keys if row['row_kind'] == 'patient']
+    registration_ids = [row['pk'] for row in keys if row['row_kind'] == 'online']
+    patients = patients_qs.filter(pk__in=patient_ids).select_related('barangay').annotate(
+        registration_number=Subquery(sources.values('pre_registration_number')[:1]),
+    ).in_bulk()
+    records = registrations.filter(pk__in=registration_ids).in_bulk()
+    rows = []
+    for key in keys:
+        row = (patients if key['row_kind'] == 'patient' else records).get(key['pk'])
+        # Conversion or archival can invalidate a row after pagination selected its key.
+        if row is None:
+            continue
+        if key['row_kind'] == 'patient':
+            row.registration_source = 'Online' if row.registration_number else 'Onsite'
+            row.registration_status = 'Approved' if row.registration_number else 'Official'
+            row.registration_status_code = 'approved' if row.registration_number else 'official'
+            row.review_pending = False
+            row.view_url = reverse('patients:patient_detail', args=[row.pk])
+        else:
+            row.registration_number = row.pre_registration_number
+            row.registration_source = 'Online'
+            row.review_pending = row.status in PENDING_STATUSES and not row.converted_case_id
+            row.registration_status = (
+                'Pending' if row.review_pending else
+                'Approved' if row.status == PreRegistration.Status.VERIFIED else row.get_status_display()
+            )
+            row.registration_status_code = 'pending' if row.review_pending else row.status
+            row.contact_display = row.contact_number
+            row.view_url = reverse('pre_registrations:staff_detail', args=[row.pk]) + '?from=patients'
+        row.registration_date = key['registration_date']
+        rows.append(row)
+    page.object_list = rows
+    return page
+
+
 @login_required
 def patient_list(request):
     query = request.GET.get('q', '')
     barangay = request.GET.get('barangay', '')
     patients_qs = Patient.objects.filter(is_archived=False)
+    is_admin = request.user.role == 'admin'
+    barangay_name = None
+    if is_admin:
+        from pre_registrations.models import PreRegistration
+        if barangay:
+            barangay_name = (
+                barangay.removeprefix('online:') if barangay.startswith('online:') else
+                Barangay.objects.filter(pk=barangay).values_list('name', flat=True).first()
+                if barangay.isdecimal() else None
+            ) or ''
+            patients_qs = patients_qs.filter(barangay__name__iexact=barangay_name)
 
     if query:
         from utils.phone import normalize_to_63
-        # Match both the raw query and the 63... Semaphore equivalent for stored numbers
         query_63 = normalize_to_63(query) or query
-        patients_qs = patients_qs.filter(
+        search = (
             Q(first_name__icontains=query) | Q(middle_name__icontains=query) |
             Q(last_name__icontains=query) | Q(patient_number__icontains=query) |
             Q(contact_number__icontains=query) | Q(contact_number__icontains=query_63) |
             Q(address__icontains=query) | Q(barangay__name__icontains=query)
         )
-    if barangay:
+        if is_admin:
+            patients_qs = patients_qs.annotate(matches_registration=Exists(
+                PreRegistration.objects.filter(
+                    converted_patient_id=OuterRef('pk'),
+                    pre_registration_number__icontains=query,
+                )
+            ))
+            search |= Q(matches_registration=True)
+        patients_qs = patients_qs.filter(search)
+    if barangay and not is_admin:
         patients_qs = patients_qs.filter(barangay_id=barangay)
 
     # Access control (RBAC): doctors only see their own patients + unassigned cases.
@@ -119,9 +207,21 @@ def patient_list(request):
         ),
     )
 
-    paginator = Paginator(patients_qs.order_by('-created_at'), 20)
-    page = paginator.get_page(request.GET.get('page'))
     barangays = Barangay.objects.filter(is_active=True)
+    if is_admin:
+        page = _admin_patient_page(request, patients_qs, query, barangay_name)
+        barangays = list(barangays.values('id', 'name'))
+        known_names = {item['name'].casefold() for item in barangays}
+        online_names = PreRegistration.objects.filter(
+            is_archived=False, converted_patient__isnull=True,
+        ).order_by('barangay').values_list('barangay', flat=True).distinct()
+        for name in online_names:
+            if name and name.casefold() not in known_names:
+                barangays.append({'id': 'online:' + name, 'name': name})
+                known_names.add(name.casefold())
+    else:
+        paginator = Paginator(patients_qs.order_by('-created_at'), 20)
+        page = paginator.get_page(request.GET.get('page'))
 
     # "View on Live": attach the patient's current active, claimable case for doctors.
     if is_doctor:
@@ -1352,16 +1452,25 @@ def patient_vital_create(request, pk):
 
 @login_required
 def patient_vital_form_print(request, pk):
-    """Official blank A4 Vital Signs Form for manual recording — admin only.
+    """Official A4 Vital Signs Form rendered from the latest saved record — admin only.
 
-    Read-only by design: it renders an empty writable form for the selected
-    patient and never creates, pre-fills, or modifies any VitalSign record, so
-    printing is safe even before any measurement has been taken.
+    Read-only by design: it shows the values from the single most recent
+    VitalSign encounter (blank boxes when a field was not measured) and never
+    creates, duplicates, or modifies a VitalSign record, so printing is safe
+    before or after any measurement.
     """
     if getattr(request.user, 'role', '') != 'admin':
         raise PermissionDenied('Only the System Administrator can print vital signs forms.')
     patient = get_object_or_404(Patient.objects.select_related('barangay'), pk=pk)
-    return render(request, 'patients/vital_form_print.html', {'patient': patient})
+    latest_vitals = patient.get_latest_vitals()
+    # The assessment row shows the date of the same saved encounter; it stays
+    # blank when no vitals have been recorded yet.
+    assessment_date = latest_vitals.taken_at if latest_vitals else None
+    return render(request, 'patients/vital_form_print.html', {
+        'patient': patient,
+        'vital': latest_vitals,
+        'assessment_date': assessment_date,
+    })
 
 
 @login_required

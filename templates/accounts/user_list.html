@@ -32,8 +32,8 @@
                     <td class="table-cell"><span class="status-badge {% if user_obj.is_active %}status-active{% else %}status-inactive{% endif %}">{{ user_obj.is_active|yesno:'Active,Inactive' }}</span></td>
                     <td class="table-cell text-muted">{{ user_obj.date_joined|date:'M d, Y' }}</td>
                     <td class="table-cell text-right">
-                        <div class="flex justify-end gap-1">
-                            <a href="{% url 'accounts:user_edit' user_obj.pk %}" class="btn-secondary btn-xs">Edit</a>
+                        <div class="flex justify-end items-center gap-1">
+                            <a href="{% url 'accounts:user_detail' user_obj.pk %}" class="btn-view"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/><circle cx="12" cy="12" r="3" stroke-width="2"/></svg>View</a>
                             <a href="{% url 'accounts:user_toggle_active' user_obj.pk %}" class="{% if user_obj.is_active %}btn-danger{% else %}btn-success{% endif %} btn-xs" onclick="return confirm('Are you sure?')">{{ user_obj.is_active|yesno:'Deactivate,Activate' }}</a>
                         </div>
                     </td>

@@ -6,7 +6,10 @@
   <title>Patient Vaccination Schedule — {{ patient.full_name }}</title>
   <link rel="stylesheet" href="{% static 'css/print_official.css' %}">
   <style>
-    @page { size: A4 portrait; margin: 15mm; }
+    @page { size: A4 portrait; margin: 8mm; }
+    @media print {
+      .abtc-doc { padding: 5mm 6mm; }
+    }
   </style>
 </head>
 <body class="abtc-print-body">

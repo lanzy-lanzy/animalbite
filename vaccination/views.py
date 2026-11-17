@@ -5,9 +5,9 @@ from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Q, OuterRef, Subquery, Min
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 from datetime import date, timedelta, datetime
 import logging
 import re
@@ -16,6 +16,7 @@ from .models import VaccinationSchedule, VaccineDose, FollowUpRecord, AnimalObse
 from .forms import VaccinationScheduleForm, VaccineDoseForm, FollowUpRecordForm, AnimalObservationForm
 from .schedule_utils import prescribed_minimum_date
 from bite_cases.models import AnimalBiteCase
+from patients.models import Patient
 from audit.models import AuditLog
 
 logger = logging.getLogger(__name__)
@@ -347,6 +348,11 @@ def patient_schedule_list(request):
     paginator = Paginator(patients, 12)
     page = paginator.get_page(request.GET.get('page'))
 
+    from vaccination.missed_appointments import missed_dose_counts_by_patient
+    missed_counts = missed_dose_counts_by_patient()
+    for p in page.object_list:
+        p.missed_dose_count = missed_counts.get(p.pk, 0)
+
     barangays = Barangay.objects.filter(is_active=True).order_by('name')
 
     return render(request, 'vaccination/patient_schedule_list.html', {
@@ -516,6 +522,17 @@ def _sms_failure_reason(log):
     raw = (log.api_response or '').strip()
     if not raw:
         return ''
+    import json
+    from django.conf import settings
+    try:
+        attempts = json.loads(raw)
+        if isinstance(attempts, list) and attempts and isinstance(attempts[-1], dict):
+            raw = attempts[-1].get('error') or raw
+    except ValueError:
+        pass
+    key = getattr(settings, 'SEMAPHORE_API_KEY', '')
+    if key:
+        raw = raw.replace(key, '[hidden]')
     sanitized = _SENSITIVE_SMS_RE.sub(r'\1: [hidden]', raw)
     sanitized = re.sub(r'(?i)semaphore', 'SMS provider', sanitized)
     first_line = next((line.strip() for line in sanitized.splitlines() if line.strip()), '')
@@ -663,81 +680,349 @@ def _build_upcoming_reminders(request, today):
     return doses, upcoming_filter, links
 
 
+def _sms_dose_positions(doses):
+    positions = {}
+    schedule_positions = {}
+    for dose in doses:
+        position = schedule_positions.get(dose.schedule_id, 0) + 1
+        schedule_positions[dose.schedule_id] = position
+        suffix = 'th'
+        if position % 100 not in (11, 12, 13):
+            suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(position % 10, 'th')
+        positions[dose.pk] = f'{position}{suffix} Dose'
+    return positions
+
+
+def _sms_patient_search_match(
+        query, patient, cases, doses, latest_by_dose, patient_logs):
+    if not query:
+        return True
+    keyword = ' '.join(query.casefold().split())
+    patient_values = [
+        patient.full_name(),
+        patient.patient_number,
+        patient.contact_number,
+        patient.contact_display,
+    ]
+    for case in cases:
+        patient_values.extend([
+            case.case_number,
+            case.get_case_status_display(),
+        ])
+    for dose in doses:
+        patient_values.extend([
+            dose.number_label,
+            dose.scheduled_date.strftime('%b %d, %Y')
+            if dose.scheduled_date else '',
+            dose.scheduled_date.strftime('%B %d, %Y')
+            if dose.scheduled_date else '',
+            dose.scheduled_date.isoformat()
+            if dose.scheduled_date else '',
+            dose.scheduled_date.strftime('%m/%d/%Y')
+            if dose.scheduled_date else '',
+        ])
+        latest = latest_by_dose.get(dose.pk)
+        if latest:
+            patient_values.extend([
+                latest.get_status_display(),
+                latest.get_reminder_type_display(),
+            ])
+    for log in patient_logs:
+        patient_values.extend([
+            log.get_status_display(),
+            log.get_reminder_type_display(),
+            log.scheduled_date.strftime('%b %d, %Y')
+            if log.scheduled_date else '',
+            log.scheduled_date.strftime('%B %d, %Y')
+            if log.scheduled_date else '',
+        ])
+    return any(
+        keyword in ' '.join(str(value or '').casefold().split())
+        for value in patient_values
+    )
+
+
+def _sms_patients_for_list(request, today):
+    q = request.GET.get('q', '').strip()
+    scheduled_patient_ids = set(VaccineDose.objects.filter(
+        scheduled_date__isnull=False,
+    ).values_list('schedule__bite_case__patient_id', flat=True))
+    logged_patients = _sms_log_queryset()
+    logged_patient_ids = set(logged_patients.filter(
+        patient__isnull=False).values_list('patient_id', flat=True))
+    logged_patient_ids.update(logged_patients.filter(
+        patient__isnull=True, bite_case__isnull=False,
+    ).values_list('bite_case__patient_id', flat=True))
+    logged_patient_ids.update(logged_patients.filter(
+        patient__isnull=True, bite_case__isnull=True, dose__isnull=False,
+    ).values_list('dose__schedule__bite_case__patient_id', flat=True))
+    patient_ids = scheduled_patient_ids | logged_patient_ids
+
+    patients = list(Patient.objects.filter(
+        pk__in=patient_ids,
+    ).order_by('last_name', 'first_name', 'pk'))
+    cases = list(AnimalBiteCase.objects.filter(
+        patient_id__in=patient_ids,
+    ).select_related('patient').order_by('case_number', 'pk'))
+    cases_by_patient = {}
+    for case in cases:
+        cases_by_patient.setdefault(case.patient_id, []).append(case)
+
+    doses = list(VaccineDose.objects.filter(
+        schedule__bite_case__patient_id__in=patient_ids,
+    ).select_related(
+        'schedule__bite_case',
+    ).order_by('schedule__bite_case__case_number', 'schedule_id', 'pk'))
+    doses_by_patient = {}
+    for dose in doses:
+        patient_id = dose.schedule.bite_case.patient_id
+        doses_by_patient.setdefault(patient_id, []).append(dose)
+
+    logs = list(_sms_log_queryset().filter(
+        Q(patient_id__in=patient_ids)
+        | Q(patient__isnull=True, bite_case__patient_id__in=patient_ids)
+        | Q(patient__isnull=True, bite_case__isnull=True,
+            dose__schedule__bite_case__patient_id__in=patient_ids)
+    ).order_by('sent_at', 'pk'))
+    latest_by_dose = {}
+    latest_by_patient = {}
+    logs_by_patient = {}
+    for log in logs:
+        _decorate_sms_log(log)
+        if log.display_patient:
+            logs_by_patient.setdefault(log.display_patient.pk, []).append(log)
+        if log.dose_id:
+            latest_by_dose[log.dose_id] = log
+        if log.display_patient:
+            latest_by_patient[log.display_patient.pk] = log
+
+    rows = []
+    for patient in patients:
+        patient_cases = cases_by_patient.get(patient.pk, [])
+        patient_doses = doses_by_patient.get(patient.pk, [])
+        if not _sms_patient_search_match(
+                q, patient, patient_cases, patient_doses, latest_by_dose,
+                logs_by_patient.get(patient.pk, [])):
+            continue
+
+        upcoming = [
+            dose for dose in patient_doses
+            if dose.scheduled_date
+            and dose.dose_status in ('scheduled', 'rescheduled')
+            and dose.schedule.bite_case.case_status != 'archived'
+        ]
+        next_dose = min(
+            upcoming,
+            key=lambda dose: (
+                dose.scheduled_date < today,
+                dose.scheduled_date,
+                dose.schedule.bite_case.case_number,
+                dose.pk,
+            ),
+            default=None,
+        )
+        latest = (
+            latest_by_dose.get(next_dose.pk)
+            if next_dose else latest_by_patient.get(patient.pk)
+        )
+        status = latest.get_status_display() if latest else 'Not Sent'
+        if (
+            latest and latest.reminder_type == 'missed_appointment'
+            and latest.dose_id and latest.dose.actual_date is None
+            and latest.dose.appointment_status(today=today) == 'missed'
+            and latest.scheduled_date == latest.dose.scheduled_date
+        ):
+            if latest.status == 'sent':
+                status = 'Missed – SMS Sent'
+            elif latest.status == 'failed':
+                status = 'Missed – SMS Failed'
+        rows.append({
+            'patient': patient,
+            'next_dose': next_dose,
+            'next_case': next_dose.schedule.bite_case if next_dose else None,
+            'reminder_status': status,
+            'latest_log': latest,
+        })
+
+    for index, row in enumerate(rows, start=1):
+        row['number'] = index
+    return rows, q
+
+
 @login_required
 def sms_log_list(request):
-    """SMS reminder history shared by the Admin and Nurse portals."""
+    """Patient-based SMS reminder list shared by Admin and Nurse portals."""
     if getattr(request.user, 'role', '') not in SMS_LOG_ROLES:
         return _sms_logs_denied(request)
 
-    q = request.GET.get('q', '').strip()
-    reminder_type = request.GET.get('type', '')
-    status = request.GET.get('status', '')
-    scheduled = request.GET.get('scheduled', '')
-    date_from = request.GET.get('from', '')
-    date_to = request.GET.get('to', '')
-
     base = _sms_log_queryset()
-    logs = base
-    if q:
-        logs = logs.filter(
-            Q(recipient__icontains=q)
-            | Q(patient__first_name__icontains=q)
-            | Q(patient__last_name__icontains=q)
-            | Q(patient__patient_number__icontains=q)
-            | Q(bite_case__case_number__icontains=q)
-            | Q(bite_case__patient__first_name__icontains=q)
-            | Q(bite_case__patient__last_name__icontains=q)
-            | Q(dose__schedule__bite_case__case_number__icontains=q)
-            | Q(message__icontains=q)
-        )
-    if reminder_type:
-        logs = logs.filter(reminder_type=reminder_type)
-    if status:
-        logs = logs.filter(status=status)
-    if scheduled:
-        try:
-            logs = logs.filter(scheduled_date=date.fromisoformat(scheduled))
-        except ValueError:
-            scheduled = ''
-    if date_from:
-        try:
-            d = datetime.strptime(date_from, '%Y-%m-%d').date()
-            logs = logs.filter(sent_at__date__gte=d)
-        except ValueError:
-            pass
-    if date_to:
-        try:
-            d = datetime.strptime(date_to, '%Y-%m-%d').date()
-            logs = logs.filter(sent_at__date__lte=d)
-        except ValueError:
-            pass
+    patients, q = _sms_patients_for_list(request, timezone.localdate())
+    paginator = Paginator(patients, 25)
+    page = paginator.get_page(request.GET.get('page'))
 
-    logs = logs.order_by('-sent_at')
     total = base.count()
     sent = base.filter(status='sent').count()
     queued = base.filter(status='queued').count()
     failed = base.filter(status='failed').count()
 
-    paginator = Paginator(logs, 20)
-    page = paginator.get_page(request.GET.get('page'))
-    for log in page:
-        _decorate_sms_log(log)
-
-    params = request.GET.copy()
-    params.pop('page', None)
-    today = timezone.localdate()
-    upcoming_doses, upcoming_filter, upcoming_links = _build_upcoming_reminders(request, today)
     return render(request, 'vaccination/sms_log_list.html', {
-        'logs': page, 'page_obj': page,
-        'q': q, 'reminder_type': reminder_type, 'status': status,
-        'scheduled': scheduled,
-        'date_from': date_from, 'date_to': date_to,
+        'patients': page, 'page_obj': page, 'q': q,
         'total': total, 'queued': queued, 'sent': sent, 'failed': failed,
-        'querystring': params.urlencode(),
+        'querystring': request.GET.copy().urlencode(),
         'can_send_due': _may_manage_vaccination(request.user),
-        'upcoming_doses': upcoming_doses,
-        'upcoming_filter': upcoming_filter,
-        'upcoming_links': upcoming_links,
+        'can_send_manual': getattr(request.user, 'role', '') == 'nurse',
+    })
+
+
+@login_required
+def sms_patient_detail(request, patient_pk):
+    if getattr(request.user, 'role', '') not in SMS_LOG_ROLES:
+        return _sms_logs_denied(request)
+
+    patient = get_object_or_404(Patient, pk=patient_pk)
+    cases = list(AnimalBiteCase.objects.filter(
+        patient=patient,
+    ).select_related('created_by').prefetch_related(
+        'vaccination_schedule__doses',
+    ).order_by('case_number', 'pk'))
+    dose_ids = [
+        dose.pk
+        for case in cases
+        for dose in (
+            list(case.vaccination_schedule.doses.all())
+            if hasattr(case, 'vaccination_schedule') else []
+        )
+    ]
+    candidate_logs = _sms_log_queryset().filter(
+        Q(patient=patient)
+        | Q(patient__isnull=True, bite_case__patient=patient)
+        | Q(patient__isnull=True, bite_case__isnull=True,
+            dose_id__in=dose_ids)
+    ).order_by('-sent_at', '-pk')
+    logs = []
+    for log in candidate_logs:
+        _decorate_sms_log(log)
+        if not log.display_patient or log.display_patient.pk != patient.pk:
+            continue
+        if log.display_case and log.display_case.patient_id != patient.pk:
+            continue
+        if (
+            log.dose
+            and log.dose.schedule.bite_case.patient_id != patient.pk
+        ):
+            continue
+        log.display_reminder_type = {
+            'schedule_set': 'Schedule Confirmation',
+            '3days_before': 'Advance Reminder',
+            'on_day': 'Appointment Day Reminder',
+            'missed_appointment': 'Automatic Missed Appointment Reminder',
+        }.get(log.reminder_type, 'Manual Reminder')
+        log.failure_reason = _sms_failure_reason(log) if log.status in ('failed', 'unknown', 'skipped') else ''
+        logs.append(log)
+
+    latest_by_event = {}
+    for log in reversed(logs):
+        if log.dose_id:
+            key = (log.dose_id, log.scheduled_date, log.reminder_type == 'missed_appointment')
+            existing = latest_by_event.get(key)
+            if not key[2] or not existing or existing.status != 'sent':
+                latest_by_event[key] = log
+
+    all_doses = [
+        dose
+        for case in cases
+        for dose in (
+            list(case.vaccination_schedule.doses.all())
+            if hasattr(case, 'vaccination_schedule') else []
+        )
+    ]
+    eligible_doses = []
+    eligible_cases = []
+    manual_mobile = ''
+    if getattr(request.user, 'role', '') == 'nurse':
+        from .sms import (
+            build_reminder_message, normalize_ph_number,
+        )
+        from utils.phone import format_display_09
+        today = timezone.localdate()
+        positions = _sms_dose_positions(sorted(
+            all_doses, key=lambda dose: (dose.schedule_id, dose.pk)))
+        first_doses = {
+            schedule.pk: schedule.doses.order_by('pk').values_list(
+                'pk', flat=True).first()
+            for schedule in {
+                dose.schedule for dose in all_doses
+            }
+        }
+        for value in (
+                patient.contact_number, patient.emergency_contact_number,
+                getattr(getattr(patient, 'account', None), 'mobile', '')):
+            normalized = normalize_ph_number(value) if value else None
+            if normalized:
+                manual_mobile = format_display_09(normalized)
+                break
+        if manual_mobile:
+            for dose in all_doses:
+                case = dose.schedule.bite_case
+                if (
+                    dose.pk != first_doses[dose.schedule_id]
+                    and dose.scheduled_date
+                    and dose.scheduled_date >= today
+                    and dose.dose_status in ('scheduled', 'rescheduled')
+                    and case.case_status != 'archived'
+                ):
+                    days = (dose.scheduled_date - today).days
+                    eligible_doses.append({
+                        'dose': dose,
+                        'case': case,
+                        'label': positions[dose.pk],
+                        'days': days,
+                        'preview_now': build_reminder_message(
+                            patient, case, dose, 'manual_immediate'),
+                        'preview_2days': build_reminder_message(
+                            patient, case, dose, 'manual_2days_before'),
+                        'preview_1day': build_reminder_message(
+                            patient, case, dose, 'manual_1day_before'),
+                        'custom_prefix': (
+                            f'ABTC Dumingag: Paalala para kay '
+                            f'{patient.full_name()} ({case.case_number}) - '
+                            f'{positions[dose.pk]} sa '
+                            f'{dose.scheduled_date:%b %d, %Y (%a)}. '
+                        ),
+                        'custom_suffix': ' -ABTC Dumingag',
+                    })
+        eligible_cases = list({
+            item['case'].pk: item['case']
+            for item in eligible_doses
+        }.values())
+
+    positions = _sms_dose_positions(sorted(
+        all_doses, key=lambda dose: (dose.schedule_id, dose.pk)))
+    for case in cases:
+        case.sms_doses = (
+            list(case.vaccination_schedule.doses.all())
+            if hasattr(case, 'vaccination_schedule') else []
+        )
+        for dose in case.sms_doses:
+            dose.sms_number_label = positions[dose.pk]
+            is_missed = dose.appointment_status() == 'missed'
+            latest = latest_by_event.get((dose.pk, dose.scheduled_date, is_missed))
+            dose.sms_reminder_status = (
+                latest.get_status_display() if latest else ('Pending' if is_missed else 'Not Sent'))
+            dose.sms_reminder_status_code = (
+                latest.status if latest else ('pending' if is_missed else 'not_sent'))
+            if is_missed and latest and latest.status == 'sent':
+                dose.sms_reminder_status = 'Missed Reminder Sent'
+
+    return render(request, 'vaccination/sms_patient_detail.html', {
+        'patient': patient,
+        'cases': cases,
+        'logs': logs,
+        'has_schedules': bool(all_doses),
+        'eligible_doses': eligible_doses,
+        'eligible_cases': eligible_cases,
+        'can_send_manual': getattr(request.user, 'role', '') == 'nurse',
+        'manual_mobile': manual_mobile,
     })
 
 
@@ -751,7 +1036,7 @@ def sms_log_detail(request, pk):
     _decorate_sms_log(log)
     return render(request, 'vaccination/sms_log_detail.html', {
         'log': log,
-        'failure_reason': _sms_failure_reason(log) if log.status == 'failed' else '',
+        'failure_reason': _sms_failure_reason(log) if log.status in ('failed', 'unknown', 'skipped') else '',
         'can_send_due': _may_manage_vaccination(request.user),
     })
 
@@ -770,7 +1055,7 @@ def _manual_send_error(message, status=400):
 @require_POST
 def sms_manual_send(request, pk):
     """Send an additional manual reminder for one upcoming dose."""
-    if not _may_manage_vaccination(request.user):
+    if not _may_send_manual_sms(request.user):
         return _manual_send_error('Not authorized to send SMS reminders.', status=403)
 
     dose = get_object_or_404(
@@ -857,10 +1142,15 @@ def sms_manual_send(request, pk):
         messages.error(request, 'SMS reminder could not be sent. Please check the number and try again.')
     else:
         messages.info(request, 'SMS reminder is being processed.')
+    return_to_patient = request.POST.get('return_to_patient', '')
+    redirect_url = reverse('vaccination:sms_log_list')
+    if return_to_patient.isdigit() and int(return_to_patient) == patient.pk:
+        redirect_url = reverse(
+            'vaccination:sms_patient_detail', args=[patient.pk])
     return JsonResponse({
         'ok': True,
         'status': log.status,
-        'redirect': reverse('vaccination:sms_log_list'),
+        'redirect': redirect_url,
     })
 
 
@@ -1134,7 +1424,12 @@ def _may_manage_vaccination(user):
     return getattr(user, 'role', '') in VACCINATION_MANAGER_ROLES
 
 
+def _may_send_manual_sms(user):
+    return getattr(user, 'role', '') == 'nurse'
+
+
 @login_required
+@require_GET
 def assessment_detail(request, pk):
     """Doctor's saved assessment only — no patient, case, or vitals sections.
 
@@ -1156,6 +1451,24 @@ def assessment_detail(request, pk):
         return redirect('dashboard:index')
 
     bite_case = schedule.bite_case
+    if role == 'nurse':
+        if bite_case.is_archived:
+            raise Http404
+        from doctor.models import ClinicalAssessment
+
+        get_object_or_404(
+            ClinicalAssessment.objects.filter(
+                bite_case=bite_case,
+                assessed_by__role='doctor',
+                is_finalized=True,
+                status='final',
+                finalized_at__isnull=False,
+            )
+            .exclude(chief_complaint='')
+            .exclude(exposure_narrative='')
+            .exclude(category_confirmed='')
+            .exclude(treatment_plan=''),
+        )
     context = build_record_context(bite_case)
     context.update({
         'schedule': schedule,
@@ -1165,22 +1478,24 @@ def assessment_detail(request, pk):
     return render(request, 'vaccination/record_detail.html', context)
 
 
-def _dose_rows_for_management(schedule, assessment_is_final):
+def _dose_rows_for_management(schedule, assessment_is_final, today):
     ordinals = ('1st', '2nd', '3rd', '4th', '5th')
     rows = []
     for index, dose in enumerate(schedule.doses.all(), start=1):
         ordinal = ordinals[index - 1] if index <= len(ordinals) else f'{index}th'
-        can_schedule = index > 1 and dose.dose_status not in ('completed', 'cancelled')
-        can_administer = (
-            assessment_is_final
-            and dose.dose_status not in ('completed', 'cancelled')
-        )
+        status = dose.appointment_status(today=today)
+        can_schedule = index > 1 and status not in ('completed', 'cancelled')
+        can_administer = assessment_is_final and status not in ('completed', 'cancelled')
+        is_missed = status == 'missed'
         rows.append({
             'dose': dose,
             'label': f'{ordinal} Dose',
             'expected_date': dose.expected_date(),
             'can_schedule': can_schedule,
             'can_administer': can_administer,
+            'is_missed': is_missed,
+            'status_label': dict(VaccineDose.DOSE_STATUS)[status],
+            'status_class': status,
         })
     return rows
 
@@ -1250,6 +1565,15 @@ def nurse_schedule_manage(request, pk):
         )
     )
 
+    from zoneinfo import ZoneInfo
+    today = timezone.localdate(timezone=ZoneInfo('Asia/Manila'))
+    dose_rows = _dose_rows_for_management(schedule, assessment_is_final, today)
+    missed_count = sum(1 for row in dose_rows if row['is_missed'])
+    missed_doses = [
+        {'label': row['label'], 'date': row['dose'].scheduled_date}
+        for row in dose_rows if row['is_missed']
+    ]
+
     return render(request, 'vaccination/nurse_manage.html', {
         'schedule': schedule,
         'bite_case': bite_case,
@@ -1257,14 +1581,16 @@ def nurse_schedule_manage(request, pk):
         'assessment': assessment,
         'assessment_is_final': assessment_is_final,
         'prescriptions': prescriptions,
-        'dose_rows': _dose_rows_for_management(schedule, assessment_is_final),
+        'dose_rows': dose_rows,
         'total': total,
         'completed': completed,
         'progress': int((completed / total * 100) if total else 0),
         'prescribed_vaccine': prescribed_vaccine,
         'dose_schedule_label': dose_schedule_label,
         'rig_schedule_review': rig_schedule_review,
-        'today': timezone.localdate(),
+        'missed_count': missed_count,
+        'missed_doses': missed_doses,
+        'today': today,
     })
 
 

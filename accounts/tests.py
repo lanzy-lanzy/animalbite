@@ -169,7 +169,6 @@ class AdminSidebarTests(TestCase):
     LABELS = [
         "Dashboard",
         "Register Patient",
-        "Online Registration",
         "Patients",
         "Bite Cases",
         "Vaccination Records",
@@ -179,14 +178,12 @@ class AdminSidebarTests(TestCase):
         "Medicine Inventory",
         "Reports",
         "Users",
-        "Settings",
         "Audit Trail",
     ]
 
     ROUTES = {
         "Dashboard": "dashboard:index",
         "Register Patient": "patients:patient_create",
-        "Online Registration": "pre_registrations:staff_list",
         "Patients": "patients:patient_list",
         "Bite Cases": "bite_cases:case_list",
         "Vaccination Records": "vaccination:patient_schedule_list",
@@ -195,7 +192,6 @@ class AdminSidebarTests(TestCase):
         "Medicine Inventory": "inventory:medicine_list",
         "Reports": "reports:reports_index",
         "Users": "accounts:user_list",
-        "Settings": "settings_app:settings_list",
         "Audit Trail": "audit:audit_list",
     }
 
@@ -208,6 +204,43 @@ class AdminSidebarTests(TestCase):
         nav = self._nav()
         for label, route in self.ROUTES.items():
             self.assertIn(f'href="{reverse(route)}"', nav, label)
+
+    def test_online_registration_menu_hidden_but_patients_badge_and_route_remain(self):
+        from datetime import date
+
+        from django.utils import timezone
+
+        from pre_registrations.models import PreRegistration
+
+        PreRegistration.objects.create(
+            first_name="Pending", last_name="Nav", contact_number="09175550001",
+            birthdate=date(1990, 1, 1), bite_datetime=timezone.now(),
+        )
+        nav = self._nav()
+        self.assertNotIn("Online Registration", nav)
+        self.assertNotIn(f'href="{reverse("pre_registrations:staff_list")}"', nav)
+        patient_link = nav.split(f'href="{reverse("patients:patient_list")}"', 1)[1].split("</a>", 1)[0]
+        self.assertIn("<span>Patients</span>", patient_link)
+        self.assertIn('aria-label="1 pending online registration"', patient_link)
+        self.assertIn("background:#DC3545", patient_link)
+        response = self.client.get(reverse("pre_registrations:staff_list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'href="{reverse("patients:patient_list")}" class="sidebar-link active"')
+
+    def test_settings_is_hidden_from_the_sidebar_but_still_admin_only(self):
+        nav = self._nav()
+        self.assertNotIn("Settings", nav)
+        self.assertNotIn(f'href="{reverse("settings_app:settings_list")}"', nav)
+        self.assertNotIn("M10.325 4.317", nav)
+        self.assertLess(nav.index("Users"), nav.index("Audit Trail"))
+        self.assertEqual(
+            self.client.get(reverse("settings_app:settings_list")).status_code, 200)
+
+        nurse = self.User.objects.create_user(
+            "nurse.settings", password="pw12345678", role="nurse")
+        self.client.force_login(nurse)
+        self.assertNotEqual(
+            self.client.get(reverse("settings_app:settings_list")).status_code, 200)
 
     def test_category_headings_are_removed(self):
         nav = self._nav()
@@ -268,7 +301,7 @@ class AdminSidebarTests(TestCase):
         for route, label in (
             (reverse("patients:patient_detail", args=[patient.pk]), "Patients"),
             (reverse("bite_cases:case_detail", args=[case.pk]), "Bite Cases"),
-            (reverse("pre_registrations:staff_detail", args=[registration.pk]), "Online Registration"),
+            (reverse("pre_registrations:staff_detail", args=[registration.pk]), "Patients"),
         ):
             with self.subTest(page=label):
                 html = self.client.get(route).content.decode()
@@ -328,8 +361,8 @@ class NurseSidebarTests(TestCase):
 
     LABELS = [
         "Dashboard",
-        "View Patient Records",
-        "View Doctor Findings",
+        "Patient Records",
+        "Doctor Findings",
         "Administer Vaccine",
         "SMS Reminders",
         "Inventory",
@@ -361,8 +394,8 @@ class NurseSidebarTests(TestCase):
         nav = self._nav(self._page())
         expected = {
             "Dashboard": reverse("nurse:dashboard"),
-            "View Patient Records": reverse("patients:patient_list"),
-            "View Doctor Findings": reverse("bite_cases:case_list"),
+            "Patient Records": reverse("patients:patient_list"),
+            "Doctor Findings": reverse("nurse:doctor_finding_list"),
             "Administer Vaccine": reverse("vaccination:patient_schedule_list"),
             "SMS Reminders": reverse("vaccination:sms_log_list"),
             "Vaccine Inventory": reverse("inventory:vaccine_list"),
@@ -406,6 +439,19 @@ class NurseSidebarTests(TestCase):
                     f'<a href="{reverse(active)}" class="sidebar-link active"', nav)
                 self.assertNotIn(
                     f'<a href="{reverse(inactive)}" class="sidebar-link active"', nav)
+
+    def test_section_heading_and_description_are_hidden_but_branding_stays(self):
+        html = self._page()
+        nav = self._nav(html)
+        self.assertNotIn("Nurse Portal", nav)
+        self.assertNotIn("Vaccination care", nav)
+        self.assertNotIn("View Patient Records", nav)
+        self.assertNotIn("text-gold-700 uppercase tracking-widest", nav)
+        self.assertTrue(nav.split(">", 1)[1].lstrip().startswith(
+            '<a href="%s"' % reverse("nurse:dashboard")))
+        brand = html[html.index('class="sidebar-brand-title'):html.index("<nav")]
+        self.assertIn("Nurse Portal", brand)
+        self.assertIn("Vaccination Care · ABTC", brand)
 
     def test_hidden_links_are_not_in_the_sidebar(self):
         nav = self._nav(self._page())
@@ -750,3 +796,344 @@ class PatientPortalTests(TestCase):
                 self.assertNotIn("patient_portal.css", html)
                 self.assertNotIn("sidebar-shell--patient", html)
                 self.assertNotIn("topbar--patient", html)
+
+
+class UserManagementViewTests(TestCase):
+    def setUp(self):
+        from datetime import date
+
+        from patients.models import Patient
+
+        User = get_user_model()
+        self.admin = User.objects.create_user(
+            "um.admin", password="Admin-Pass-2026!", role="admin")
+        self.account = User.objects.create_user(
+            "frankcapote", password="Patient-Pass-2026!", role="patient",
+            first_name="Frank", last_name="Capote",
+            email="frankcapote@abtc.local")
+        self.patient = Patient.objects.create(
+            patient_number="PAT-00004", account=self.account,
+            first_name="Frank", middle_name="L", last_name="Capote",
+            suffix="Jr.", birthdate=date(1990, 1, 1), sex="male",
+            contact_number="09170000000", address="Caridad",
+            created_by=self.admin)
+        self.nurse = User.objects.create_user(
+            "um.nurse", password="Nurse-Pass-2026!", role="nurse",
+            first_name="Nora", last_name="Nurse")
+        self.client.force_login(self.admin)
+
+    def test_list_offers_view_instead_of_edit_and_keeps_toggle(self):
+        html = self.client.get(reverse("accounts:user_list")).content.decode()
+        for user in (self.admin, self.account, self.nurse):
+            url = reverse("accounts:user_detail", args=[user.pk])
+            self.assertIn('<a href="%s" class="btn-view"><svg' % url, html)
+            self.assertNotIn(reverse("accounts:user_edit", args=[user.pk]), html)
+            self.assertIn(reverse("accounts:user_toggle_active", args=[user.pk]), html)
+        self.assertNotIn(">Edit<", html)
+        self.assertIn("Deactivate", html)
+
+    def test_patient_details_show_real_account_values(self):
+        response = self.client.get(
+            reverse("accounts:user_detail", args=[self.account.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "User Account Details")
+        for value in ("Frank L Capote Jr.", "PAT-00004", "frankcapote",
+                      "frankcapote@abtc.local", "Patient", "Active",
+                      self.account.date_joined.strftime("%b %d, %Y"),
+                      "http://testserver" + reverse("accounts:login"),
+                      "Hidden for Security"):
+            self.assertContains(response, value)
+        self.assertNotContains(response, self.account.password)
+        self.assertNotContains(response, "pbkdf2_")
+        self.assertContains(
+            response, 'action="%s"' % reverse(
+                "accounts:user_reset_password", args=[self.account.pk]))
+        self.assertContains(response, "Reset Password")
+        self.assertContains(response, reverse("accounts:user_list"))
+
+    def test_staff_details_omit_patient_only_items(self):
+        response = self.client.get(
+            reverse("accounts:user_detail", args=[self.nurse.pk]))
+        self.assertContains(response, "Nora Nurse")
+        self.assertContains(response, "Hidden for Security")
+        self.assertNotContains(response, "Patient ID")
+        self.assertNotContains(response, "Patient Portal Login URL")
+        self.assertNotContains(response, "Reset Password</button>")
+
+    def test_non_admin_cannot_open_details(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(
+            reverse("accounts:user_detail", args=[self.account.pk]))
+        self.assertNotEqual(response.status_code, 200)
+        self.assertNotContains(response, "PAT-00004", status_code=response.status_code)
+
+
+class PatientCredentialManagementTests(TestCase):
+    def setUp(self):
+        from datetime import date
+
+        from patients.models import Patient
+
+        self.User = get_user_model()
+        self.admin = self.User.objects.create_user(
+            "cred.admin", password="Admin-Pass-2026!", role="admin")
+        self.nurse = self.User.objects.create_user(
+            "cred.nurse", password="Nurse-Pass-2026!", role="nurse")
+        self.account = self.User.objects.create_user(
+            "juan.patient", password="Old-Patient-Pass-1", role="patient",
+            first_name="Juan", last_name="Dela Cruz")
+        self.patient = Patient.objects.create(
+            patient_number="PAT-00077", account=self.account,
+            first_name="Juan", last_name="Dela Cruz", birthdate=date(1991, 2, 3),
+            sex="male", contact_number="09170000077", address="Caridad",
+            created_by=self.admin)
+        self.reset_url = reverse("accounts:user_reset_password", args=[self.account.pk])
+
+    def _reset(self):
+        self.client.force_login(self.admin)
+        return self.client.post(self.reset_url)
+
+    def test_detail_confirmation_identifies_the_patient(self):
+        self.client.force_login(self.admin)
+        html = self.client.get(
+            reverse("accounts:user_detail", args=[self.account.pk])).content.decode()
+        self.assertIn("Reset the portal password for Juan Dela Cruz (Patient ID PAT-00077), "
+                      "username juan.patient?", html)
+        self.assertNotIn("Copy Temporary Password", html)
+
+    def test_reset_hashes_a_new_password_and_shows_it_once(self):
+        old_hash = self.account.password
+        response = self._reset()
+        self.assertEqual(response.status_code, 200)
+        temp = response.context["temp_password"]
+        self.assertEqual(len(temp), 10)
+        self.assertContains(response, f'<code class="uad-temp__value" id="uad-temp-value">{temp}</code>')
+        self.assertContains(response, "Copy Temporary Password")
+        self.assertIn("no-store", response["Cache-Control"])
+
+        self.account.refresh_from_db()
+        self.assertNotEqual(self.account.password, old_hash)
+        self.assertNotEqual(self.account.password, temp)
+        self.assertTrue(self.account.password.startswith(("pbkdf2_", "argon2", "bcrypt")))
+        self.assertTrue(self.account.check_password(temp))
+        self.assertFalse(self.account.check_password("Old-Patient-Pass-1"))
+        self.assertTrue(self.account.must_change_password)
+        self.assertNotContains(response, self.account.password)
+
+        later = self.client.get(reverse("accounts:user_detail", args=[self.account.pk]))
+        self.assertNotContains(later, temp)
+        self.assertNotContains(later, "Copy Temporary Password")
+        for value in self.client.session.values():
+            self.assertNotIn(temp, str(value))
+
+    def test_reset_is_audited_without_the_password(self):
+        from audit.models import AuditLog
+
+        temp = self._reset().context["temp_password"]
+        log = AuditLog.objects.get(action="RESET_PATIENT_PASSWORD")
+        self.assertEqual((log.user, log.target_type, log.target_id),
+                         (self.admin, "patient", self.patient.pk))
+        self.assertIn("PAT-00077", log.description)
+        self.assertIn("juan.patient", log.description)
+        for entry in AuditLog.objects.all():
+            self.assertNotIn(temp, entry.description)
+
+    def test_reset_requires_admin_post_and_patient_role(self):
+        self.client.force_login(self.admin)
+        self.assertEqual(self.client.get(self.reset_url).status_code, 405)
+        staff_url = reverse("accounts:user_reset_password", args=[self.nurse.pk])
+        self.assertEqual(self.client.post(staff_url).status_code, 403)
+
+        self.client.force_login(self.nurse)
+        self.assertNotEqual(self.client.post(self.reset_url).status_code, 200)
+        self.client.logout()
+        self.assertEqual(self.client.post(self.reset_url).status_code, 302)
+        self.account.refresh_from_db()
+        self.assertTrue(self.account.check_password("Old-Patient-Pass-1"))
+        self.assertFalse(self.account.must_change_password)
+
+    def test_reset_rejects_requests_without_csrf_token(self):
+        from django.test import Client
+
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.admin)
+        self.assertEqual(client.post(self.reset_url).status_code, 403)
+        self.account.refresh_from_db()
+        self.assertTrue(self.account.check_password("Old-Patient-Pass-1"))
+
+    def test_patient_must_change_temporary_password_at_next_login(self):
+        temp = self._reset().context["temp_password"]
+        self.client.logout()
+        login = self.client.post(reverse("accounts:login"),
+                                 {"username": "juan.patient", "password": temp}, follow=True)
+        self.assertRedirects(login, reverse("accounts:change_password"))
+        self.assertContains(login, "Password change required")
+        self.assertContains(login, 'href="%s" class="btn-secondary' % reverse("accounts:logout"))
+        self.assertRedirects(self.client.get(reverse("accounts:patient_portal")),
+                             reverse("accounts:change_password"))
+        self.assertRedirects(self.client.get(reverse("accounts:profile")),
+                             reverse("accounts:change_password"))
+
+        url = reverse("accounts:change_password")
+        same = self.client.post(url, {"old_password": temp, "new_password1": temp,
+                                      "new_password2": temp})
+        self.assertTrue(same.context["form"].errors["new_password1"])
+
+        done = self.client.post(url, {"old_password": temp, "new_password1": "Juan-New-Pass-2027!",
+                                      "new_password2": "Juan-New-Pass-2027!"})
+        self.assertRedirects(done, reverse("accounts:profile"), fetch_redirect_response=False)
+        self.account.refresh_from_db()
+        self.assertFalse(self.account.must_change_password)
+        self.assertTrue(self.account.check_password("Juan-New-Pass-2027!"))
+        self.assertEqual(self.client.get(reverse("accounts:patient_portal")).status_code, 200)
+
+    def test_creating_a_patient_account_shows_generated_password_once(self):
+        self.client.force_login(self.admin)
+        response = self.client.post(reverse("accounts:user_create"), {
+            "username": "new.patient", "first_name": "Ana", "last_name": "Reyes",
+            "email": "", "mobile": "", "role": "patient",
+            "password1": "", "password2": ""})
+        self.assertEqual(response.status_code, 200)
+        temp = response.context["temp_password"]
+        self.assertContains(response, "initial temporary password")
+        self.assertContains(response, temp)
+        self.assertIn("no-store", response["Cache-Control"])
+        user = self.User.objects.get(username="new.patient")
+        self.assertTrue(user.check_password(temp))
+        self.assertNotEqual(user.password, temp)
+        self.assertTrue(user.must_change_password)
+        later = self.client.get(reverse("accounts:user_detail", args=[user.pk]))
+        self.assertNotContains(later, temp)
+
+    def test_staff_accounts_still_require_a_password_and_skip_the_reveal(self):
+        self.client.force_login(self.admin)
+        url = reverse("accounts:user_create")
+        blank = self.client.post(url, {"username": "new.nurse", "role": "nurse",
+                                       "password1": "", "password2": ""})
+        self.assertEqual(blank.status_code, 200)
+        self.assertTrue(blank.context["form"].errors["password1"])
+        self.assertFalse(self.User.objects.filter(username="new.nurse").exists())
+
+        ok = self.client.post(url, {"username": "new.nurse", "role": "nurse",
+                                    "password1": "Nurse-Fresh-2027!", "password2": "Nurse-Fresh-2027!"})
+        self.assertRedirects(ok, reverse("accounts:user_list"))
+        nurse = self.User.objects.get(username="new.nurse")
+        self.assertFalse(nurse.must_change_password)
+        self.assertTrue(nurse.check_password("Nurse-Fresh-2027!"))
+
+
+class MyProfilePageTests(TestCase):
+    def setUp(self):
+        self.User = get_user_model()
+        self.admin = self.User.objects.create_user(
+            "profile.admin", password="Admin-Pass-2026!", role="admin",
+            first_name="System", last_name="Admin", email="admin@abtc.test")
+
+    def _profile(self, user):
+        self.client.force_login(user)
+        return self.client.get(reverse("accounts:profile"))
+
+    def test_header_buttons_and_sections_appear_in_order(self):
+        response = self._profile(self.admin)
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertContains(response, "View and manage your personal and account information.")
+        self.assertIn('href="%s" class="mp-btn mp-btn--edit"' % reverse("accounts:profile_edit"), html)
+        self.assertIn('href="%s" class="mp-btn mp-btn--password"' % reverse("accounts:change_password"), html)
+        labels = ["My Profile", "Edit Profile", "Change Password", "Profile Overview",
+                  "Personal Information", "First Name", "Last Name", "Email Address",
+                  "Mobile Number", "Account Information", "Username", ">Role<",
+                  "Account Status", "Date Joined"]
+        content = html[html.index('class="mp-page"'):]
+        positions = [content.index(label) for label in labels]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_each_role_sees_its_own_real_values(self):
+        users = [self.admin]
+        for role, first in (("doctor", "Dina"), ("nurse", "Nilo"), ("patient", "Pia")):
+            users.append(self.User.objects.create_user(
+                f"profile.{role}", password="Role-Pass-2026!", role=role,
+                first_name=first, last_name="Tester", mobile="09171112222"))
+        for user in users:
+            with self.subTest(role=user.role):
+                response = self._profile(user)
+                html = response.content.decode()
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(f'<div class="mp-avatar" aria-hidden="true">{user.first_name[0]}</div>', html)
+                self.assertIn(f'<h2 class="mp-name">{user.get_full_name()}</h2>', html)
+                self.assertIn(f'<span class="mp-badge mp-badge--role">{user.get_role_display()}</span>', html)
+                self.assertContains(response, "Active Account")
+                self.assertContains(response, f'<dd class="mp-value">{user.username}</dd>', html=True)
+                self.assertContains(response, user.date_joined.strftime("%B ") + str(user.date_joined.day))
+                self.assertNotContains(response, user.password)
+                for other in users:
+                    if other != user:
+                        self.assertNotIn(f'<dd class="mp-value">{other.username}</dd>', html)
+
+    def test_empty_fields_show_not_set(self):
+        response = self._profile(self.admin)
+        self.assertContains(
+            response, '<dd class="mp-value"><span class="mp-empty">Not Set</span></dd>', count=1, html=True)
+        self.assertContains(response, "admin@abtc.test")
+
+    def test_edit_profile_saves_only_allowed_fields(self):
+        self.client.force_login(self.admin)
+        response = self.client.post(reverse("accounts:profile_edit"), {
+            "first_name": "Sys", "last_name": "Administrator",
+            "email": "sys@abtc.test", "mobile": "09179998888",
+            "role": "patient", "is_active": "", "username": "hijack",
+            "is_superuser": "on", "is_staff": "on",
+        }, follow=True)
+        self.assertRedirects(response, reverse("accounts:profile"))
+        self.assertContains(response, "Profile updated successfully.")
+        for value in ("Sys Administrator", "sys@abtc.test", "09179998888"):
+            self.assertContains(response, value)
+        self.admin.refresh_from_db()
+        self.assertEqual(
+            (self.admin.role, self.admin.is_active, self.admin.username,
+             self.admin.is_superuser, self.admin.is_staff),
+            ("admin", True, "profile.admin", False, False))
+        form_html = self.client.get(reverse("accounts:profile_edit")).content.decode()
+        for name in ("role", "is_active", "username"):
+            self.assertNotIn(f'name="{name}"', form_html)
+
+    def test_change_password_validates_and_keeps_the_session(self):
+        self.client.force_login(self.admin)
+        url = reverse("accounts:change_password")
+        page = self.client.get(url)
+        for label in ("Current Password", "New Password", "Confirm New Password"):
+            self.assertContains(page, label)
+
+        wrong = self.client.post(url, {
+            "old_password": "Not-The-Password-1", "new_password1": "Fresh-Pass-2027!",
+            "new_password2": "Fresh-Pass-2027!"})
+        self.assertEqual(wrong.status_code, 200)
+        self.assertNotContains(wrong, "Not-The-Password-1")
+        self.assertTrue(wrong.context["form"].errors["old_password"])
+
+        mismatch = self.client.post(url, {
+            "old_password": "Admin-Pass-2026!", "new_password1": "Fresh-Pass-2027!",
+            "new_password2": "Other-Pass-2027!"})
+        self.assertTrue(mismatch.context["form"].errors["new_password2"])
+        self.assertNotContains(mismatch, "Admin-Pass-2026!")
+
+        weak = self.client.post(url, {
+            "old_password": "Admin-Pass-2026!", "new_password1": "12345678",
+            "new_password2": "12345678"})
+        self.assertTrue(weak.context["form"].errors["new_password2"])
+
+        ok = self.client.post(url, {
+            "old_password": "Admin-Pass-2026!", "new_password1": "Fresh-Pass-2027!",
+            "new_password2": "Fresh-Pass-2027!"}, follow=True)
+        self.assertRedirects(ok, reverse("accounts:profile"))
+        self.assertContains(ok, "Password changed successfully.")
+        self.admin.refresh_from_db()
+        self.assertTrue(self.admin.check_password("Fresh-Pass-2027!"))
+        self.assertTrue(self.admin.password.startswith(("pbkdf2_", "argon2", "bcrypt")))
+        self.assertNotContains(ok, self.admin.password)
+        self.assertEqual(self.client.get(reverse("accounts:profile")).status_code, 200)
+
+    def test_profile_requires_login(self):
+        response = self.client.get(reverse("accounts:profile"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("accounts:login"), response["Location"])

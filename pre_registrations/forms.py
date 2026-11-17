@@ -7,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from utils.names import format_person_name
 from utils.phone import normalize_to_09, validate_ph_number
 
 from .models import PreRegistration
@@ -197,6 +198,25 @@ class PreRegistrationForm(forms.ModelForm):
         validate_ph_number(val)
         return normalize_to_09(val) or val
 
+    def _clean_name(self, field):
+        value = self.cleaned_data.get(field, "")
+        # Existing names are left exactly as stored unless the user edits them.
+        if self.instance.pk and value == getattr(self.instance, field, ""):
+            return value
+        return format_person_name(value)
+
+    def clean_first_name(self):
+        return self._clean_name("first_name")
+
+    def clean_middle_name(self):
+        return self._clean_name("middle_name")
+
+    def clean_last_name(self):
+        return self._clean_name("last_name")
+
+    def clean_suffix(self):
+        return self._clean_name("suffix")
+
     def clean_consent_given(self):
         consent = self.cleaned_data.get("consent_given")
         if not consent:
@@ -307,27 +327,70 @@ class StaffPreRegistrationForm(PreRegistrationForm):
             "rejection_reason": "Rejection reason (required when status is Rejected)",
         }
 
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.review_admin = bool(user and getattr(user, "role", "") == "admin")
+        self.original_status = self.instance.status
+        self.original_reason = self.instance.rejection_reason
+        self.fields["rejection_reason"].strip = False
+        if not self.review_admin:
+            self.fields["status"].disabled = True
+            self.fields["rejection_reason"].disabled = True
+        elif self.original_status == PreRegistration.Status.REJECTED:
+            # Reopening is a status-only Admin operation; the rejected submission
+            # and its previous reason/actor/time remain immutable.
+            for name, field in self.fields.items():
+                field.disabled = name != "status"
+            self.fields["status"].choices = [
+                (value, label) for value, label in PreRegistration.Status.choices
+                if value in {"rejected", "submitted", "for_verification"}
+            ]
+        elif self.original_status == PreRegistration.Status.CONVERTED:
+            self.fields["status"].disabled = True
+            self.fields["rejection_reason"].disabled = True
+        else:
+            self.fields["status"].choices = [
+                (value, label) for value, label in PreRegistration.Status.choices
+                if value != PreRegistration.Status.CONVERTED
+            ]
+
     def clean_consent_given(self):
         return self.cleaned_data.get("consent_given", True)
 
     def clean(self):
         cleaned_data = super().clean()
-        if (
-            cleaned_data.get("status") == PreRegistration.Status.REJECTED
-            and not (cleaned_data.get("rejection_reason") or "").strip()
-            and not (self.instance.rejection_reason or "").strip()
-        ):
-            self.add_error(
-                "rejection_reason",
-                "Provide a reason for rejecting this registration so the patient knows why.",
-            )
+        status = cleaned_data.get("status")
+        reason = cleaned_data.get("rejection_reason", "")
+        if status == PreRegistration.Status.REJECTED and self.original_status != status:
+            if self.original_status not in {"submitted", "for_verification"}:
+                self.add_error("status", "Only pending registrations can be rejected.")
+            try:
+                validate_rejection_reason(reason)
+            except ValidationError:
+                self.add_error(
+                    "rejection_reason",
+                    "Provide a reason for rejecting this registration so the patient knows why. "
+                    "The reason must contain meaningful text.",
+                )
+        elif reason != self.original_reason:
+            self.add_error("rejection_reason", "Rejection history cannot be edited.")
+        if self.original_status == PreRegistration.Status.REJECTED and status == self.original_status:
+            self.add_error("status", "Rejected registrations are read-only. An Admin may reopen as pending.")
         return cleaned_data
+
+
+def validate_rejection_reason(reason):
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValidationError("A reason is required.")
+    if not any(character.isalnum() for character in reason):
+        raise ValidationError("Provide a meaningful reason for rejection.")
 
 
 class RejectPreRegistrationForm(forms.Form):
     reason = forms.CharField(
         label="Reason for rejection",
         required=False,
+        strip=False,
         widget=forms.Textarea(
             attrs={
                 "rows": 3,
@@ -338,9 +401,8 @@ class RejectPreRegistrationForm(forms.Form):
     )
 
     def clean_reason(self):
-        reason = (self.cleaned_data.get("reason") or "").strip()
-        if not reason:
-            raise forms.ValidationError("A reason is required.")
+        reason = self.cleaned_data.get("reason") or ""
+        validate_rejection_reason(reason)
         return reason
 
 

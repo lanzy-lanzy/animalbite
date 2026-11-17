@@ -1,0 +1,313 @@
+{% extends 'base.html' %}
+{% block title %}Patient SMS Details — ABTC{% endblock %}
+{% block content %}
+<style>
+    .sms-action-button{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;border:0;border-radius:999px;background:#0D382C;color:#fff;padding:.7rem 1.25rem;font-size:.875rem;font-weight:700;white-space:nowrap;box-shadow:0 2px 4px #0D382C22;}
+    .sms-action-button:hover{background:#0C543F;}
+    .sms-action-button:focus-visible{outline:2px solid #0D382C;outline-offset:2px;}
+    .sms-action-button:disabled{opacity:.55;cursor:not-allowed;}
+</style>
+<div class="space-y-5">
+    <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+            <a href="{% url 'vaccination:sms_log_list' %}" class="inline-flex items-center gap-1 text-xs font-bold text-emerald-800 hover:underline">← Back to SMS Reminders</a>
+            <h1 class="font-display text-xl font-bold text-ink mt-2">Patient SMS Details</h1>
+            <p class="text-sm font-medium text-muted mt-1">{{ patient.full_name }}</p>
+        </div>
+        {% if can_send_manual %}
+        <button type="button" id="open-sms-modal" class="sms-action-button" {% if not eligible_doses %}disabled title="No eligible scheduled doses or registered mobile number"{% endif %}>
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            Send SMS
+        </button>
+        {% endif %}
+    </header>
+
+    <section class="card">
+        <h2 class="font-display text-sm font-bold text-ink mb-3">A. Patient Information</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div class="rounded-xl border border-line bg-sage-100 p-3"><p class="text-[10px] font-bold uppercase tracking-widest text-gold-700">Patient Name</p><p class="text-sm font-bold text-ink mt-1">{{ patient.full_name }}</p></div>
+            <div class="rounded-xl border border-line bg-sage-100 p-3"><p class="text-[10px] font-bold uppercase tracking-widest text-gold-700">Patient ID</p><p class="text-sm font-mono font-bold text-ink mt-1">{{ patient.patient_number }}</p></div>
+            <div class="rounded-xl border border-line bg-sage-100 p-3"><p class="text-[10px] font-bold uppercase tracking-widest text-gold-700">Contact Number</p><p class="text-sm font-mono font-bold text-ink mt-1">{{ patient.contact_display|default:'—' }}</p></div>
+        </div>
+        <div class="mt-4">
+            <h3 class="text-xs font-bold uppercase tracking-widest text-muted mb-2">Animal Bite Cases and Current Treatment Status</h3>
+            <div class="space-y-2">
+                {% for case in cases %}
+                <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white px-3 py-2.5">
+                    <span class="font-mono text-sm font-bold text-ink">{{ case.case_number }}</span>
+                    <span class="text-sm text-muted">{{ case.get_case_status_display }}</span>
+                </div>
+                {% empty %}<p class="text-sm text-muted">No animal bite cases are linked to this patient.</p>{% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <section class="card p-0 overflow-hidden">
+        <div class="px-4 sm:px-5 py-4 border-b border-line bg-sage-50">
+            <h2 class="font-display text-sm font-bold text-ink">B. Vaccination Schedules</h2>
+            <p class="text-xs font-medium text-muted mt-1">Schedules linked only to {{ patient.full_name }}.</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[720px]">
+                <thead><tr class="border-b border-line bg-sage-50">
+                    <th class="table-header">Animal Bite Case</th><th class="table-header">Dose Number</th>
+                    <th class="table-header">Scheduled Date</th><th class="table-header">Vaccination Status</th>
+                    <th class="table-header">SMS Reminder Status</th>
+                </tr></thead>
+                <tbody class="divide-y divide-sage-100">
+                    {% for case in cases %}
+                        {% for dose in case.sms_doses %}
+                        <tr>
+                            <td class="table-cell font-mono font-semibold">{{ case.case_number }}</td>
+                            <td class="table-cell font-semibold">{{ dose.sms_number_label }}</td>
+                            <td class="table-cell">{% if dose.scheduled_date %}{{ dose.scheduled_date|date:'M d, Y' }}{% else %}Not scheduled{% endif %}</td>
+                            <td class="table-cell"><span class="status-badge vaccination-status status-{{ dose.appointment_status }}">{{ dose.effective_status }}</span></td>
+                            <td class="table-cell">
+                                <span class="inline-flex px-2.5 py-1 rounded-full text-xs font-bold {% if dose.sms_reminder_status_code == 'sent' %}bg-emerald-50 border border-emerald-200 text-emerald-800{% elif dose.sms_reminder_status_code == 'failed' %}bg-red-50 border border-red-200 text-red-700{% elif dose.sms_reminder_status_code == 'queued' or dose.sms_reminder_status_code == 'pending' %}bg-amber-50 border border-amber-200 text-amber-800{% else %}bg-sage-50 border border-line text-muted{% endif %}">{{ dose.sms_reminder_status }}</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    {% endfor %}
+                    {% if not has_schedules %}<tr><td colspan="5" class="text-center py-10 text-sm text-muted">No vaccination schedules found.</td></tr>{% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="card p-0 overflow-hidden">
+        <div class="px-4 sm:px-5 py-4 border-b border-line bg-sage-50">
+            <h2 class="font-display text-sm font-bold text-ink">C. SMS Reminder History</h2>
+            <p class="text-xs font-medium text-muted mt-1">{{ logs|length }} reminder record{{ logs|length|pluralize }}</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[780px]">
+                <thead><tr class="border-b border-line bg-sage-50">
+                    <th class="table-header">Animal Bite Case</th><th class="table-header">Dose Number</th>
+                    <th class="table-header">Scheduled Date</th><th class="table-header">Reminder Type</th>
+                    <th class="table-header">Attempt / Processing Date</th><th class="table-header">Status</th>
+                </tr></thead>
+                <tbody class="divide-y divide-sage-100">
+                    {% for log in logs %}
+                    <tr>
+                        <td class="table-cell font-mono">{{ log.display_case.case_number|default:'—' }}</td>
+                        <td class="table-cell">{{ log.display_dose_label|default:'—' }}</td>
+                        <td class="table-cell">{{ log.display_appointment|date:'M d, Y'|default:'—' }}</td>
+                        <td class="table-cell">{{ log.display_reminder_type }}</td>
+                        <td class="table-cell">{{ log.sent_at|date:'M d, Y h:i A' }}</td>
+                        <td class="table-cell">
+                            <span class="inline-flex px-2.5 py-1 rounded-full text-xs font-bold {% if log.status == 'sent' %}bg-emerald-50 border border-emerald-200 text-emerald-800{% elif log.status == 'failed' %}bg-red-50 border border-red-200 text-red-700{% elif log.status == 'queued' or log.status == 'pending' %}bg-amber-50 border border-amber-200 text-amber-800{% else %}bg-sage-50 border border-line text-muted{% endif %}">{{ log.get_status_display }}</span>
+                        </td>
+                    </tr>
+                    {% empty %}<tr><td colspan="6" class="text-center py-10 text-sm text-muted">No SMS reminder history for this patient.</td></tr>{% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+{% if can_send_manual %}
+<div id="sms-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4" aria-hidden="true">
+    <button type="button" id="sms-modal-backdrop" class="absolute inset-0 bg-emerald-950/60 backdrop-blur-sm" aria-label="Close dialog"></button>
+    <section role="dialog" aria-modal="true" aria-labelledby="sms-modal-title" class="relative w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border border-line bg-white shadow-2xl">
+        <header class="flex items-start justify-between gap-3 border-b border-line bg-sage-50 px-5 py-4">
+            <div><h2 id="sms-modal-title" class="font-display text-sm font-bold text-ink">Send Vaccination Reminder</h2><p class="text-xs text-muted mt-1">Review the message and confirm before sending.</p></div>
+            <button type="button" id="sms-modal-close" class="rounded-full border border-line bg-white px-3 py-1 text-sm text-muted">Close</button>
+        </header>
+        <form id="sms-send-form" method="post" class="space-y-4 p-5">
+            {% csrf_token %}
+            <input type="hidden" name="return_to_patient" value="{{ patient.pk }}">
+            <input type="hidden" name="confirm_duplicate" id="confirm-duplicate" value="">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="rounded-xl border border-line bg-sage-100 p-3"><p class="text-[10px] font-bold uppercase tracking-widest text-gold-700">Patient Name</p><p class="text-sm font-bold mt-1">{{ patient.full_name }}</p></div>
+                <div class="rounded-xl border border-line bg-sage-100 p-3"><p class="text-[10px] font-bold uppercase tracking-widest text-gold-700">Mobile Number</p><p class="text-sm font-mono font-bold mt-1">{{ manual_mobile|default:patient.contact_display|default:'—' }}</p></div>
+            </div>
+            <label class="block text-sm font-bold text-ink">Select Animal Bite Case
+                <select id="sms-case-select" class="form-select mt-1 w-full">
+                    {% for case in eligible_cases %}<option value="{{ case.pk }}">{{ case.case_number }}</option>{% endfor %}
+                </select>
+            </label>
+            <label class="block text-sm font-bold text-ink">Select Scheduled Dose
+                <select id="sms-dose-select" class="form-select mt-1 w-full">
+                    {% for item in eligible_doses %}
+                    <option value="{{ item.dose.pk }}" data-case="{{ item.case.pk }}"
+                        data-url="{% url 'vaccination:sms_manual_send' item.dose.pk %}"
+                        data-days="{{ item.days }}" data-date="{{ item.dose.scheduled_date|date:'M d, Y' }}"
+                        data-now="{{ item.preview_now }}" data-two="{{ item.preview_2days }}"
+                        data-one="{{ item.preview_1day }}" data-prefix="{{ item.custom_prefix }}"
+                        data-suffix="{{ item.custom_suffix }}">{{ item.label }} — {{ item.dose.scheduled_date|date:'M d, Y' }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <p class="text-sm text-muted">Scheduled Date: <strong id="sms-selected-date" class="text-ink"></strong></p>
+            <label class="block text-sm font-bold text-ink">Reminder Type
+                <select id="sms-reminder-type" name="reminder_type" class="form-select mt-1 w-full">
+                    <option value="manual_immediate">Manual Reminder — Send Now</option>
+                    <option value="manual_2days_before">2 Days Before</option>
+                    <option value="manual_1day_before">1 Day Before</option>
+                    <option value="manual_custom">Custom Reminder</option>
+                </select>
+            </label>
+            <label id="sms-custom-wrap" class="hidden block text-sm font-bold text-ink">Custom message
+                <textarea id="sms-custom-message" name="custom_message" maxlength="160" rows="2" class="form-textarea mt-1 w-full"></textarea>
+            </label>
+            <div class="rounded-xl border border-line bg-sage-50 p-4">
+                <p class="text-[10px] font-bold uppercase tracking-widest text-gold-700">SMS Message Preview</p>
+                <p id="sms-message-preview" class="text-sm text-ink whitespace-pre-wrap mt-2"></p>
+            </div>
+            <div id="sms-warning" class="hidden rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"></div>
+            <div id="sms-error" class="hidden rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"></div>
+            <footer class="flex justify-end gap-2 border-t border-line pt-4">
+                <button type="button" id="sms-cancel" class="btn-secondary">Cancel</button>
+                <button type="submit" id="sms-confirm" class="sms-action-button"><span id="sms-confirm-label">Confirm Send SMS</span></button>
+            </footer>
+        </form>
+    </section>
+</div>
+<script>
+(() => {
+    const modal = document.getElementById('sms-modal');
+    const caseSelect = document.getElementById('sms-case-select');
+    const doseSelect = document.getElementById('sms-dose-select');
+    const typeSelect = document.getElementById('sms-reminder-type');
+    const customWrap = document.getElementById('sms-custom-wrap');
+    const customInput = document.getElementById('sms-custom-message');
+    const preview = document.getElementById('sms-message-preview');
+    const dateLabel = document.getElementById('sms-selected-date');
+    const form = document.getElementById('sms-send-form');
+    const confirmButton = document.getElementById('sms-confirm');
+    const confirmLabel = document.getElementById('sms-confirm-label');
+    const warning = document.getElementById('sms-warning');
+    const error = document.getElementById('sms-error');
+    const duplicateInput = document.getElementById('confirm-duplicate');
+    let sending = false;
+
+    function currentDose() {
+        return doseSelect.options[doseSelect.selectedIndex];
+    }
+    function refreshDoses() {
+        const caseId = caseSelect.value;
+        Array.from(doseSelect.options).forEach(option => {
+            option.hidden = option.dataset.case !== caseId;
+        });
+        const selected = Array.from(doseSelect.options).find(
+            option => option.dataset.case === caseId);
+        if (selected) doseSelect.value = selected.value;
+        updatePreview();
+    }
+    function updatePreview() {
+        const dose = currentDose();
+        if (!dose) return;
+        const days = Number(dose.dataset.days);
+        const selectedType = typeSelect.value;
+        const isCustom = selectedType === 'manual_custom';
+        customWrap.classList.toggle('hidden', !isCustom);
+        dateLabel.textContent = dose.dataset.date;
+        const note = customInput.value.trim() || 'Pumunta sa RHU sa nakatakdang petsa.';
+        const texts = {
+            manual_immediate: dose.dataset.now,
+            manual_2days_before: dose.dataset.two,
+            manual_1day_before: dose.dataset.one,
+            manual_custom: dose.dataset.prefix + note + dose.dataset.suffix
+        };
+        preview.textContent = texts[selectedType] || '';
+        Array.from(typeSelect.options).forEach(option => {
+            if (option.value === 'manual_2days_before') option.disabled = days !== 2;
+            if (option.value === 'manual_1day_before') option.disabled = days !== 1;
+        });
+        if ((selectedType === 'manual_2days_before' && days !== 2)
+            || (selectedType === 'manual_1day_before' && days !== 1)) {
+            typeSelect.value = 'manual_immediate';
+            updatePreview();
+        }
+        form.action = dose.dataset.url;
+    }
+    function closeModal() {
+        if (sending) return;
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.setAttribute('aria-hidden', 'true');
+    }
+    function clearDuplicateConfirmation() {
+        duplicateInput.value = '';
+        warning.classList.add('hidden');
+    }
+    document.getElementById('open-sms-modal').addEventListener('click', () => {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        modal.setAttribute('aria-hidden', 'false');
+        refreshDoses();
+        caseSelect.focus();
+    });
+    [document.getElementById('sms-modal-backdrop'), document.getElementById('sms-modal-close'), document.getElementById('sms-cancel')].forEach(button => button.addEventListener('click', closeModal));
+    caseSelect.addEventListener('change', () => {
+        clearDuplicateConfirmation();
+        refreshDoses();
+    });
+    doseSelect.addEventListener('change', () => {
+        clearDuplicateConfirmation();
+        updatePreview();
+    });
+    typeSelect.addEventListener('change', () => {
+        duplicateInput.value = '';
+        warning.classList.add('hidden');
+        updatePreview();
+    });
+    customInput.addEventListener('input', updatePreview);
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (sending || !currentDose()) return;
+        sending = true;
+        confirmButton.disabled = true;
+        confirmLabel.textContent = 'Sending…';
+        error.classList.add('hidden');
+        const response = await fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: {'X-Requested-With': 'XMLHttpRequest'}
+        }).catch(() => null);
+        if (!response) {
+            error.textContent = 'Unable to send the reminder. Please try again.';
+            error.classList.remove('hidden');
+            sending = false;
+            confirmButton.disabled = false;
+            confirmLabel.textContent = 'Confirm Send SMS';
+            return;
+        }
+        let data;
+        try {
+            data = await response.json();
+        } catch {
+            data = null;
+        }
+        if (!data) {
+            error.textContent = 'Unable to send the reminder. Please try again.';
+            error.classList.remove('hidden');
+            sending = false;
+            confirmButton.disabled = false;
+            confirmLabel.textContent = 'Confirm Send SMS';
+            return;
+        }
+        if (data.duplicate) {
+            warning.textContent = data.warning + ' Confirm again to send an additional reminder.';
+            warning.classList.remove('hidden');
+            duplicateInput.value = '1';
+            sending = false;
+            confirmButton.disabled = false;
+            confirmLabel.textContent = 'Confirm Send SMS';
+            return;
+        }
+        if (!data.ok) {
+            error.textContent = data.error || 'Unable to send the reminder.';
+            error.classList.remove('hidden');
+            sending = false;
+            confirmButton.disabled = false;
+            confirmLabel.textContent = 'Confirm Send SMS';
+            return;
+        }
+        window.location.assign(data.redirect);
+    });
+    refreshDoses();
+})();
+</script>
+{% endif %}
+{% endblock %}

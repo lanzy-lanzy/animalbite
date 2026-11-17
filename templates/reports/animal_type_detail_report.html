@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+{% block title %}Cases by Animal Type — {{ animal_label }} — ABTC{% endblock %}
+{% block content %}
+<div class="space-y-5">
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div>
+            <a href="{% url 'reports:animal_type_report' %}?type={{ report_type }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
+               class="no-print inline-flex items-center gap-1.5 text-xs font-bold text-muted hover:text-ink">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                Back to Cases by Animal Type
+            </a>
+            <h1 class="font-display text-2xl font-bold text-ink mt-1">Cases by Animal Type – {{ animal_label }}</h1>
+            <p class="text-sm font-medium text-muted">{{ label }} · Total Cases: <strong class="text-ink">{{ total }}</strong></p>
+        </div>
+        <a href="?type={{ report_type }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}&amp;export=print-sheet"
+           target="_blank" rel="noopener"
+           class="no-print inline-flex items-center justify-center gap-2 rounded-full bg-emerald-950 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-900">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9V3h12v6M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h2m12 0h2a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v7H6z"/></svg>
+            Print Sheet
+        </a>
+    </header>
+
+    <section class="card p-0 overflow-hidden">
+        <div class="px-4 sm:px-5 py-4 border-b border-line bg-sage-50">
+            <h2 class="font-display text-sm font-bold text-ink">Cases involving {{ animal_label }}</h2>
+            <p class="text-xs font-medium text-muted mt-1">Reporting Period: {{ label }} · {{ total }} case{{ total|pluralize }}</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[850px]">
+                <thead>
+                    <tr class="border-b border-line bg-sage-50">
+                        <th class="table-header">No.</th>
+                        <th class="table-header">Case Number</th>
+                        <th class="table-header">Patient Name</th>
+                        <th class="table-header">Date of Incident</th>
+                        <th class="table-header">Barangay</th>
+                        <th class="table-header">Exposure Type</th>
+                        <th class="table-header">Case Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-sage-100">
+                    {% for case in cases %}
+                    <tr class="hover:bg-sage-50">
+                        <td class="table-cell">{{ forloop.counter }}</td>
+                        <td class="table-cell font-mono text-xs">{{ case.case_number }}</td>
+                        <td class="table-cell font-semibold text-ink">{{ case.patient.full_name }}</td>
+                        <td class="table-cell">{{ case.date_time_bite|date:"M d, Y" }}</td>
+                        <td class="table-cell">{{ case.incident_barangay|default:"Unspecified" }}</td>
+                        <td class="table-cell">{{ case.get_exposure_type_display }}</td>
+                        <td class="table-cell">{{ case.get_case_status_display }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="7" class="text-center py-12 text-sm font-medium text-muted">No cases found for this animal type and reporting period.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="px-4 sm:px-5 py-3 border-t border-line bg-sage-50 text-sm font-bold text-ink">
+            Total Number of Cases: {{ total }}
+        </div>
+    </section>
+</div>
+{% endblock %}

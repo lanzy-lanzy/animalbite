@@ -21,7 +21,7 @@
             {{ document_meta }}{% if document_meta %} &nbsp;·&nbsp; {% endif %}Date Printed: {{ printed_at|date:"F d, Y · g:i A" }}
         </p>
 
-        {% if summary_lines %}
+        {% if summary_lines and not summary_at_bottom %}
         <section class="abtc-section">
             <h2 class="abtc-section-title">Report Summary</h2>
             <div class="abtc-panel abtc-summary">
@@ -47,6 +47,16 @@
                 </tbody>
             </table>
         </section>
+
+        {% if summary_lines and summary_at_bottom %}
+        <section class="abtc-section">
+            <div class="abtc-panel abtc-summary">
+                {% for label, value in summary_lines %}
+                <div class="abtc-summary__row"><span>{{ label }}</span><strong>{{ value }}</strong></div>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
 
         {% include 'print/_official_footer.html' with confidential=True %}
     </main>

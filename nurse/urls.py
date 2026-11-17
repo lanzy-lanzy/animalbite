@@ -5,5 +5,6 @@ app_name = 'nurse'
 
 urlpatterns = [
     path('', views.dashboard, name='dashboard'),
+    path('findings/', views.doctor_finding_list, name='doctor_finding_list'),
     path('findings/<int:case_pk>/', views.doctor_finding_detail, name='doctor_finding_detail'),
 ]

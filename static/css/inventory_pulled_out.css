@@ -1,0 +1,57 @@
+/* Shared five-column Pulled Out History table used by the vaccine and
+   medicine inventory detail pages (admin and nurse portals). */
+
+.vd-history-table.vd-pullout-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 860px;
+}
+
+.vd-history-table.vd-pullout-table .vd-po-col-batch { width: 20%; }
+.vd-history-table.vd-pullout-table .vd-po-col-qty { width: 17%; }
+.vd-history-table.vd-pullout-table .vd-po-col-details { width: 21%; }
+.vd-history-table.vd-pullout-table .vd-po-col-reason { width: 27%; }
+.vd-history-table.vd-pullout-table .vd-po-col-status { width: 15%; }
+
+.vd-history-table.vd-pullout-table th,
+.vd-history-table.vd-pullout-table td {
+  padding: 14px 16px;
+  vertical-align: top;
+}
+
+.vd-history-table.vd-pullout-table th { text-align: left; }
+.vd-history-table.vd-pullout-table th.vd-po-col-status,
+.vd-history-table.vd-pullout-table td.vd-po-col-status { text-align: center; }
+.vd-history-table.vd-pullout-table .table-cell { white-space: normal; }
+
+.vd-po-primary {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--color-emerald-900);
+  overflow-wrap: anywhere;
+}
+
+.vd-po-secondary {
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--color-muted-2);
+  overflow-wrap: anywhere;
+}
+
+.vd-history-table.vd-pullout-table .vd-po-reason {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.vd-history-table.vd-pullout-table .status-badge { white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .vd-history-table.vd-pullout-table th,
+  .vd-history-table.vd-pullout-table td { padding: 12px 13px; }
+}

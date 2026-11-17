@@ -1,0 +1,43 @@
+<div class="vd-table">
+    <table class="vd-history-table vd-pullout-table">
+        <colgroup>
+            <col class="vd-po-col-batch">
+            <col class="vd-po-col-qty">
+            <col class="vd-po-col-details">
+            <col class="vd-po-col-reason">
+            <col class="vd-po-col-status">
+        </colgroup>
+        <thead>
+            <tr>
+                <th class="table-header">Batch Details</th>
+                <th class="table-header">Quantity</th>
+                <th class="table-header">Pull-Out Details</th>
+                <th class="table-header">Reason</th>
+                <th class="table-header vd-po-col-status">Status</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-sage-100">
+            {% for m in pulled_out_history %}
+            <tr>
+                <td class="table-cell">
+                    <p class="vd-po-primary">{{ m.pull_out_batch_number|default:'—' }}</p>
+                    <p class="vd-po-secondary">Expiry: {{ m.pull_out_expiration_date|date:'M d, Y'|default:'—' }}</p>
+                </td>
+                <td class="table-cell">
+                    <p class="vd-po-primary">{{ m.quantity }} {{ m.pull_out_unit|default:'—' }}</p>
+                    <p class="vd-po-secondary">Remaining: {{ m.remaining_after_pull_out }} {{ m.pull_out_unit|default:'—' }}</p>
+                </td>
+                <td class="table-cell">
+                    <p class="vd-po-primary">{{ m.created_at|date:'M d, Y' }}</p>
+                    <p class="vd-po-secondary">{{ m.created_at|time:'h:i A' }}</p>
+                    <p class="vd-po-secondary">By: {% if m.moved_by %}{{ m.moved_by.get_full_name|default:m.moved_by.username }}{% else %}—{% endif %}</p>
+                </td>
+                <td class="table-cell vd-po-reason">{{ m.pull_out_reason }}</td>
+                <td class="table-cell vd-po-col-status"><span class="status-badge bg-green-100 text-green-800">Pulled Out</span></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="vd-empty">No pulled-out stock records yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

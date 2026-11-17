@@ -10,6 +10,7 @@ from django.utils.http import urlencode
 from django.views.decorators.http import require_POST
 from functools import wraps
 import uuid
+from collections import defaultdict
 from .models import (
     VaccineInventory, SupplyInventory, VaccineStockMovement,
     MedicineInventory, MedicineStockMovement,
@@ -51,37 +52,30 @@ def _uses_shared_inventory(user):
     return getattr(user, 'role', '') in SHARED_INVENTORY_ROLES
 
 
-def _expired_batch_details(batches, movement_model, relation_name, today):
-    expired = [batch for batch in batches if batch.expiration_date < today]
-    movement_totals = dict(
-        movement_model.objects.filter(
-            **{
-                f'{relation_name}__in': expired,
-                'movement_type': 'expired_pull_out',
-            }
+def _pulled_out_history(movements, relation_name):
+    remaining_by_batch = defaultdict(int)
+    history = []
+    for movement in movements:
+        batch = getattr(movement, relation_name)
+        batch_id = getattr(movement, f'{relation_name}_id')
+        movement.remaining_after_pull_out = (
+            batch.quantity_available + remaining_by_batch[batch_id])
+        movement.pull_out_batch_number = (
+            movement.batch_number or batch.batch_number)
+        movement.pull_out_expiration_date = (
+            movement.expiration_date or batch.expiration_date)
+        movement.pull_out_unit = batch.unit
+        remaining_by_batch[batch_id] += movement.quantity
+        movement.pull_out_reason = next(
+            (
+                line.partition(':')[2].strip()
+                for line in (movement.notes or '').splitlines()
+                if line.casefold().startswith('reason:')
+            ),
+            '—',
         )
-        .values(f'{relation_name}_id')
-        .annotate(total=Sum('quantity'))
-        .values_list(f'{relation_name}_id', 'total')
-    )
-    cards = []
-    historical_expired = 0
-    pulled_out = 0
-    remaining_physical = 0
-    for batch in expired:
-        batch.pulled_out_quantity = movement_totals.get(batch.pk, 0) or 0
-        batch.expired_quantity = batch.quantity_available + batch.pulled_out_quantity
-        historical_expired += batch.expired_quantity
-        pulled_out += batch.pulled_out_quantity
-        remaining_physical += batch.quantity_available
-        if batch.quantity_available > 0 or batch.pulled_out_quantity > 0:
-            batch.pull_out_state = (
-                'Pending Pull Out' if batch.quantity_available > 0
-                else 'Pulled Out'
-            )
-            batch.pull_out_token = uuid.uuid4()
-            cards.append(batch)
-    return cards, historical_expired, pulled_out, remaining_physical
+        history.append(movement)
+    return history
 
 
 def _pull_out_expired_batch(request, module, pk):
@@ -136,7 +130,7 @@ def _pull_out_expired_batch(request, module, pk):
                 messages.info(request, 'This pull-out was already recorded.')
                 return redirect(redirect_url)
             today = timezone.localdate()
-            if batch.expiration_date >= today:
+            if batch.expiration_date > today:
                 messages.error(request, 'Only expired stock can be pulled out.')
                 return redirect(redirect_url)
             if batch.quantity_available <= 0:
@@ -405,6 +399,34 @@ def vaccine_create(request):
     return render(request, 'inventory/vaccine_form.html', {'form': form, 'title': 'Add Vaccine Stock'})
 
 
+def _last_recorded_vaccine_batch(vaccine):
+    """Newest batch recorded for the same vaccine product."""
+    product_batches = VaccineInventory.objects.filter(
+        vaccine_name__iexact=vaccine.vaccine_name,
+        brand__iexact=vaccine.brand,
+        strength__iexact=vaccine.strength,
+        dosage_form=vaccine.dosage_form,
+        unit__iexact=vaccine.unit,
+    )
+    latest_stock_in = (
+        VaccineStockMovement.objects
+        .filter(movement_type='stock_in', vaccine__in=product_batches)
+        .exclude(batch_number='')
+        .order_by('-created_at', '-id')
+        .values_list('batch_number', flat=True)
+        .first()
+    )
+    if latest_stock_in:
+        return latest_stock_in
+    return (
+        product_batches
+        .exclude(batch_number='')
+        .order_by('-created_at', '-id')
+        .values_list('batch_number', flat=True)
+        .first()
+    ) or None
+
+
 @login_required
 def vaccine_add_stock(request, pk):
     if getattr(request.user, 'role', '') not in ('nurse', 'admin'):
@@ -432,12 +454,20 @@ def vaccine_add_stock(request, pk):
                 ),
             )
             messages.success(request, 'Stock added successfully.')
+            if not created:
+                messages.warning(
+                    request,
+                    f'Batch {batch.batch_number} is already recorded for this '
+                    'vaccine. The delivery was added to the existing batch '
+                    'instead of creating a duplicate batch record.',
+                )
             return redirect('inventory:vaccine_list')
     else:
         form = VaccineAddStockForm(vaccine=vaccine)
     return render(request, 'inventory/vaccine_add_stock.html', {
         'form': form,
         'vaccine': vaccine,
+        'last_entry_batch': _last_recorded_vaccine_batch(vaccine),
     })
 
 @login_required
@@ -464,17 +494,20 @@ def vaccine_detail(request, pk):
     live_batches = [batch for batch in batch_list if not batch.is_expired()]
     live_available = sum(batch.quantity_available for batch in live_batches)
     totals['available'] = live_available
-    (expired_batches, totals['expired_quantity'], totals['pulled_out'],
-     totals['expired_remaining']) = (
-        _expired_batch_details(
-            batch_list, VaccineStockMovement, 'vaccine', timezone.localdate())
+    totals['pulled_out'] = (
+        VaccineStockMovement.objects.filter(
+            vaccine__in=product_batches,
+            movement_type='expired_pull_out',
+        ).aggregate(total=Sum('quantity'))['total'] or 0
     )
     movements = (
         VaccineStockMovement.objects
         .filter(vaccine__in=product_batches)
         .select_related('moved_by', 'vaccine')
-        .order_by('-created_at')
+        .order_by('-created_at', '-pk')
     )
+    pulled_out_history = _pulled_out_history(
+        movements.filter(movement_type='expired_pull_out'), 'vaccine')
 
     # A dose records the exact batch it was administered from and deducts one
     # vial on confirmation, so matching on the batch ties real administrations
@@ -521,9 +554,8 @@ def vaccine_detail(request, pk):
         'item': item,
         'totals': totals,
         'movements': movements,
+        'pulled_out_history': pulled_out_history,
         'dispensing_records': dispensing_records,
-        'expired_batches': expired_batches,
-        'today': timezone.localdate(),
         'stock_status': stock_status,
         'highlight_batch': highlight_batch.casefold(),
         'highlight_item': highlight_item,
@@ -661,7 +693,7 @@ def medicine_list(request):
     elif state == 'out':
         items = items.filter(quantity_available__lte=0)
     elif state == 'expired':
-        items = items.filter(expiration_date__lt=timezone.localdate())
+        items = items.filter(expiration_date__lte=timezone.localdate())
     paginator = Paginator(items.order_by('medicine_name', 'expiration_date'), 20)
     page = paginator.get_page(request.GET.get('page'))
     return render(request, 'inventory/medicine_list.html', {
@@ -766,12 +798,24 @@ def medicine_detail(request, pk):
         received=Sum('quantity_received'),
         dispensed=Sum('quantity_dispensed'),
     )
+    batch_list = list(product_batches)
+    live_batches = [batch for batch in batch_list if not batch.is_expired()]
+    live_available = sum(batch.quantity_available for batch in live_batches)
+    totals['available'] = live_available
+    totals['pulled_out'] = (
+        MedicineStockMovement.objects.filter(
+            medicine__in=product_batches,
+            movement_type='expired_pull_out',
+        ).aggregate(total=Sum('quantity'))['total'] or 0
+    )
     movements = (
         MedicineStockMovement.objects
         .filter(medicine__in=product_batches)
         .select_related('moved_by', 'medicine')
-        .order_by('-created_at')
+        .order_by('-created_at', '-pk')
     )
+    pulled_out_history = _pulled_out_history(
+        movements.filter(movement_type='expired_pull_out'), 'medicine')
     prescriptions = (
         Prescription.objects
         .filter(medicine__in=product_batches)
@@ -779,15 +823,6 @@ def medicine_detail(request, pk):
         .order_by('-created_at')
     )
 
-    batch_list = list(product_batches)
-    live_batches = [batch for batch in batch_list if not batch.is_expired()]
-    live_available = sum(batch.quantity_available for batch in live_batches)
-    totals['available'] = live_available
-    (expired_batches, totals['expired_quantity'], totals['pulled_out'],
-     totals['expired_remaining']) = (
-        _expired_batch_details(
-            batch_list, MedicineStockMovement, 'medicine', timezone.localdate())
-    )
     reorder_level = max(
         (batch.reorder_level for batch in product_batches), default=0)
     if not live_batches:
@@ -810,9 +845,8 @@ def medicine_detail(request, pk):
         'item': item,
         'totals': totals,
         'movements': movements,
+        'pulled_out_history': pulled_out_history,
         'prescriptions': prescriptions,
-        'expired_batches': expired_batches,
-        'today': timezone.localdate(),
         'stock_status': stock_status,
         'highlight_batch': highlight_batch.casefold(),
         'highlight_item': highlight_item,

@@ -50,7 +50,7 @@
                         <div class="flex items-center justify-end gap-2">
                         {% if record.status == 'converted' %}
                         <span class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Verified</span>
-                        {% elif not record.converted_case_id and record.status != 'rejected' %}
+                        {% elif record.can_convert %}
                         <form method="POST" action="{% url 'pre_registrations:convert' record.pk %}" class="inline">{% csrf_token %}<button type="submit" class="btn-success btn-sm">Convert to Case</button></form>
                         {% endif %}
                         <a href="{% url 'pre_registrations:staff_detail' record.pk %}" class="btn-secondary btn-sm">Open</a>

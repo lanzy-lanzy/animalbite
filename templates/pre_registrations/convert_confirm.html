@@ -13,12 +13,15 @@
             </li>
             {% endfor %}
         </ul>
-        <form method="POST" class="mt-5 flex flex-wrap gap-3">
+        {% if request.user.role == 'admin' %}
+        <form method="POST" action="{% url 'pre_registrations:convert' record.pk %}" class="mt-5 flex flex-wrap gap-3">
             {% csrf_token %}
+            {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}"><input type="hidden" name="next" value="{{ next }}">{% endif %}
             <input type="hidden" name="confirm_duplicates" value="1">
             <button type="submit" class="btn-success">Continue Conversion</button>
-            <a href="{% url 'pre_registrations:staff_detail' record.pk %}" class="btn-secondary">Cancel</a>
+            <a href="{% if return_to %}{{ back_url }}{% else %}{% url 'pre_registrations:staff_detail' record.pk %}{% endif %}" class="btn-secondary">Cancel</a>
         </form>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

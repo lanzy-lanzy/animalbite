@@ -6,11 +6,20 @@ created or converted. A nurse (or admin) triggers them explicitly once the
 case has been assessed.
 """
 import datetime
+import json
 import re
-from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
+from io import StringIO
+from threading import Event
+from unittest import skipUnless
+from unittest.mock import Mock, patch
+from zoneinfo import ZoneInfo
 
+import requests
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.core.management import call_command
+from django.db import connections
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -24,9 +33,1526 @@ from settings_app.models import SystemSetting
 
 from .forms import VaccineDoseForm
 from .models import SMSLog, VaccinationSchedule, VaccineDose
+from .missed_appointments import (
+    missed_dose_count, missed_dose_counts_by_patient, missed_dose_queryset,
+    missed_reminder_message, missed_sms_consent_ok,
+    missed_reminder_doses, missed_reminder_is_due,
+    send_missed_appointment_reminder,
+)
 from .schedule_utils import ensure_vaccination_schedule, get_dose_days, schedule_base_date
 
 U = get_user_model()
+
+
+class _MissedAppointmentFixture:
+    """Shared records, without TestCase's enclosing transaction for claim tests."""
+
+    def setUp(self):
+        self.nurse = U.objects.create_user(username="n.missed", role="nurse")
+        self.patient = Patient.objects.create(
+            patient_number="PAT-MISS01", first_name="Juan", last_name="Dela Cruz",
+            birthdate=datetime.date(1990, 1, 1), contact_number="09173334444",
+        )
+        self.case = AnimalBiteCase.objects.create(
+            case_number="ABC-MISS01", patient=self.patient,
+            created_by=self.nurse, animal_type="dog", exposure_type="bite",
+            date_time_bite=datetime.datetime(2026, 11, 1, 9, 0),
+            case_status="under_treatment",
+        )
+        self.schedule = VaccinationSchedule.objects.create(
+            bite_case=self.case, created_by=self.nurse,
+        )
+        self.first = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Day 0",
+            scheduled_date=datetime.date(2026, 11, 1),
+            actual_date=datetime.date(2026, 11, 1), dose_status="completed",
+        )
+        self.dose = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Day 3",
+            scheduled_date=datetime.date(2026, 11, 11),
+            dose_status="scheduled",
+        )
+        self.today = datetime.date(2026, 11, 12)
+        self.consent = self._pre_registration(consent_given=True)
+
+    @staticmethod
+    def _at(day, hour=10, minute=0):
+        return datetime.datetime(
+            day.year, day.month, day.day, hour, minute,
+            tzinfo=ZoneInfo("Asia/Manila"),
+        )
+
+    def _pre_registration(self, consent_given, case=None):
+        case = case or self.case
+        return PreRegistration.objects.create(
+            first_name="Juan", last_name="Dela Cruz",
+            birthdate=datetime.date(1990, 1, 1), sex="male",
+            contact_number="09173334444", address="Purok 1", barangay="San Jose",
+            medical_history="None", allergy_info="None", previous_rabies_vax="None",
+            bite_datetime=datetime.datetime(2026, 11, 1, 9, 0),
+            incident_place="Home", incident_barangay="San Jose",
+            animal_type="dog", animal_ownership="owned",
+            animal_vaccination_status="unknown", animal_condition="alive",
+            exposure_type="bite", body_part_affected="Arm",
+            consent_given=consent_given, converted_case=case,
+            converted_patient=case.patient,
+        )
+
+    @staticmethod
+    def _accepted(status="Queued", message_id="missed-1"):
+        return {
+            "success": True,
+            "response": [{"status": status, "message_id": message_id}],
+        }
+
+    def _send(self, **kwargs):
+        kwargs.setdefault("today", self.today)
+        kwargs.setdefault("now", self._at(kwargs["today"]))
+        return send_missed_appointment_reminder(self.dose.pk, **kwargs)
+
+
+@override_settings(SEMAPHORE_ENABLED=False, ABTC_APPOINTMENT_CUTOFF_TIME=None)
+class MissedAppointmentSmsTests(_MissedAppointmentFixture, TestCase):
+
+    def test_command_sends_yesterday_dose_to_primary_number_once(self):
+        output = StringIO()
+        call_command(
+            "send_vaccination_reminders", "--type", "missed",
+            "--date", self.today.isoformat(), stdout=output,
+        )
+
+        log = SMSLog.objects.get(
+            dose=self.dose, reminder_type="missed_appointment",
+        )
+        self.assertEqual(log.status, "queued")
+        self.assertEqual(log.recipient, "639173334444")
+        self.assertEqual(log.scheduled_date, self.dose.scheduled_date)
+        self.assertEqual(log.patient, self.patient)
+        self.assertEqual(log.bite_case, self.case)
+        self.assertEqual(log.message, missed_reminder_message(self.dose))
+        self.assertIn("scheduled 2nd Dose on November 11, 2026", log.message)
+        self.assertEqual(log.attempt_count, 0)
+        self.assertIn("queued", log.api_response.lower())
+        self.assertEqual(
+            log.event_key,
+            f"missed_appointment:{self.patient.pk}:{self.case.pk}:"
+            f"{self.dose.pk}:2026-11-11",
+        )
+
+        call_command(
+            "send_vaccination_reminders", "--type", "missed",
+            "--date", self.today.isoformat(), stdout=StringIO(),
+        )
+        self.assertEqual(SMSLog.objects.filter(
+            dose=self.dose, reminder_type="missed_appointment",
+        ).count(), 1)
+
+    def test_daily_command_keeps_advance_day_and_missed_events_separate_without_backfill(self):
+        self.today = datetime.date(2026, 11, 13)
+        self.dose.scheduled_date = datetime.date(2026, 11, 12)
+        self.dose.save(update_fields=['scheduled_date'])
+        on_day = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label='Day 7',
+            scheduled_date=self.today, dose_status='scheduled')
+        advance = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label='Day 14',
+            scheduled_date=self.today + datetime.timedelta(days=3), dose_status='scheduled')
+        historical = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label='Historical appointment',
+            scheduled_date=self.today - datetime.timedelta(days=60), dose_status='missed')
+        previous = SMSLog.objects.create(
+            dose=self.dose, patient=self.patient, bite_case=self.case,
+            reminder_type='on_day', recipient=self.patient.contact_number,
+            scheduled_date=self.dose.scheduled_date, status='sent',
+            message='Previously accepted appointment-day reminder.', api_response='Existing response')
+        saved_log = SMSLog.objects.filter(pk=previous.pk).values().get()
+        saved_doses = list(self.schedule.doses.values())
+        with patch('django.utils.timezone.now', return_value=self._at(self.today)), patch(
+            'vaccination.sms.send_semaphore_sms', return_value=self._accepted(),
+        ) as regular_gateway, patch(
+            'vaccination.missed_appointments.send_semaphore_sms', return_value=self._accepted(),
+        ) as missed_gateway:
+            for _ in range(2):
+                call_command('send_vaccination_reminders', stdout=StringIO())
+            self.assertEqual(regular_gateway.call_count, 2)
+            missed_gateway.assert_called_once_with(
+                '639173334444',
+                'RHU Dumingag ABTC: You missed your scheduled 2nd Dose on November 12, 2026. '
+                'Please visit or contact RHU Dumingag as soon as possible to arrange '
+                'your next vaccination appointment. Thank you.')
+        self.assertEqual(set(SMSLog.objects.exclude(pk=previous.pk).values_list(
+            'dose_id', 'reminder_type', 'status')), {
+                (on_day.pk, 'on_day', 'sent'),
+                (advance.pk, '3days_before', 'sent'),
+                (self.dose.pk, 'missed_appointment', 'sent'),
+            })
+        self.assertFalse(SMSLog.objects.filter(dose=historical).exists())
+        self.assertEqual(saved_log, SMSLog.objects.filter(pk=previous.pk).values().get())
+        self.assertEqual(saved_doses, list(self.schedule.doses.values()))
+
+    def test_only_recent_unadministered_doses_are_selected(self):
+        completed = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Dose 3",
+            scheduled_date=self.today - datetime.timedelta(days=1),
+            actual_date=self.today, dose_status="completed",
+        )
+        today_dose = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Dose 4",
+            scheduled_date=self.today, dose_status="scheduled",
+        )
+        future = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Dose 5",
+            scheduled_date=self.today + datetime.timedelta(days=2),
+            dose_status="scheduled",
+        )
+        older = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Dose 6",
+            scheduled_date=self.today - datetime.timedelta(days=2),
+            dose_status="scheduled",
+        )
+        rescheduled = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Dose 7",
+            scheduled_date=self.today + datetime.timedelta(days=3),
+            dose_status="rescheduled",
+        )
+        self.assertEqual(
+            [dose.pk for dose in missed_reminder_doses(today=self.today)],
+            [self.dose.pk, older.pk],
+        )
+        self.assertTrue(missed_reminder_is_due(self.dose, today=self.today))
+        self.assertTrue(missed_reminder_is_due(older, today=self.today))
+        for dose in (completed, today_dose, future, rescheduled):
+            self.assertFalse(missed_reminder_is_due(dose, today=self.today))
+
+    def test_scheduled_today_is_not_sent_regardless_of_time(self):
+        self.dose.scheduled_date = self.today
+        self.dose.save(update_fields=["scheduled_date"])
+
+        for hour in (8, 15, 23):
+            self.assertFalse(missed_reminder_doses(
+                today=self.today, now=self._at(self.today, hour),
+            ))
+        with override_settings(ABTC_APPOINTMENT_CUTOFF_TIME="15:00"):
+            self.assertFalse(missed_reminder_doses(
+                today=self.today, now=self._at(self.today, 18),
+            ))
+        log, result = send_missed_appointment_reminder(
+            self.dose.pk, today=self.today, now=self._at(self.today, 18),
+        )
+        self.assertIsNone(log)
+        self.assertTrue(result["skipped"])
+
+    def test_failed_attempt_is_not_resent_same_day(self):
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value={
+                "success": False, "error": "Provider rejected the message",
+                "retryable": True, "status_code": 429,
+            },
+        ) as send:
+            log, first_result = send_missed_appointment_reminder(
+                self.dose.pk, today=self.today, now=self._at(self.today),
+            )
+            self.assertEqual(log.status, "failed")
+            self.assertFalse(first_result["success"])
+
+            _, same_day_result = send_missed_appointment_reminder(
+                self.dose.pk, today=self.today, now=self._at(self.today, 18),
+            )
+            self.assertTrue(same_day_result["skipped"])
+
+            later = self.today + datetime.timedelta(days=1)
+            _, later_result = send_missed_appointment_reminder(
+                self.dose.pk, today=later, now=self._at(later),
+            )
+            self.assertTrue(later_result["skipped"])
+
+        self.assertEqual(send.call_count, 1)
+        log.refresh_from_db()
+        self.assertEqual(log.status, "failed")
+        self.assertEqual(log.attempt_count, 1)
+
+    def test_accepted_reminder_is_never_resent(self):
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value={
+                "success": True,
+                "response": [{"status": "Sent", "message_id": "m-1"}],
+            },
+        ) as send:
+            log, _ = send_missed_appointment_reminder(
+                self.dose.pk, today=self.today, now=self._at(self.today),
+            )
+            self.assertEqual(log.status, "sent")
+            _, again = send_missed_appointment_reminder(
+                self.dose.pk, today=self.today, now=self._at(self.today, 18),
+            )
+            self.assertTrue(again["skipped"])
+            call_command(
+                "send_vaccination_reminders", "--type", "missed", "--force",
+                "--date", self.today.isoformat(), stdout=StringIO(),
+            )
+
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(SMSLog.objects.filter(
+            dose=self.dose, reminder_type="missed_appointment",
+        ).count(), 1)
+
+    def test_missed_reminder_is_in_patient_history_and_report(self):
+        send_missed_appointment_reminder(
+            self.dose.pk, today=self.today, now=self._at(self.today),
+        )
+        self.client.force_login(self.nurse)
+
+        detail = self.client.get(reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk],
+        ))
+        self.assertContains(detail, "Automatic Missed Appointment")
+        self.assertContains(detail, "2nd Dose")
+
+        with patch("reports.views.timezone.localdate", return_value=self.today):
+            report = self.client.get(reverse("reports:missed_appointments"), {
+                "type": "all",
+            })
+        self.assertContains(report, self.case.case_number)
+        self.assertEqual(report.context["total"], 1)
+
+    def test_patient_list_does_not_label_simulated_reminder_as_sent(self):
+        log, _ = self._send()
+        self.assertEqual(log.status, "queued")
+        self.client.force_login(self.nurse)
+
+        with patch("django.utils.timezone.now", return_value=self._at(self.today)):
+            listing = self.client.get(reverse("vaccination:sms_log_list"))
+        self.assertNotContains(listing, "Missed – SMS Sent")
+        self.assertContains(listing, "Queued")
+        self.assertContains(listing, self.patient.full_name())
+        self.assertContains(listing, reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk],
+        ))
+
+    def test_completed_dose_does_not_show_missed_sms_sent(self):
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value=self._accepted(),
+        ):
+            log, _ = self._send()
+        self.assertEqual(log.status, "sent")
+        self.dose.actual_date = self.today
+        self.dose.dose_status = "completed"
+        self.dose.save(update_fields=["actual_date", "dose_status"])
+        self.client.force_login(self.nurse)
+
+        listing = self.client.get(reverse("vaccination:sms_log_list"))
+        self.assertNotContains(listing, "Missed – SMS Sent")
+
+    def test_message_uses_actual_ordinal_number(self):
+        self.assertEqual(
+            missed_reminder_message(self.dose),
+            "RHU Dumingag ABTC: You missed your scheduled 2nd Dose "
+            "on November 11, 2026. Please visit or contact RHU Dumingag "
+            "as soon as possible to arrange your next vaccination appointment. Thank you.",
+        )
+        self.assertIn("1st Dose", missed_reminder_message(self.first))
+        third = VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Day 7",
+            scheduled_date=datetime.date(2026, 11, 18), dose_status="scheduled",
+        )
+        self.assertIn("3rd Dose", missed_reminder_message(third))
+        for label in ('4th Dose', '5th Dose'):
+            dose = VaccineDose.objects.create(
+                schedule=self.schedule, dose_label='Protocol follow-up',
+                scheduled_date=datetime.date(2026, 11, 25), dose_status='scheduled')
+            self.assertIn(label, missed_reminder_message(dose))
+
+    def test_consent_not_given_skips_sms(self):
+        self.consent.consent_given = False
+        self.consent.save(update_fields=["consent_given"])
+        self.assertFalse(missed_sms_consent_ok(self.case))
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+        ) as send:
+            log, result = send_missed_appointment_reminder(
+                self.dose.pk, today=self.today, now=self._at(self.today),
+            )
+        self.assertEqual(log.status, "skipped")
+        self.assertEqual(log.attempt_count, 0)
+        self.assertTrue(result["skipped"])
+        self.assertIn("consent", log.api_response.lower())
+        send.assert_not_called()
+        self.assertEqual(SMSLog.objects.filter(dose=self.dose).count(), 1)
+
+    def test_consent_given_allows_sms(self):
+        self.assertTrue(missed_sms_consent_ok(self.case))
+        log, _ = send_missed_appointment_reminder(
+            self.dose.pk, today=self.today, now=self._at(self.today),
+        )
+        self.assertEqual(log.status, "queued")
+
+    def test_archived_patient_is_not_sent(self):
+        Patient.objects.filter(pk=self.patient.pk).update(is_archived=True)
+        self.assertFalse(missed_reminder_doses(today=self.today))
+        log, result = send_missed_appointment_reminder(
+            self.dose.pk, today=self.today, now=self._at(self.today),
+        )
+        self.assertIsNone(log)
+        self.assertTrue(result["skipped"])
+
+    def test_archived_case_is_not_sent(self):
+        AnimalBiteCase.objects.filter(pk=self.case.pk).update(case_status="archived")
+        self.assertFalse(missed_reminder_doses(today=self.today))
+        log, result = send_missed_appointment_reminder(
+            self.dose.pk, today=self.today, now=self._at(self.today),
+        )
+        self.assertIsNone(log)
+        self.assertTrue(result["skipped"])
+
+    def test_invalid_primary_contact_is_never_replaced_by_emergency_number(self):
+        Patient.objects.filter(pk=self.patient.pk).update(
+            contact_number="invalid",
+            emergency_contact_number="639177777777",
+        )
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+        ) as send:
+            log, result = send_missed_appointment_reminder(
+                self.dose.pk, today=self.today, now=self._at(self.today),
+            )
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["skipped"])
+        self.assertEqual(log.status, "skipped")
+        self.assertEqual(log.attempt_count, 0)
+        self.assertEqual(log.recipient, "invalid")
+        self.assertIn("contact", log.api_response.lower())
+        send.assert_not_called()
+
+
+@override_settings(SEMAPHORE_ENABLED=True, ABTC_APPOINTMENT_CUTOFF_TIME=None)
+class MissedAppointmentContractTests(_MissedAppointmentFixture, TestCase):
+
+    def test_selection_and_sender_agree_on_saved_date_and_status(self):
+        scenarios = (
+            ("scheduled", -1, None, True),
+            ("rescheduled", -1, None, True),
+            ("missed", -1, None, True),
+            ("scheduled", 0, None, False),
+            ("rescheduled", 2, None, False),
+            ("missed", 2, None, False),
+            ("scheduled", -2, None, True),
+            ("scheduled", -7, None, True),
+            ("scheduled", -8, None, False),
+            ("scheduled", None, None, False),
+            ("pending", None, None, False),
+            ("pending", -1, None, False),
+            ("cancelled", -1, None, False),
+            ("completed", -1, None, False),
+            ("scheduled", -1, self.today, False),
+        )
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value=self._accepted(),
+        ) as gateway:
+            for index, (status, offset, actual, eligible) in enumerate(scenarios):
+                with self.subTest(status=status, offset=offset, actual=actual):
+                    dose = VaccineDose.objects.create(
+                        schedule=self.schedule, dose_label=f"Eligibility {index}",
+                        protocol_day=3,
+                        scheduled_date=(self.today + datetime.timedelta(days=offset)
+                                        if offset is not None else None),
+                        actual_date=actual, dose_status=status,
+                    )
+                    self.assertEqual(missed_reminder_is_due(dose, today=self.today), eligible)
+                    self.assertEqual(
+                        missed_reminder_doses(today=self.today).filter(pk=dose.pk).exists(),
+                        eligible,
+                    )
+                    log, result = send_missed_appointment_reminder(
+                        dose.pk, today=self.today, now=self._at(self.today),
+                    )
+                    if eligible:
+                        self.assertEqual(log.status, "sent")
+                    else:
+                        self.assertIsNone(log)
+                        self.assertTrue(result["skipped"])
+                        self.assertFalse(SMSLog.objects.filter(dose=dose).exists())
+            self.assertEqual(gateway.call_count, 5)
+
+    def test_inactive_cases_never_attempt_delivery(self):
+        with patch("vaccination.missed_appointments.send_semaphore_sms") as gateway:
+            for status in ("completed", "archived", "referred"):
+                with self.subTest(status=status):
+                    AnimalBiteCase.objects.filter(pk=self.case.pk).update(case_status=status)
+                    self.assertFalse(missed_reminder_doses(today=self.today).exists())
+                    log, result = self._send(retry_failed=True)
+                    self.assertIsNone(log)
+                    self.assertTrue(result["skipped"])
+            gateway.assert_not_called()
+
+    def test_manila_midnight_is_independent_of_active_utc_timezone(self):
+        before = datetime.datetime(2026, 11, 11, 15, 59, tzinfo=datetime.timezone.utc)
+        midnight = before + datetime.timedelta(minutes=1)
+        with timezone.override("UTC"):
+            self.assertFalse(missed_reminder_is_due(self.dose, now=before))
+            self.assertTrue(missed_reminder_is_due(self.dose, now=midnight))
+            self.assertEqual(list(missed_reminder_doses(now=midnight)), [self.dose])
+            # An explicit date is the Manila appointment window, not the UTC date.
+            self.assertTrue(missed_reminder_is_due(self.dose, today=self.today, now=before))
+            with patch("django.utils.timezone.now", return_value=midnight):
+                self.assertEqual(self.dose.appointment_status(), "missed")
+                self.assertEqual(self.dose.effective_status, "Missed")
+            with patch(
+                "vaccination.missed_appointments.send_semaphore_sms",
+                return_value=self._accepted(),
+            ) as gateway:
+                log, result = send_missed_appointment_reminder(self.dose.pk, now=midnight)
+            self.assertEqual(log.status, "sent")
+            self.assertTrue(result["success"])
+            gateway.assert_called_once()
+
+    def test_missing_or_patient_only_consent_is_logged_without_gateway_attempts(self):
+        for linked_only_to_patient in (False, True):
+            with self.subTest(patient_only=linked_only_to_patient):
+                if linked_only_to_patient:
+                    self._pre_registration(True)
+                PreRegistration.objects.filter(converted_case=self.case).update(converted_case=None)
+                if not linked_only_to_patient:
+                    PreRegistration.objects.filter(converted_patient=self.patient).delete()
+                self.assertFalse(missed_sms_consent_ok(self.case))
+                with patch("vaccination.missed_appointments.send_semaphore_sms") as gateway:
+                    log, result = self._send()
+                    again, _ = self._send(retry_failed=True)
+                self.assertEqual(log.status, "skipped")
+                self.assertEqual(log.attempt_count, 0)
+                self.assertIn("consent", log.api_response.lower())
+                self.assertTrue(result["skipped"])
+                self.assertEqual(again.pk, log.pk)
+                self.assertEqual(SMSLog.objects.filter(dose=self.dose).count(), 1)
+                gateway.assert_not_called()
+
+    def test_primary_contact_wins_over_emergency_and_account_mobile(self):
+        account = U.objects.create_user("p.missed", role="patient", mobile="09178889999")
+        Patient.objects.filter(pk=self.patient.pk).update(
+            account=account, contact_number="+63 917 333 4444",
+            emergency_contact_number="09177778888",
+        )
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value=self._accepted(),
+        ) as gateway:
+            log, _ = self._send()
+        self.assertEqual(log.recipient, "639173334444")
+        gateway.assert_called_once_with("639173334444", missed_reminder_message(self.dose))
+
+    def test_blank_primary_contact_does_not_fall_back_to_account_mobile(self):
+        account = U.objects.create_user("p.blank", role="patient", mobile="09178889999")
+        Patient.objects.filter(pk=self.patient.pk).update(
+            account=account, contact_number="", emergency_contact_number="09177778888",
+        )
+        with patch("vaccination.missed_appointments.send_semaphore_sms") as gateway:
+            log, result = self._send(retry_failed=True)
+        self.assertEqual(log.status, "skipped")
+        self.assertEqual(log.attempt_count, 0)
+        self.assertTrue(result["skipped"])
+        gateway.assert_not_called()
+
+    def test_second_patient_has_an_independent_event_and_recipient(self):
+        patient = Patient.objects.create(
+            patient_number="PAT-MISS02", first_name="Maria", last_name="Santos",
+            birthdate=datetime.date(1992, 2, 2), contact_number="09175556666",
+        )
+        case = AnimalBiteCase.objects.create(
+            case_number="ABC-MISS02", patient=patient, created_by=self.nurse,
+            animal_type="cat", exposure_type="bite", case_status="under_treatment",
+            date_time_bite=self._at(self.today - datetime.timedelta(days=5)),
+        )
+        schedule = VaccinationSchedule.objects.create(bite_case=case, created_by=self.nurse)
+        dose = VaccineDose.objects.create(
+            schedule=schedule, dose_label="Day 0", dose_status="scheduled",
+            scheduled_date=self.dose.scheduled_date,
+        )
+        self._pre_registration(True, case=case)
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value=self._accepted(),
+        ) as gateway:
+            for _ in range(2):
+                call_command("send_vaccination_reminders", "--type", "missed",
+                             "--date", self.today.isoformat(), stdout=StringIO())
+        self.assertEqual(gateway.call_count, 2)
+        logs = list(SMSLog.objects.order_by("dose_id"))
+        self.assertEqual(len(logs), 2)
+        self.assertEqual({log.recipient for log in logs}, {"639173334444", "639175556666"})
+        self.assertEqual({log.patient_id for log in logs}, {self.patient.pk, patient.pk})
+        self.assertEqual(len({log.event_key for log in logs}), 2)
+        self.assertEqual(SMSLog.objects.get(dose=dose).bite_case_id, case.pk)
+
+    def test_rescheduling_creates_new_event_only_when_new_date_is_yesterday(self):
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value=self._accepted(),
+        ) as gateway:
+            old, _ = self._send()
+            old_message, old_date = old.message, old.scheduled_date
+            self.dose.scheduled_date = self.today + datetime.timedelta(days=2)
+            self.dose.dose_status = "rescheduled"
+            self.dose.save(update_fields=["scheduled_date", "dose_status"])
+            no_log, skipped = self._send(retry_failed=True)
+            self.assertIsNone(no_log)
+            self.assertTrue(skipped["skipped"])
+            new, _ = self._send(today=self.today + datetime.timedelta(days=3))
+            self.assertNotEqual(new.event_key, old.event_key)
+            self.assertEqual(new.scheduled_date, self.dose.scheduled_date)
+            self.assertIn("November 14, 2026", new.message)
+            self.assertEqual(gateway.call_count, 2)
+        old.refresh_from_db()
+        self.assertEqual((old.message, old.scheduled_date), (old_message, old_date))
+        self.assertEqual(SMSLog.objects.filter(dose=self.dose).count(), 2)
+
+    def test_retry_requires_explicit_opt_in_hour_gap_and_maximum_three_attempts(self):
+        failure = {"success": False, "retryable": True, "error": "Message rejected"}
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms", return_value=failure,
+        ) as gateway:
+            log, _ = self._send()
+            self.assertEqual(log.status, "failed")
+            for hour, minute, retry, calls in (
+                (10, 59, True, 1), (11, 0, False, 1), (11, 0, True, 2),
+                (11, 59, True, 2), (12, 0, True, 3), (13, 0, True, 3),
+            ):
+                with self.subTest(hour=hour, minute=minute, retry=retry):
+                    self._send(now=self._at(self.today, hour, minute), retry_failed=retry)
+                    self.assertEqual(gateway.call_count, calls)
+            log.refresh_from_db()
+            self.assertEqual(log.attempt_count, 3)
+            history = json.loads(log.api_response)
+            self.assertEqual([entry["attempt"] for entry in history], [1, 2, 3])
+            self.assertTrue(all(entry["retryable"] for entry in history))
+
+    def test_nonretryable_failure_and_expired_window_cannot_be_retried(self):
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value={"success": False, "retryable": False, "error": "Rejected"},
+        ) as gateway:
+            log, _ = self._send()
+            self.assertEqual(log.status, "failed")
+            _, result = self._send(now=self._at(self.today, 12), retry_failed=True)
+            self.assertTrue(result["skipped"])
+            self._send(today=self.today + datetime.timedelta(days=1), retry_failed=True)
+            gateway.assert_called_once()
+
+    def test_retryable_failure_cannot_cross_recovery_window(self):
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value={"success": False, "retryable": True, "error": "Rejected"},
+        ) as gateway:
+            log, _ = self._send(now=self._at(self.today, 23))
+            _, result = self._send(today=self.today + datetime.timedelta(days=7), retry_failed=True)
+            self.assertTrue(result["skipped"])
+            gateway.assert_called_once()
+        log.refresh_from_db()
+        self.assertEqual(log.attempt_count, 1)
+
+    def test_force_command_cannot_bypass_duplicates_or_failed_retry_opt_in(self):
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value={"success": False, "retryable": True, "error": "Rejected"},
+        ) as gateway:
+            self._send()
+            with patch("django.utils.timezone.now", return_value=self._at(self.today, 12)):
+                for _ in range(2):
+                    call_command("send_vaccination_reminders", "--type", "missed", "--force",
+                                 "--date", self.today.isoformat(), stdout=StringIO())
+            gateway.assert_called_once()
+
+    def test_force_command_cannot_bypass_consent_or_date_window(self):
+        self.consent.delete()
+        VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Today", scheduled_date=self.today,
+            dose_status="scheduled",
+        )
+        with patch("vaccination.missed_appointments.send_semaphore_sms") as gateway:
+            call_command("send_vaccination_reminders", "--type", "missed", "--force",
+                         "--date", self.today.isoformat(), stdout=StringIO())
+            gateway.assert_not_called()
+        log = SMSLog.objects.get()
+        self.assertEqual(log.dose_id, self.dose.pk)
+        self.assertEqual(log.status, "skipped")
+        self.assertEqual(log.attempt_count, 0)
+
+    def test_command_reports_failure_to_scheduler(self):
+        from django.core.management.base import CommandError
+        with patch(
+            'vaccination.missed_appointments.send_semaphore_sms',
+            return_value={'success': False, 'error': 'Rejected', 'retryable': True},
+        ) as gateway:
+            with self.assertRaises(CommandError):
+                call_command('send_vaccination_reminders', '--type', 'missed',
+                             '--date', self.today.isoformat(), stdout=StringIO())
+        gateway.assert_called_once()
+        self.assertEqual(SMSLog.objects.get(dose=self.dose).status, 'failed')
+
+    def test_dry_run_does_not_claim_or_send(self):
+        with patch("vaccination.missed_appointments.send_semaphore_sms") as gateway:
+            call_command("send_vaccination_reminders", "--type", "missed", "--dry-run",
+                         "--date", self.today.isoformat(), stdout=StringIO())
+            gateway.assert_not_called()
+        self.assertFalse(SMSLog.objects.exists())
+
+
+@override_settings(SEMAPHORE_ENABLED=True, SEMAPHORE_API_KEY="test-private-gateway-key")
+class MissedAppointmentGatewayTests(_MissedAppointmentFixture, TestCase):
+    api_key = "test-private-gateway-key"
+
+    def _response(self, status=200, data=None):
+        response = Mock(status_code=status, text=f"apikey={self.api_key}")
+        response.json.return_value = data
+        return response
+
+    def _new_dose(self):
+        return VaccineDose.objects.create(
+            schedule=self.schedule, dose_label="Gateway case", dose_status="scheduled",
+            scheduled_date=self.dose.scheduled_date,
+        )
+
+    def _assert_unknown(self, post, dose=None):
+        dose = dose or self.dose
+        log, result = send_missed_appointment_reminder(
+            dose.pk, today=self.today, now=self._at(self.today),
+        )
+        self.assertEqual(log.status, "unknown")
+        self.assertEqual(log.attempt_count, 1)
+        self.assertFalse(result["success"])
+        self.assertFalse(json.loads(log.api_response)[-1]["retryable"])
+        self.assertNotIn(self.api_key, log.api_response + str(result))
+        again, skipped = send_missed_appointment_reminder(
+            dose.pk, today=self.today, now=self._at(self.today, 12), retry_failed=True,
+        )
+        self.assertEqual(again.pk, log.pk)
+        self.assertTrue(skipped["skipped"])
+        post.assert_called_once()
+        log.refresh_from_db()
+        self.assertEqual(log.status, "unknown")
+        self.assertEqual(log.attempt_count, 1)
+        return log
+
+    def test_real_queued_pending_sent_and_delivered_are_accepted_not_delivery_proof(self):
+        for status in ("Queued", "Pending", "Sent", "Delivered"):
+            with self.subTest(status=status):
+                dose = self._new_dose()
+                response = self._response(data=[{"status": status, "message_id": f"id-{status}"}])
+                with patch("vaccination.sms.requests.post", return_value=response) as post:
+                    log, result = send_missed_appointment_reminder(
+                        dose.pk, today=self.today, now=self._at(self.today),
+                    )
+                    self.assertEqual(log.status, "sent")
+                    self.assertEqual(log.semaphore_message_id, f"id-{status}")
+                    self.assertTrue(result["success"])
+                    _, duplicate = send_missed_appointment_reminder(
+                        dose.pk, today=self.today, now=self._at(self.today, 12), retry_failed=True,
+                    )
+                    self.assertTrue(duplicate["skipped"])
+                    post.assert_called_once()
+                    self.assertEqual(post.call_args.kwargs["data"]["number"], "639173334444")
+                    self.assertEqual(post.call_args.kwargs["data"]["message"], missed_reminder_message(dose))
+                    self.assertGreater(post.call_args.kwargs["timeout"], 0)
+                    self.assertFalse(post.call_args.kwargs['allow_redirects'])
+
+    def test_timeout_is_unknown_sanitized_and_never_retried(self):
+        with patch(
+            "vaccination.sms.requests.post",
+            side_effect=requests.Timeout(f"Request body apikey={self.api_key}"),
+        ) as post, patch("vaccination.sms.logger") as logger:
+            log = self._assert_unknown(post)
+        self.assertNotIn(self.api_key, str(logger.mock_calls))
+        self.client.force_login(self.nurse)
+        for url in (
+            reverse("vaccination:sms_log_detail", args=[log.pk]),
+            reverse("vaccination:sms_patient_detail", args=[self.patient.pk]),
+        ):
+            self.assertNotContains(self.client.get(url), self.api_key)
+
+    def test_http_500_is_unknown_even_when_response_claims_queued(self):
+        response = self._response(500, [{
+            "status": "Queued", "message_id": "possible-send", "apikey": self.api_key,
+        }])
+        with patch("vaccination.sms.requests.post", return_value=response) as post:
+            self._assert_unknown(post)
+
+    def test_http_408_is_ambiguous_not_a_retryable_rejection(self):
+        with patch(
+            "vaccination.sms.requests.post", return_value=self._response(408, {"error": "timeout"}),
+        ) as post:
+            self._assert_unknown(post)
+
+    def test_malformed_http_200_is_unknown_without_raw_body_or_secret_leak(self):
+        response = self._response()
+        response.json.side_effect = ValueError(f"Invalid JSON apikey={self.api_key}")
+        with patch("vaccination.sms.requests.post", return_value=response) as post:
+            self._assert_unknown(post)
+
+    def test_http_200_requires_recognized_status_and_real_message_id(self):
+        for payload in (
+            None, [], {}, ["unexpected"], [{"status": "Queued"}],
+            [{"status": "Sent", "message_id": 0}], [{"status": "Sent", "message_id": "0"}],
+            [{"message_id": "id-1"}], [{"status": "Not Sent", "message_id": "id-1"}],
+        ):
+            with self.subTest(payload=payload):
+                with patch(
+                    "vaccination.sms.requests.post", return_value=self._response(data=payload),
+                ) as post:
+                    self._assert_unknown(post, self._new_dose())
+
+    def test_http_429_is_definite_failure_retried_only_when_explicit(self):
+        rejected = self._response(429, {"error": "Insufficient credits", "apikey": self.api_key})
+        accepted = self._response(data=[{"status": "Queued", "message_id": "retry-accepted"}])
+        with patch("vaccination.sms.requests.post", side_effect=[rejected, accepted]) as post:
+            log, result = self._send()
+            self.assertEqual(log.status, "failed")
+            self.assertFalse(result["success"])
+            self.assertTrue(json.loads(log.api_response)[-1]["retryable"])
+            self.assertNotIn(self.api_key, log.api_response + str(result))
+            _, skipped = self._send(now=self._at(self.today, 12))
+            self.assertTrue(skipped["skipped"])
+            retried, result = self._send(now=self._at(self.today, 12), retry_failed=True)
+            self.assertEqual(retried.pk, log.pk)
+            self.assertEqual(retried.status, "sent")
+            self.assertTrue(result["success"])
+            self.assertEqual(retried.attempt_count, 2)
+            self.assertEqual(post.call_count, 2)
+            _, duplicate = self._send(now=self._at(self.today, 14), retry_failed=True)
+            self.assertTrue(duplicate["skipped"])
+            self.assertEqual(post.call_count, 2)
+
+    def test_unexpected_gateway_exception_is_unknown_without_secret_leak(self):
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            side_effect=RuntimeError(f"Unexpected apikey={self.api_key}"),
+        ) as gateway:
+            self._assert_unknown(gateway)
+
+    @override_settings(SEMAPHORE_ENABLED=False)
+    def test_disabled_gateway_queues_simulation_without_success_or_http_request(self):
+        with patch("vaccination.sms.requests.post") as post:
+            log, result = self._send()
+            self.assertEqual(log.status, "queued")
+            self.assertEqual(log.attempt_count, 0)
+            self.assertFalse(result["success"])
+            self.assertTrue(result["simulated"])
+            self._send(now=self._at(self.today, 12), retry_failed=True)
+            post.assert_not_called()
+        self.assertEqual(SMSLog.objects.filter(dose=self.dose).count(), 1)
+
+
+@override_settings(SEMAPHORE_ENABLED=False, ABTC_APPOINTMENT_CUTOFF_TIME=None)
+class MissedAppointmentPresentationTests(_MissedAppointmentFixture, TestCase):
+
+    def _details(self):
+        return self.client.get(reverse("vaccination:sms_patient_detail", args=[self.patient.pk]))
+
+    @staticmethod
+    def _section(response, heading):
+        sections = re.findall(r"<section\b[^>]*>(.*?)</section>", response.content.decode(), re.S)
+        return next(section for section in sections if heading in section)
+
+    def _detail_dose(self, response):
+        return next(dose for case in response.context["cases"]
+                    for dose in case.sms_doses if dose.pk == self.dose.pk)
+
+    def _log(self, status="sent", reminder_type="missed_appointment", **kwargs):
+        values = {
+            "dose": self.dose, "patient": self.patient, "bite_case": self.case,
+            "reminder_type": reminder_type, "recipient": "639173334444",
+            "message": f"Saved {reminder_type} message.",
+            "scheduled_date": self.dose.scheduled_date, "status": status,
+        }
+        values.update(kwargs)
+        return SMSLog.objects.create(**values)
+
+    def test_model_management_and_sms_details_share_effective_status(self):
+        self.client.force_login(self.nurse)
+        scenarios = (
+            ("scheduled", -1, None, "missed", "Missed"),
+            ("rescheduled", -1, None, "missed", "Missed"),
+            ("pending", -1, None, "missed", "Missed"),
+            ("scheduled", 0, None, "scheduled", "Scheduled"),
+            ("missed", 2, None, "scheduled", "Scheduled"),
+            ("rescheduled", 2, None, "rescheduled", "Rescheduled"),
+            ("missed", None, None, "pending", "Pending Scheduling"),
+            ("completed", -1, None, "completed", "Completed"),
+            ("scheduled", -1, self.today, "completed", "Completed"),
+            ("cancelled", -1, self.today, "completed", "Completed"),
+            ("cancelled", -1, None, "cancelled", "Cancelled"),
+        )
+        with patch("django.utils.timezone.now", return_value=self._at(self.today)):
+            for stored, offset, actual, code, label in scenarios:
+                with self.subTest(stored=stored, offset=offset, actual=actual):
+                    self.dose.dose_status = stored
+                    self.dose.scheduled_date = (
+                        self.today + datetime.timedelta(days=offset) if offset is not None else None)
+                    self.dose.actual_date = actual
+                    self.dose.save(update_fields=["dose_status", "scheduled_date", "actual_date"])
+                    self.assertEqual(self.dose.appointment_status(today=self.today), code)
+                    self.assertEqual(self.dose.effective_status, label)
+                    manage = self.client.get(reverse(
+                        "vaccination:nurse_schedule_manage", args=[self.schedule.pk]))
+                    row = next(row for row in manage.context["dose_rows"] if row["dose"].pk == self.dose.pk)
+                    self.assertEqual(row["status_label"], label)
+                    self.assertEqual(row["status_class"], code)
+                    self.assertEqual(row["is_missed"], code == "missed")
+                    detail = self._details()
+                    displayed = self._detail_dose(detail)
+                    self.assertEqual(displayed.effective_status, label)
+                    section = self._section(detail, "B. Vaccination Schedules")
+                    dose_row = next(row for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", section, re.S)
+                                    if "2nd Dose" in row)
+                    badge = f'<span class="status-badge vaccination-status status-{code}">{label}</span>'
+                    self.assertIn(badge, dose_row)
+                    self.assertContains(manage, badge)
+                    self.dose.refresh_from_db()
+                    self.assertEqual(self.dose.dose_status, stored)
+        self.assertFalse(SMSLog.objects.exists())
+
+    def test_manila_midnight_ui_parity_with_utc_override(self):
+        self.client.force_login(self.nurse)
+        midnight = datetime.datetime(2026, 11, 11, 16, 0, tzinfo=datetime.timezone.utc)
+        with timezone.override("UTC"), patch("django.utils.timezone.now", return_value=midnight):
+            manage = self.client.get(reverse(
+                "vaccination:nurse_schedule_manage", args=[self.schedule.pk]))
+            row = next(row for row in manage.context["dose_rows"] if row["dose"].pk == self.dose.pk)
+            self.assertEqual(row["status_label"], "Missed")
+            self.assertEqual(self._detail_dose(self._details()).effective_status, "Missed")
+
+    def test_missed_schedule_status_uses_only_current_missed_event(self):
+        self.client.force_login(self.nurse)
+        self._log(reminder_type="3days_before")
+        self._log(reminder_type="on_day")
+        self._log(scheduled_date=self.dose.scheduled_date - datetime.timedelta(days=3))
+        self._log(dose=self.first, scheduled_date=self.dose.scheduled_date)
+        with patch("django.utils.timezone.now", return_value=self._at(self.today)):
+            detail = self._details()
+            displayed = self._detail_dose(detail)
+            self.assertEqual(displayed.sms_reminder_status, "Pending")
+            self.assertEqual(displayed.sms_reminder_status_code, "pending")
+            self.assertNotIn("Missed Reminder Sent", self._section(detail, "B. Vaccination Schedules"))
+            current = self._log()
+            # A newer advance message must not override the current missed reminder.
+            self._log(status="failed", reminder_type="3days_before")
+            for status in ("sent", "queued", "failed", "unknown", "skipped"):
+                with self.subTest(status=status):
+                    current.status = status
+                    current.save(update_fields=["status"])
+                    detail = self._details()
+                    displayed = self._detail_dose(detail)
+                    label = "Missed Reminder Sent" if status == "sent" else dict(SMSLog.STATUS_CHOICES)[status]
+                    self.assertEqual(displayed.sms_reminder_status, label)
+                    self.assertEqual(displayed.sms_reminder_status_code, status)
+                    self.assertIn(label, self._section(detail, "B. Vaccination Schedules"))
+
+    def test_upcoming_reminder_keeps_latest_failure_visible(self):
+        self.client.force_login(self.nurse)
+        self.dose.scheduled_date = self.today + datetime.timedelta(days=3)
+        self.dose.save(update_fields=['scheduled_date'])
+        self._log(reminder_type='schedule_set')
+        self._log(status='failed', reminder_type='manual_immediate')
+        with patch('django.utils.timezone.now', return_value=self._at(self.today)):
+            self.assertEqual(self._detail_dose(self._details()).sms_reminder_status, 'Failed')
+
+    def test_history_keeps_one_row_per_event_and_hides_details_without_changing_logs(self):
+        self.client.force_login(self.nurse)
+        for reminder_type, _ in SMSLog.REMINDER_CHOICES:
+            self._log(reminder_type=reminder_type, api_response='Saved gateway response.')
+        self._log(scheduled_date=self.dose.scheduled_date - datetime.timedelta(days=3),
+                  message="Earlier missed appointment message.")
+        saved = list(SMSLog.objects.order_by('pk').values())
+        with patch("django.utils.timezone.now", return_value=self._at(self.today)):
+            detail = self._details()
+        self.assertEqual({log.pk for log in detail.context["logs"]}, {log['id'] for log in saved})
+        history = self._section(detail, "C. SMS Reminder History")
+        rows = re.findall(r'<tr\b[^>]*>(.*?)</tr>', history, re.S)
+        self.assertEqual(len(rows), len(saved) + 1)
+        for row in rows[1:]:
+            self.assertEqual(len(re.findall(r'<td\b', row)), 6)
+        for log in saved:
+            self.assertNotIn(log['message'], history)
+            if log['api_response']:
+                self.assertNotIn(log['api_response'], history)
+        self.assertNotIn('Message and sending details', history)
+        self.assertNotIn('<details', history)
+        self.assertNotIn('<summary', history)
+        self.assertIn("Advance Reminder", history)
+        self.assertIn("Appointment Day Reminder", history)
+        self.assertIn("Automatic Missed Appointment Reminder", history)
+        self.assertIn("Manual Reminder", history)
+        self.assertEqual(saved, list(SMSLog.objects.order_by('pk').values()))
+
+    def test_completed_or_rescheduled_dose_keeps_history_but_not_missed_badge(self):
+        self.client.force_login(self.nurse)
+        old = self._log(message=missed_reminder_message(self.dose))
+        with patch("django.utils.timezone.now", return_value=self._at(self.today)):
+            for completed in (True, False):
+                with self.subTest(completed=completed):
+                    self.dose.actual_date = self.today if completed else None
+                    self.dose.dose_status = "completed" if completed else "rescheduled"
+                    if not completed:
+                        self.dose.scheduled_date = self.today + datetime.timedelta(days=3)
+                    self.dose.save(update_fields=["actual_date", "dose_status", "scheduled_date"])
+                    detail = self._details()
+                    self.assertNotIn("Missed Reminder Sent", self._section(detail, "B. Vaccination Schedules"))
+                    self.assertIn(old.pk, [log.pk for log in detail.context['logs']])
+                    self.assertNotIn(old.message, self._section(detail, "C. SMS Reminder History"))
+                    self.assertNotContains(self.client.get(reverse("vaccination:sms_log_list")), "Missed – SMS Sent")
+        old.refresh_from_db()
+        self.assertEqual(old.scheduled_date, self.today - datetime.timedelta(days=1))
+
+    def test_page_refreshes_do_not_send_sms(self):
+        self.client.force_login(self.nurse)
+        with patch("vaccination.missed_appointments.send_semaphore_sms") as gateway:
+            for _ in range(2):
+                self._details()
+                self.client.get(reverse("vaccination:sms_log_list"))
+                self.client.get(reverse("vaccination:nurse_schedule_manage", args=[self.schedule.pk]))
+            gateway.assert_not_called()
+        self.assertFalse(SMSLog.objects.exists())
+
+    def test_manual_workflow_remains_independent_of_missed_consent_and_duplicate_claim(self):
+        self.consent.delete()
+        self.dose.scheduled_date = self.today + datetime.timedelta(days=2)
+        self.dose.save(update_fields=["scheduled_date"])
+        self.client.force_login(self.nurse)
+        url = reverse("vaccination:sms_manual_send", args=[self.dose.pk])
+        payload = {"reminder_type": "manual_immediate"}
+        with patch("django.utils.timezone.now", return_value=self._at(self.today)), patch(
+            "vaccination.sms.send_semaphore_sms", return_value=self._accepted(),
+        ) as gateway:
+            first = self.client.post(url, payload)
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(first.json()["status"], "sent")
+            duplicate = self.client.post(url, payload)
+            self.assertEqual(duplicate.status_code, 409)
+            self.assertTrue(duplicate.json()["duplicate"])
+            confirmed = self.client.post(url, {**payload, "confirm_duplicate": "1"})
+            self.assertEqual(confirmed.status_code, 200)
+            self.assertEqual(gateway.call_count, 2)
+        logs = SMSLog.objects.filter(dose=self.dose)
+        self.assertEqual(logs.count(), 2)
+        self.assertTrue(all(log.reminder_type == "manual_immediate" for log in logs))
+        self.assertTrue(all(not log.event_key for log in logs))
+        self.assertFalse(SMSLog.objects.filter(reminder_type="missed_appointment").exists())
+
+
+@override_settings(SEMAPHORE_ENABLED=False)
+class MissedAppointmentMigrationTests(_MissedAppointmentFixture, TestCase):
+    def test_only_proven_gateway_acceptance_is_relabelled_without_history_loss(self):
+        from importlib import import_module
+        from types import SimpleNamespace
+        from django.apps import apps
+
+        rows = []
+        for reference, response in (
+            ('real-id', [{'response': [{'message_id': 'real-id', 'status': 'Queued'}]}]),
+            ('0', [{'response': [{'message_id': 0, 'status': 'Queued (simulated)'}]}]),
+            ('unconfirmed', [{'response': [{'message_id': 'unconfirmed'}]}]),
+            ('invalid-history', 'not JSON'),
+        ):
+            rows.append(SMSLog.objects.create(
+                dose=self.dose, patient=self.patient, bite_case=self.case,
+                reminder_type='missed_appointment', status='queued',
+                scheduled_date=self.dose.scheduled_date, recipient='639173334444',
+                message='Saved original reminder', semaphore_message_id=reference,
+                api_response=json.dumps(response) if isinstance(response, list) else response,
+            ))
+        migration = import_module('vaccination.migrations.0010_sms_outcome_statuses')
+        migration.correct_accepted_missed_logs(apps, SimpleNamespace(connection=connections['default']))
+        self.assertEqual(SMSLog.objects.count(), 4)
+        for index, row in enumerate(rows):
+            original = row.api_response
+            row.refresh_from_db()
+            self.assertEqual(row.status, 'sent' if index == 0 else 'queued')
+            self.assertEqual(row.api_response, original)
+            self.assertEqual(row.message, 'Saved original reminder')
+
+
+@skipUnless(connections["default"].vendor == "mysql", "Durable claim concurrency requires MySQL")
+@override_settings(SEMAPHORE_ENABLED=True, ABTC_APPOINTMENT_CUTOFF_TIME=None)
+class MissedAppointmentClaimTests(_MissedAppointmentFixture, TransactionTestCase):
+    """Use independent connections: TestCase's outer transaction cannot prove a commit."""
+
+    def _worker_send(self, **kwargs):
+        connections.close_all()
+        try:
+            return self._send(**kwargs)
+        finally:
+            connections.close_all()
+
+    def test_inflight_claim_is_committed_and_second_caller_cannot_send(self):
+        entered, release = Event(), Event()
+
+        def gateway_call(*args, **kwargs):
+            entered.set()
+            if not release.wait(10):
+                raise RuntimeError("Test gateway was not released")
+            return self._accepted()
+
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms", side_effect=gateway_call,
+        ) as gateway, ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(self._worker_send)
+            try:
+                self.assertTrue(entered.wait(10), "First caller did not reach gateway")
+                # This connection belongs to the main thread, not either sender.
+                claim = SMSLog.objects.get(dose=self.dose)
+                self.assertEqual(claim.status, "unknown")
+                self.assertEqual(claim.attempt_count, 1)
+                self.assertFalse(json.loads(claim.api_response)[-1]["retryable"])
+                second = workers.submit(self._worker_send, retry_failed=True)
+                duplicate, result = second.result(timeout=10)
+                self.assertEqual(duplicate.pk, claim.pk)
+                self.assertEqual(duplicate.status, "unknown")
+                self.assertTrue(result["skipped"])
+                gateway.assert_called_once()
+            finally:
+                release.set()
+            sent, result = first.result(timeout=10)
+        self.assertEqual(sent.status, "sent")
+        self.assertTrue(result["success"])
+        self.assertEqual(SMSLog.objects.filter(dose=self.dose).count(), 1)
+        gateway.assert_called_once()
+
+    def test_worker_crash_leaves_durable_unknown_claim_and_blocks_retry(self):
+        # BaseException models a terminated worker, not a recoverable provider exception.
+        with patch(
+            "vaccination.missed_appointments.send_semaphore_sms", side_effect=SystemExit("worker stopped"),
+        ) as gateway, ThreadPoolExecutor(max_workers=1) as workers:
+            crashed = workers.submit(self._worker_send)
+            with self.assertRaises(SystemExit):
+                crashed.result(timeout=10)
+            claim = SMSLog.objects.get(dose=self.dose)
+            self.assertEqual(claim.status, "unknown")
+            self.assertEqual(claim.attempt_count, 1)
+            duplicate, result = self._send(now=self._at(self.today, 12), retry_failed=True)
+            self.assertEqual(duplicate.pk, claim.pk)
+            self.assertTrue(result["skipped"])
+            gateway.assert_called_once()
+        claim.refresh_from_db()
+        self.assertEqual(claim.status, "unknown")
+        self.assertEqual(SMSLog.objects.filter(dose=self.dose).count(), 1)
+
+
+@override_settings(SEMAPHORE_ENABLED=True)
+class MissedAppointmentRecoveryTests(_MissedAppointmentFixture, TestCase):
+
+    def setUp(self):
+        super().setUp()
+        missed = patch(
+            "vaccination.missed_appointments.send_semaphore_sms",
+            return_value=self._accepted(),
+        )
+        self.addCleanup(missed.stop)
+        self.missed_gateway = missed.start()
+        regular = patch(
+            "vaccination.sms.send_semaphore_sms", return_value=self._accepted(),
+        )
+        self.addCleanup(regular.stop)
+        self.regular_gateway = regular.start()
+
+    def _new_dose(self, age=2, **overrides):
+        values = {
+            "schedule": self.schedule, "dose_label": "Recovery candidate",
+            "scheduled_date": self.today - datetime.timedelta(days=age),
+            "dose_status": "scheduled",
+        }
+        values.update(overrides)
+        return VaccineDose.objects.create(**values)
+
+    def _event_key(self, dose):
+        return (
+            f"missed_appointment:{self.patient.pk}:{self.case.pk}:"
+            f"{dose.pk}:{dose.scheduled_date.isoformat()}"
+        )
+
+    def _log(self, dose=None, keyed=True, **overrides):
+        dose = dose or self.dose
+        values = {
+            "dose": dose, "patient": self.patient, "bite_case": self.case,
+            "reminder_type": "missed_appointment", "recipient": "639173334444",
+            "message": missed_reminder_message(dose),
+            "scheduled_date": dose.scheduled_date, "status": "pending",
+            "event_key": self._event_key(dose) if keyed else None,
+            "attempt_count": 0, "semaphore_message_id": "", "api_response": "",
+        }
+        values.update(overrides)
+        return SMSLog.objects.create(**values)
+
+    def _command(self, *args, today=None, now=None, stdout=None):
+        today = today or self.today
+        output = stdout if stdout is not None else StringIO()
+        with patch("django.utils.timezone.now", return_value=now or self._at(today)):
+            call_command("send_vaccination_reminders", *args, stdout=output)
+        return output.getvalue()
+
+    def _catchups(self, count=26):
+        return [
+            self._new_dose(age=2 + index % 6, dose_label=f"Catch-up {index + 1}")
+            for index in range(count)
+        ]
+
+    def _regular_doses(self):
+        return self._new_dose(age=0), self._new_dose(age=-3)
+
+    def _assert_november_12_recovered_once(self, processing_day):
+        self.dose.scheduled_date = self.today
+        self.dose.save(update_fields=["scheduled_date"])
+        saved_doses = list(self.schedule.doses.values())
+        processed_at = self._at(processing_day, 15, 37)
+        self._command("--type", "missed", today=processing_day, now=processed_at)
+
+        log = SMSLog.objects.get(dose=self.dose)
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.sent_at, processed_at)
+        self.assertEqual(log.created_at, processed_at)
+        self.assertEqual(log.scheduled_date, datetime.date(2026, 11, 12))
+        self.assertEqual(log.event_key, self._event_key(self.dose))
+        self.assertEqual(log.attempt_count, 1)
+        self.assertEqual(log.semaphore_message_id, "missed-1")
+        self.assertEqual(log.message, missed_reminder_message(self.dose))
+        self.assertIn("2nd Dose on November 12, 2026", log.message)
+        attempt = json.loads(log.api_response)[-1]
+        self.assertEqual(attempt["at"], processed_at.isoformat())
+        self.assertEqual(attempt["status"], "sent")
+        saved_log = SMSLog.objects.values().get(pk=log.pk)
+
+        # Keep running through the last eligible day, without changing the event.
+        for offset in range(1, (self.today + datetime.timedelta(days=7) - processing_day).days + 1):
+            self._command("--type", "missed", today=processing_day + datetime.timedelta(days=offset))
+        self.missed_gateway.assert_called_once_with("639173334444", log.message)
+        self.regular_gateway.assert_not_called()
+        self.assertEqual(SMSLog.objects.count(), 1)
+        self.assertEqual(SMSLog.objects.values().get(pk=log.pk), saved_log)
+        self.assertEqual(list(self.schedule.doses.values()), saved_doses)
+
+    def test_november_12_recovered_once_on_november_14(self):
+        self._assert_november_12_recovered_once(datetime.date(2026, 11, 14))
+
+    def test_november_12_recovered_once_on_november_15(self):
+        self._assert_november_12_recovered_once(datetime.date(2026, 11, 15))
+
+    def _assert_pristine_pending_reused(self, keyed):
+        original_time = self._at(self.today, 8)
+        with patch("django.utils.timezone.now", return_value=original_time):
+            pending = self._log(
+                keyed=keyed, patient=self.patient if keyed else None,
+                bite_case=self.case if keyed else None,
+            )
+        saved_dose = VaccineDose.objects.values().get(pk=self.dose.pk)
+        processing_day = self.today + datetime.timedelta(days=2)
+        processed_at = self._at(processing_day, 14, 25)
+        self._command("--type", "missed", today=processing_day, now=processed_at)
+
+        pending.refresh_from_db()
+        self.assertEqual(list(SMSLog.objects.values_list("pk", flat=True)), [pending.pk])
+        self.assertEqual(pending.status, "sent")
+        self.assertEqual(pending.event_key, self._event_key(self.dose))
+        self.assertEqual(pending.patient_id, self.patient.pk)
+        self.assertEqual(pending.bite_case_id, self.case.pk)
+        self.assertEqual(pending.attempt_count, 1)
+        self.assertEqual(pending.semaphore_message_id, "missed-1")
+        self.assertEqual(pending.created_at, original_time)
+        self.assertEqual(pending.sent_at, processed_at)
+        self.assertEqual(json.loads(pending.api_response)[-1]["at"], processed_at.isoformat())
+        self.assertEqual(VaccineDose.objects.values().get(pk=self.dose.pk), saved_dose)
+        self.missed_gateway.assert_called_once_with("639173334444", missed_reminder_message(self.dose))
+
+    def test_keyed_pristine_pending_reuses_same_row(self):
+        self._assert_pristine_pending_reused(keyed=True)
+
+    def test_legacy_pristine_pending_reuses_same_row(self):
+        self._assert_pristine_pending_reused(keyed=False)
+
+    def test_ambiguous_pending_is_never_resent(self):
+        for keyed in (True, False):
+            for evidence in (
+                {"attempt_count": 1},
+                {"semaphore_message_id": "possible-submission"},
+                {"semaphore_message_id": "0"},
+                {"api_response": "[]"},
+                {"api_response": "Unconfirmed provider response"},
+            ):
+                with self.subTest(keyed=keyed, evidence=evidence):
+                    dose = self._new_dose()
+                    pending = self._log(dose=dose, keyed=keyed, **evidence)
+                    saved = SMSLog.objects.values().get(pk=pending.pk)
+                    for retry in (False, True):
+                        log, result = send_missed_appointment_reminder(
+                            dose.pk, today=self.today, now=self._at(self.today, 12),
+                            retry_failed=retry, expected_scheduled_date=dose.scheduled_date,
+                        )
+                        self.assertEqual(log.pk, pending.pk)
+                        self.assertTrue(result["skipped"])
+                    self.assertEqual(SMSLog.objects.filter(dose=dose).count(), 1)
+                    self.assertEqual(SMSLog.objects.values().get(pk=pending.pk), saved)
+        self.missed_gateway.assert_not_called()
+
+    def test_sent_and_unknown_events_are_excluded_and_blocked(self):
+        for keyed in (True, False):
+            for status in ("sent", "unknown"):
+                with self.subTest(keyed=keyed, status=status):
+                    dose = self._new_dose()
+                    previous = self._log(dose=dose, keyed=keyed, status=status)
+                    saved = SMSLog.objects.values().get(pk=previous.pk)
+                    self.assertFalse(missed_reminder_doses(today=self.today).filter(pk=dose.pk).exists())
+                    log, result = send_missed_appointment_reminder(
+                        dose.pk, today=self.today, now=self._at(self.today), retry_failed=True,
+                    )
+                    self.assertEqual(log.pk, previous.pk)
+                    self.assertTrue(result["skipped"])
+                    self.assertEqual(SMSLog.objects.filter(dose=dose).count(), 1)
+                    self.assertEqual(SMSLog.objects.values().get(pk=previous.pk), saved)
+        self.missed_gateway.assert_not_called()
+
+    def test_other_dates_doses_and_reminder_types_do_not_block(self):
+        self._log(keyed=False, status="sent", scheduled_date=self.today - datetime.timedelta(days=3))
+        self._log(keyed=False, status="unknown", reminder_type="on_day")
+        self._log(dose=self.first, keyed=False, status="sent", scheduled_date=self.dose.scheduled_date)
+        saved = list(SMSLog.objects.order_by("pk").values())
+        self.assertTrue(missed_reminder_doses(today=self.today).filter(pk=self.dose.pk).exists())
+        log, result = self._send(expected_scheduled_date=self.dose.scheduled_date)
+        self.assertTrue(result["success"])
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(SMSLog.objects.count(), 4)
+        self.assertEqual(list(SMSLog.objects.exclude(pk=log.pk).order_by("pk").values()), saved)
+        self.missed_gateway.assert_called_once()
+
+    def test_legacy_sent_blocks_pristine_pending(self):
+        for keyed in (True, False):
+            with self.subTest(keyed=keyed):
+                dose = self._new_dose()
+                self._log(dose=dose, keyed=False, status="sent")
+                self._log(dose=dose, keyed=keyed)
+                saved = list(SMSLog.objects.filter(dose=dose).order_by("pk").values())
+                self.assertFalse(missed_reminder_doses(today=self.today).filter(pk=dose.pk).exists())
+                _, result = send_missed_appointment_reminder(
+                    dose.pk, today=self.today, now=self._at(self.today), retry_failed=True,
+                )
+                self.assertTrue(result["skipped"])
+                self.assertEqual(list(SMSLog.objects.filter(dose=dose).order_by("pk").values()), saved)
+        self.missed_gateway.assert_not_called()
+
+    def test_actual_time_without_date_blocks_recovery(self):
+        VaccineDose.objects.filter(pk=self.dose.pk).update(actual_time=datetime.time(9, 15))
+        self.dose.refresh_from_db()
+        self.assertIsNone(self.dose.actual_date)
+        self.assertFalse(missed_reminder_is_due(self.dose, today=self.today))
+        self.assertFalse(missed_reminder_doses(today=self.today).exists())
+        log, result = self._send()
+        self.assertIsNone(log)
+        self.assertTrue(result["skipped"])
+        self.assertFalse(SMSLog.objects.exists())
+        self.missed_gateway.assert_not_called()
+
+    def test_ineligible_current_doses_are_not_recovered(self):
+        for changes in (
+            {"dose_status": "completed"},
+            {"dose_status": "cancelled"},
+            {"dose_status": "rescheduled", "scheduled_date": self.today + datetime.timedelta(days=2)},
+            {"actual_date": self.today},
+        ):
+            with self.subTest(changes=changes):
+                dose = self._new_dose(**changes)
+                self.assertFalse(missed_reminder_is_due(dose, today=self.today))
+                self.assertFalse(missed_reminder_doses(today=self.today).filter(pk=dose.pk).exists())
+                saved = VaccineDose.objects.values().get(pk=dose.pk)
+                log, result = send_missed_appointment_reminder(
+                    dose.pk, today=self.today, now=self._at(self.today), retry_failed=True,
+                )
+                self.assertIsNone(log)
+                self.assertTrue(result["skipped"])
+                self.assertEqual(VaccineDose.objects.values().get(pk=dose.pk), saved)
+        self.assertFalse(SMSLog.objects.exists())
+        self.missed_gateway.assert_not_called()
+
+    def test_superseded_expected_date_is_checked_under_lock(self):
+        expected_date = self.dose.scheduled_date
+        current_date = self.today - datetime.timedelta(days=2)
+
+        def reschedule_before_claim(dose_id, **kwargs):
+            # The command has already selected the old date; both dates are eligible.
+            VaccineDose.objects.filter(pk=dose_id).update(
+                scheduled_date=current_date, dose_status="rescheduled",
+            )
+            return send_missed_appointment_reminder(dose_id, **kwargs)
+
+        with patch(
+            "vaccination.missed_appointments.send_missed_appointment_reminder",
+            side_effect=reschedule_before_claim,
+        ) as service:
+            self._command("--type", "missed")
+        service.assert_called_once_with(
+            self.dose.pk, today=self.today, retry_failed=False,
+            expected_scheduled_date=expected_date,
+        )
+        self.dose.refresh_from_db()
+        self.assertEqual(self.dose.scheduled_date, current_date)
+        self.assertTrue(missed_reminder_is_due(self.dose, today=self.today))
+        self.assertFalse(SMSLog.objects.exists())
+        self.missed_gateway.assert_not_called()
+
+    def _assert_change_after_claim_blocks_http(self, **changes):
+        original_save = SMSLog.save
+        claims = []
+
+        def save_then_change(log, *args, **kwargs):
+            result = original_save(log, *args, **kwargs)
+            if log.dose_id == self.dose.pk and log.status == "unknown":
+                claim = SMSLog.objects.get(pk=log.pk)
+                self.assertEqual(claim.attempt_count, 1)
+                self.assertEqual(claim.status, "unknown")
+                claims.append(claim.pk)
+                VaccineDose.objects.filter(pk=self.dose.pk).update(**changes)
+            return result
+
+        with patch.object(SMSLog, "save", autospec=True, side_effect=save_then_change):
+            log, result = self._send(expected_scheduled_date=self.dose.scheduled_date)
+        self.assertEqual(claims, [log.pk])
+        self.assertTrue(result["skipped"])
+        self.assertFalse(result["success"])
+        self.assertIn("changed before submission", result["error"])
+        log.refresh_from_db()
+        self.assertEqual(log.status, "skipped")
+        self.assertEqual(log.attempt_count, 0)
+        self.assertEqual(log.scheduled_date, self.dose.scheduled_date)
+        self.assertEqual(log.semaphore_message_id, "")
+        self.assertEqual(json.loads(log.api_response)[-1]["status"], "skipped")
+        self.assertEqual(SMSLog.objects.count(), 1)
+        self.dose.refresh_from_db()
+        for field, value in changes.items():
+            self.assertEqual(getattr(self.dose, field), value)
+        self.missed_gateway.assert_not_called()
+
+    def test_actual_time_recorded_after_claim_prevents_http(self):
+        self._assert_change_after_claim_blocks_http(actual_time=datetime.time(9, 45))
+        self.assertIsNone(self.dose.actual_date)
+
+    def test_date_changed_after_claim_prevents_http(self):
+        self._assert_change_after_claim_blocks_http(
+            scheduled_date=self.today - datetime.timedelta(days=2),
+        )
+        self.assertTrue(missed_reminder_is_due(self.dose, today=self.today))
+
+    def test_day_seven_is_recovered_but_day_eight_is_excluded(self):
+        VaccineDose.objects.filter(pk=self.dose.pk).update(
+            scheduled_date=self.today - datetime.timedelta(days=7),
+        )
+        self.dose.refresh_from_db()
+        expired = self._new_dose(age=8)
+        self.assertTrue(missed_reminder_is_due(self.dose, today=self.today))
+        self.assertFalse(missed_reminder_is_due(expired, today=self.today))
+        self.assertEqual(list(missed_reminder_doses(today=self.today)), [self.dose])
+        log, result = self._send()
+        self.assertEqual(log.status, "sent")
+        self.assertTrue(result["success"])
+        log, result = send_missed_appointment_reminder(
+            expired.pk, today=self.today, now=self._at(self.today), retry_failed=True,
+        )
+        self.assertIsNone(log)
+        self.assertTrue(result["skipped"])
+        self.assertFalse(SMSLog.objects.filter(dose=expired).exists())
+        self.missed_gateway.assert_called_once()
+
+    def test_large_backlog_holds_only_catchups(self):
+        from django.core.management.base import CommandError
+
+        catchups = self._catchups()
+        on_day, advance = self._regular_doses()
+        saved_doses = list(self.schedule.doses.values())
+        output = StringIO()
+        with self.assertRaisesMessage(CommandError, "backlog review required=True"):
+            self._command(stdout=output)
+        self.assertIn("catch-up candidates=26", output.getvalue())
+        self.assertIn("26 catch-up reminders require administrator review", output.getvalue())
+        self.assertEqual(set(SMSLog.objects.values_list("dose_id", "reminder_type", "status")), {
+            (self.dose.pk, "missed_appointment", "sent"),
+            (on_day.pk, "on_day", "sent"),
+            (advance.pk, "3days_before", "sent"),
+        })
+        self.assertEqual(SMSLog.objects.count(), 3)
+        self.assertFalse(SMSLog.objects.filter(dose__in=catchups).exists())
+        self.assertEqual(list(self.schedule.doses.values()), saved_doses)
+        self.missed_gateway.assert_called_once()
+        self.assertEqual(self.regular_gateway.call_count, 2)
+
+    def test_backlog_dry_run_lists_held_batch_without_writes(self):
+        catchups = self._catchups()
+        self._regular_doses()
+        self._log(dose=catchups[0])
+        saved_logs = list(SMSLog.objects.order_by("pk").values())
+        saved_doses = list(self.schedule.doses.values())
+        # A held batch must be reviewable without raising CommandError.
+        output = self._command("--dry-run")
+        self.assertIn("26 catch-up reminders require administrator review", output)
+        self.assertEqual(output.count("[DRY RUN] Would send missed appointment reminder"), 27)
+        self.assertIn("[DRY RUN] Would send on_day", output)
+        self.assertIn("[DRY RUN] Would send 3days", output)
+        for dose in [self.dose, *catchups]:
+            self.assertIn(missed_reminder_message(dose), output)
+        self.assertEqual(list(SMSLog.objects.order_by("pk").values()), saved_logs)
+        self.assertEqual(list(self.schedule.doses.values()), saved_doses)
+        self.missed_gateway.assert_not_called()
+        self.regular_gateway.assert_not_called()
+
+    def test_approval_sends_recent_backlog_not_historical(self):
+        catchups = self._catchups()
+        expired = self._new_dose(age=8)
+        ancient = self._new_dose(age=60)
+        saved_doses = list(self.schedule.doses.values())
+        output = self._command("--type", "missed", "--approve-missed-backlog")
+        self.assertIn("catch-up candidates=26", output)
+        self.assertNotIn("require administrator review", output)
+        self.assertEqual(set(SMSLog.objects.values_list("dose_id", flat=True)), {
+            dose.pk for dose in [self.dose, *catchups]
+        })
+        self.assertEqual(SMSLog.objects.filter(status="sent").count(), 27)
+        self.assertEqual(SMSLog.objects.count(), 27)
+        self.assertFalse(SMSLog.objects.filter(dose__in=[expired, ancient]).exists())
+        self.assertEqual(list(self.schedule.doses.values()), saved_doses)
+        self.assertEqual(self.missed_gateway.call_count, 27)
+        self.regular_gateway.assert_not_called()
+
+    def test_sent_catchups_do_not_trigger_review(self):
+        catchups = self._catchups()
+        previous = self._log(dose=catchups[0], keyed=False, status="sent", attempt_count=1)
+        saved = SMSLog.objects.values().get(pk=previous.pk)
+        output = self._command("--type", "missed")
+        self.assertIn("catch-up candidates=25", output)
+        self.assertNotIn("require administrator review", output)
+        self.assertEqual(SMSLog.objects.values().get(pk=previous.pk), saved)
+        self.assertEqual(SMSLog.objects.count(), 27)
+        self.assertEqual(SMSLog.objects.filter(status="sent").count(), 27)
+        self.assertEqual(self.missed_gateway.call_count, 26)
+
+    def test_recovery_retries_failures_only_with_explicit_opt_in(self):
+        self.missed_gateway.return_value = {
+            "success": False, "retryable": True, "error": "Provider rejected message",
+        }
+        failed, result = self._send()
+        self.assertEqual(failed.status, "failed")
+        self.assertFalse(result["success"])
+        saved = SMSLog.objects.values().get(pk=failed.pk)
+        processing_day = self.today + datetime.timedelta(days=2)
+        self.missed_gateway.return_value = self._accepted()
+        self._command(
+            "--type", "missed", "--force", "--approve-missed-backlog", today=processing_day,
+        )
+        self.assertEqual(SMSLog.objects.values().get(pk=failed.pk), saved)
+        self.missed_gateway.assert_called_once()
+
+        self._command("--type", "missed", "--retry-failed", today=processing_day)
+        failed.refresh_from_db()
+        self.assertEqual(failed.status, "sent")
+        self.assertEqual(failed.attempt_count, 2)
+        self.assertEqual(failed.sent_at, self._at(processing_day))
+        self.assertEqual(SMSLog.objects.count(), 1)
+        self.assertEqual(self.missed_gateway.call_count, 2)
 
 
 class NurseTriggeredScheduleTests(TestCase):
@@ -468,9 +1994,11 @@ class VaccinationRecordViewTests(TestCase):
             "Chief Complaint",
             "Exposure Narrative (Verified)",
             "Bite Category",
-            "Dose Schedule &amp; Vaccine",
-            "Vaccine Brand",
-            "Treatment, Prescription &amp; Follow-up",
+            "Clinical Assessment and Findings",
+            "Vaccination and Treatment Plan",
+            "Vaccine brand",
+            "Dose Schedule Records",
+            "Treatment Prescription and Recommendations",
         ]
         positions = [content.index(marker) for marker in markers]
         self.assertEqual(positions, sorted(positions))
@@ -722,31 +2250,37 @@ class VaccinationRecordsListTests(TestCase):
         self.assertContains(response, f"{self.patient.age} / Female")
         self.assertRegex(response.content.decode(), r">\s*E\s*<")
 
-    def test_only_view_and_manage_actions_are_rendered(self):
+    def test_nurse_patient_list_links_to_manage_without_other_record_actions(self):
         self.client.force_login(self.nurse)
         response = self.client.get(self.url)
 
-        self.assertContains(response, reverse("vaccination:record_detail", args=[self.schedule.pk]))
-        self.assertContains(response, reverse("vaccination:schedule_detail", args=[self.schedule.pk]))
+        self.assertContains(
+            response,
+            reverse("vaccination:nurse_schedule_manage", args=[self.schedule.pk]),
+        )
+        self.assertNotContains(
+            response,
+            reverse("vaccination:assessment_detail", args=[self.schedule.pk]),
+        )
         self.assertNotContains(response, reverse("patients:patient_detail", args=[self.patient.pk]))
         self.assertNotContains(response, reverse("bite_cases:case_detail", args=[self.case.pk]))
         self.assertNotContains(response, ">Patient</a>")
         self.assertNotContains(response, ">Case →</a>")
 
-    def test_nurse_actions_render_view_and_administer(self):
+    def test_nurse_actions_render_only_administer(self):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
 
-        self.assertIn(reverse("vaccination:assessment_detail", args=[self.schedule.pk]), content)
+        self.assertNotIn(reverse("vaccination:assessment_detail", args=[self.schedule.pk]), content)
         self.assertIn(reverse("vaccination:nurse_schedule_manage", args=[self.schedule.pk]), content)
         self.assertRegex(content, r">\s*Administer\s*<")
-        self.assertIn("vr-act vr-view", content)
+        self.assertNotIn("vr-act vr-view", content)
         self.assertIn("vr-act vr-add", content)
         self.assertIn("#16856A", content)
         self.assertIn("#106B55", content)
         self.assertIn("#08291F", content)
         self.assertIn("m18 2 4 4", content)
-        self.assertLess(content.index("View"), content.index("Administer"))
+        self.assertNotRegex(content, r">\s*View\s*<")
 
     def test_admin_actions_show_only_view(self):
         self.client.force_login(self.admin)
@@ -989,7 +2523,10 @@ class DoctorAssessmentOnlyViewTests(TestCase):
             quantity_received=30, quantity_available=30,
         )
         self.assessment = ClinicalAssessment.objects.create(
-            patient=self.patient, bite_case=self.case, assessed_by=self.admin,
+            patient=self.patient, bite_case=self.case,
+            assessed_by=U.objects.create_user(
+                username="doctor.assess", role="doctor"
+            ),
             chief_complaint="Dog bite on the left leg.",
             exposure_narrative="Verified: stray dog bit the patient while walking.",
             category_confirmed="category_iii", pep_indicated=True,
@@ -1000,7 +2537,7 @@ class DoctorAssessmentOnlyViewTests(TestCase):
             dosage_instructions="Take one capsule every 8 hours for 7 days.",
             follow_up_instructions="Return on Day 3 and Day 7.",
             additional_notes="No known drug allergies.",
-            status="final", is_finalized=True,
+            status="final", is_finalized=True, finalized_at=timezone.now(),
         )
         Prescription.objects.create(
             assessment=self.assessment, patient=self.patient, bite_case=self.case,
@@ -1019,8 +2556,10 @@ class DoctorAssessmentOnlyViewTests(TestCase):
             "Chief Complaint", "Dog bite on the left leg.",
             "Exposure Narrative", "Verified: stray dog bit",
             "WHO bite category", "Category III",
-            "Dose Schedule", "Vaccine Brand", "Verorab",
-            "Treatment &amp; Prescription", "Wound care and complete PEP series.",
+            "Dose Schedule", "Vaccine brand", "Verorab",
+            "Vaccination and Treatment Plan",
+            "Treatment Prescription and Recommendations",
+            "Wound care and complete PEP series.",
             "Amoxicillin", "10 capsules",
             "Take one capsule every 8 hours",
             "Return on Day 3 and Day 7.",
@@ -1056,16 +2595,12 @@ class DoctorAssessmentOnlyViewTests(TestCase):
             status="draft", is_finalized=False,
         )
         self.client.force_login(self.nurse)
-        content = self.client.get(self.url).content.decode()
-
-        self.assertIn("ASSESSMENT DRAFT", content)
-        self.assertIn("not an approved medication or vaccination order", content)
+        self.assertEqual(self.client.get(self.url).status_code, 404)
 
     def test_no_assessment_shows_no_assessment_yet(self):
         self.assessment.delete()
         self.client.force_login(self.nurse)
-        content = self.client.get(self.url).content.decode()
-        self.assertIn("NO ASSESSMENT YET", content)
+        self.assertEqual(self.client.get(self.url).status_code, 404)
 
     def test_patient_cannot_open_the_assessment_view(self):
         self.client.force_login(self.patient_user)
@@ -1732,7 +3267,401 @@ class NurseVaccinationManageTests(TestCase):
         content = self.client.get(
             reverse("vaccination:sms_log_list")).content.decode()
         self.assertIn("Send Due Reminders", content)
-        self.assertIn("Confirmation", content)
+        self.assertIn("Patient List", content)
+
+    # --- Missed / overdue display on the Manage dose table ---
+
+    def _dose_at(self, index):
+        return self.schedule.doses.order_by("id")[index]
+
+    def _set_dose(self, index, scheduled_date, status="scheduled",
+                  actual_date=None, actual_time=None):
+        dose = self._dose_at(index)
+        dose.scheduled_date = scheduled_date
+        dose.dose_status = status
+        dose.actual_date = actual_date
+        dose.actual_time = actual_time
+        dose.save(update_fields=[
+            "scheduled_date", "dose_status", "actual_date", "actual_time"])
+        return dose
+
+    def _manage(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        return response
+
+    def test_past_unadministered_dose_shows_missed_with_alert_and_actions(self):
+        today = timezone.localdate()
+        self._set_dose(0, today - datetime.timedelta(days=12), status="completed",
+                       actual_date=today - datetime.timedelta(days=12),
+                       actual_time=datetime.time(9, 0))
+        second = self._set_dose(1, today - datetime.timedelta(days=1))
+        self._set_dose(2, today)
+        self._set_dose(3, today + datetime.timedelta(days=4))
+        self._set_dose(4, today + datetime.timedelta(days=18))
+
+        response = self._manage()
+        content = response.content.decode()
+        rows = response.context["dose_rows"]
+
+        self.assertEqual(response.context["missed_count"], 1)
+        self.assertTrue(rows[1]["is_missed"])
+        self.assertEqual(rows[1]["status_label"], "Missed")
+        self.assertEqual(rows[1]["status_class"], "missed")
+        self.assertIsNone(rows[1]["dose"].actual_date)
+        self.assertEqual(rows[0]["status_label"], "Completed")
+        self.assertFalse(rows[0]["is_missed"])
+        for index in (2, 3, 4):
+            self.assertFalse(rows[index]["is_missed"])
+            self.assertEqual(rows[index]["status_label"], "Scheduled")
+        self.assertIn("status-missed", content)
+        self.assertIn("Missed Vaccination Appointment", content)
+        yesterday = today - datetime.timedelta(days=1)
+        self.assertIn("missed the scheduled 2nd Dose on", content)
+        self.assertIn(
+            f"{yesterday.strftime('%B')} {yesterday.day}, {yesterday.year}", content)
+        self.assertIn("This dose has not yet been administered.", content)
+        self.assertIn(
+            "Please review the patient's vaccination record and coordinate "
+            "the next appropriate action.", content)
+        self.assertContains(response, reverse("vaccination:dose_schedule", args=[second.pk]))
+        self.assertContains(response, reverse("vaccination:dose_administer", args=[second.pk]))
+
+    def test_dose_scheduled_today_is_scheduled_not_missed(self):
+        today = timezone.localdate()
+        self._set_dose(0, today - datetime.timedelta(days=3), status="completed",
+                       actual_date=today - datetime.timedelta(days=3))
+        self._set_dose(1, today)
+        self._set_dose(2, today + datetime.timedelta(days=4))
+        self._set_dose(3, today + datetime.timedelta(days=11))
+        self._set_dose(4, today + datetime.timedelta(days=25))
+
+        response = self._manage()
+        rows = response.context["dose_rows"]
+        self.assertFalse(rows[1]["is_missed"])
+        self.assertEqual(rows[1]["status_label"], "Scheduled")
+        self.assertEqual(rows[1]["status_class"], "scheduled")
+        self.assertEqual(response.context["missed_count"], 0)
+        self.assertNotIn("Missed Vaccination Appointment", response.content.decode())
+
+    def test_future_doses_are_scheduled_not_missed(self):
+        today = timezone.localdate()
+        self._set_dose(0, today, status="completed", actual_date=today)
+        for index, offset in ((1, 3), (2, 7), (3, 14), (4, 28)):
+            self._set_dose(index, today + datetime.timedelta(days=offset))
+
+        response = self._manage()
+        rows = response.context["dose_rows"]
+        for index in (1, 2, 3, 4):
+            self.assertFalse(rows[index]["is_missed"])
+            self.assertEqual(rows[index]["status_label"], "Scheduled")
+        self.assertEqual(response.context["missed_count"], 0)
+        self.assertNotIn("Missed Vaccination Appointment", response.content.decode())
+
+    def test_completed_dose_with_past_date_is_never_missed(self):
+        today = timezone.localdate()
+        past = today - datetime.timedelta(days=5)
+        self._set_dose(0, past, status="completed", actual_date=past,
+                       actual_time=datetime.time(10, 30))
+        self._set_dose(1, today + datetime.timedelta(days=2))
+        self._set_dose(2, today + datetime.timedelta(days=6))
+        self._set_dose(3, today + datetime.timedelta(days=13))
+        self._set_dose(4, today + datetime.timedelta(days=27))
+
+        response = self._manage()
+        content = response.content.decode()
+        rows = response.context["dose_rows"]
+        self.assertFalse(rows[0]["is_missed"])
+        self.assertEqual(rows[0]["status_label"], "Completed")
+        self.assertEqual(rows[0]["status_class"], "completed")
+        self.assertIn("status-completed", content)
+        self.assertIn(past.strftime("%b %d, %Y"), content)
+        self.assertIn("10:30 AM", content)
+        self.assertEqual(response.context["missed_count"], 0)
+        self.assertNotIn("Missed Vaccination Appointment", content)
+
+    def test_missed_status_clears_once_the_dose_is_administered(self):
+        today = timezone.localdate()
+        self._set_dose(0, today - datetime.timedelta(days=12), status="completed",
+                       actual_date=today - datetime.timedelta(days=12))
+        second = self._set_dose(1, today - datetime.timedelta(days=1))
+        self._set_dose(2, today + datetime.timedelta(days=4))
+        self._set_dose(3, today + datetime.timedelta(days=11))
+        self._set_dose(4, today + datetime.timedelta(days=25))
+
+        before = self._manage()
+        self.assertTrue(before.context["dose_rows"][1]["is_missed"])
+        self.assertIn("Missed Vaccination Appointment", before.content.decode())
+
+        self.client.post(
+            reverse("vaccination:dose_administer", args=[second.pk]),
+            {"actual_date": today.isoformat(), "actual_time": "10:30",
+             "vaccine_brand": "Verorab", "batch_number": "LOT-V1"},
+        )
+        second.refresh_from_db()
+        self.assertEqual(second.dose_status, "completed")
+
+        after = self._manage()
+        self.assertFalse(after.context["dose_rows"][1]["is_missed"])
+        self.assertEqual(after.context["dose_rows"][1]["status_label"], "Completed")
+        self.assertEqual(after.context["missed_count"], 0)
+        self.assertNotIn("Missed Vaccination Appointment", after.content.decode())
+
+    def test_missed_status_clears_when_the_dose_is_rescheduled_to_a_future_date(self):
+        today = timezone.localdate()
+        self._set_dose(0, today - datetime.timedelta(days=12), status="completed",
+                       actual_date=today - datetime.timedelta(days=12))
+        second = self._set_dose(1, today - datetime.timedelta(days=1))
+        self._set_dose(2, today + datetime.timedelta(days=4))
+        self._set_dose(3, today + datetime.timedelta(days=11))
+        self._set_dose(4, today + datetime.timedelta(days=25))
+
+        before = self._manage()
+        self.assertTrue(before.context["dose_rows"][1]["is_missed"])
+        self.assertIn("Missed Vaccination Appointment", before.content.decode())
+
+        self.client.post(
+            reverse("vaccination:dose_schedule", args=[second.pk]),
+            {"scheduled_date": (today + datetime.timedelta(days=2)).isoformat()},
+        )
+        second.refresh_from_db()
+        self.assertEqual(second.scheduled_date, today + datetime.timedelta(days=2))
+
+        after = self._manage()
+        self.assertFalse(after.context["dose_rows"][1]["is_missed"])
+        self.assertEqual(after.context["missed_count"], 0)
+        self.assertNotIn("Missed Vaccination Appointment", after.content.decode())
+
+
+@override_settings(SEMAPHORE_ENABLED=False, ABTC_APPOINTMENT_CUTOFF_TIME=None)
+class NurseMissedDoseBadgeTests(TestCase):
+    """Sidebar badge + Vaccination Records highlights for overdue unadministered doses."""
+
+    def setUp(self):
+        self.nurse = U.objects.create_user("n.badge", password="pw12345678", role="nurse")
+        self.today = timezone.localdate()
+        self.patient_a = self._patient("PAT-BADGE-A", "John Paul", "Borling", "09171110001", "R")
+        self.patient_b = self._patient("PAT-BADGE-B", "Lai", "Sil", "09171110002", "D")
+        self.patient_c = self._patient("PAT-BADGE-C", "Clean", "Patient", "09171110003")
+        self.case_a = self._case("ABC-BADGE-A", self.patient_a)
+        self.case_b = self._case("ABC-BADGE-B", self.patient_b)
+        self.case_c = self._case("ABC-BADGE-C", self.patient_c)
+        for case in (self.case_a, self.case_b, self.case_c):
+            PreRegistration.objects.create(
+                first_name=case.patient.first_name, last_name=case.patient.last_name,
+                birthdate=case.patient.birthdate, sex="male",
+                contact_number=case.patient.contact_number,
+                address="Purok 1", barangay="San Jose",
+                medical_history="None", allergy_info="None", previous_rabies_vax="None",
+                bite_datetime=datetime.datetime(2026, 10, 1, 9, 0),
+                incident_place="Home", incident_barangay="San Jose",
+                animal_type="dog", animal_ownership="owned",
+                animal_vaccination_status="unknown", animal_condition="alive",
+                exposure_type="bite", body_part_affected="Arm",
+                consent_given=True, converted_case=case, converted_patient=case.patient,
+            )
+        self.schedule_a = self._schedule(self.case_a)
+        self.schedule_b = self._schedule(self.case_b)
+        self.schedule_c = self._schedule(self.case_c)
+        day = datetime.timedelta(days=1)
+        # Patient A: one missed dose (2nd, yesterday).
+        self._dose(self.schedule_a, "Day 0", self.today - 12 * day, "completed", self.today - 12 * day)
+        self.a_missed = self._dose(self.schedule_a, "Day 3", self.today - day, "scheduled")
+        self._dose(self.schedule_a, "Day 7", self.today, "scheduled")
+        self._dose(self.schedule_a, "Day 14", self.today + 4 * day, "scheduled")
+        # Patient B: two missed doses (2nd three days ago, 3rd yesterday).
+        self._dose(self.schedule_b, "Day 0", self.today - 12 * day, "completed", self.today - 12 * day)
+        self.b_missed1 = self._dose(self.schedule_b, "Day 3", self.today - 3 * day, "scheduled")
+        self.b_missed2 = self._dose(self.schedule_b, "Day 7", self.today - day, "scheduled")
+        self._dose(self.schedule_b, "Day 14", self.today + 4 * day, "scheduled")
+        # Patient C: no missed dose (completed, today, future).
+        self._dose(self.schedule_c, "Day 0", self.today - 12 * day, "completed", self.today - 12 * day)
+        self._dose(self.schedule_c, "Day 3", self.today, "scheduled")
+        self._dose(self.schedule_c, "Day 7", self.today + 4 * day, "scheduled")
+        self.list_url = reverse("vaccination:patient_schedule_list")
+        self.dashboard_url = reverse("nurse:dashboard")
+
+    def _patient(self, number, first, last, contact, middle=""):
+        return Patient.objects.create(
+            patient_number=number, first_name=first, middle_name=middle, last_name=last,
+            birthdate=datetime.date(1990, 1, 1), sex="male",
+            contact_number=contact, address="Purok 1",
+        )
+
+    def _case(self, number, patient):
+        return AnimalBiteCase.objects.create(
+            case_number=number, patient=patient, created_by=self.nurse,
+            animal_type="dog", exposure_type="bite",
+            date_time_bite=datetime.datetime(2026, 10, 1, 9, 0),
+            case_status="under_treatment",
+        )
+
+    def _schedule(self, case):
+        return VaccinationSchedule.objects.create(bite_case=case, created_by=self.nurse)
+
+    def _dose(self, schedule, label, scheduled_date, status, actual_date=None):
+        return VaccineDose.objects.create(
+            schedule=schedule, dose_label=label, scheduled_date=scheduled_date,
+            dose_status=status, actual_date=actual_date,
+        )
+
+    def _complete(self, dose):
+        dose.dose_status = "completed"
+        dose.actual_date = self.today
+        dose.save(update_fields=["dose_status", "actual_date"])
+
+    def test_detection_counts_only_overdue_unadministered_active_doses(self):
+        self.assertEqual(missed_dose_count(today=self.today), 3)
+        counts = missed_dose_counts_by_patient(today=self.today)
+        self.assertEqual(counts.get(self.patient_a.pk), 1)
+        self.assertEqual(counts.get(self.patient_b.pk), 2)
+        self.assertNotIn(self.patient_c.pk, counts)
+        pks = set(missed_dose_queryset(today=self.today).values_list("pk", flat=True))
+        self.assertEqual(pks, {self.a_missed.pk, self.b_missed1.pk, self.b_missed2.pk})
+
+    def test_detection_excludes_cancelled_archived_and_inactive(self):
+        self.assertEqual(missed_dose_count(today=self.today), 3)
+        self.a_missed.dose_status = "cancelled"
+        self.a_missed.save(update_fields=["dose_status"])
+        self.assertEqual(missed_dose_count(today=self.today), 2)
+        self.a_missed.dose_status = "scheduled"
+        self.a_missed.save(update_fields=["dose_status"])
+        self.patient_b.is_archived = True
+        self.patient_b.save(update_fields=["is_archived"])
+        self.assertEqual(missed_dose_count(today=self.today), 1)
+        self.patient_b.is_archived = False
+        self.patient_b.save(update_fields=["is_archived"])
+        self.case_a.case_status = "completed"
+        self.case_a.save(update_fields=["case_status"])
+        self.assertEqual(missed_dose_count(today=self.today), 2)
+
+    def test_sidebar_badge_shows_total_missed_count(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["missed_dose_total"], 3)
+        content = response.content.decode()
+        self.assertIn("background:#DC3545", content)
+        self.assertIn('aria-label="3 missed vaccination doses"', content)
+
+    def test_single_missed_dose_shows_badge_1(self):
+        self._complete(self.b_missed1)
+        self._complete(self.b_missed2)
+        self.client.force_login(self.nurse)
+        response = self.client.get(self.dashboard_url)
+        self.assertEqual(response.context["missed_dose_total"], 1)
+        self.assertIn('aria-label="1 missed vaccination dose"', response.content.decode())
+
+    def test_two_missed_doses_show_badge_2(self):
+        self._complete(self.a_missed)
+        self.client.force_login(self.nurse)
+        response = self.client.get(self.dashboard_url)
+        self.assertEqual(response.context["missed_dose_total"], 2)
+        self.assertIn('aria-label="2 missed vaccination doses"', response.content.decode())
+
+    def test_sidebar_badge_hidden_when_no_missed_doses(self):
+        for dose in (self.a_missed, self.b_missed1, self.b_missed2):
+            self._complete(dose)
+        self.client.force_login(self.nurse)
+        response = self.client.get(self.dashboard_url)
+        self.assertEqual(response.context["missed_dose_total"], 0)
+        content = response.content.decode()
+        self.assertNotIn("background:#DC3545", content)
+        self.assertNotIn("missed vaccination dose", content)
+
+    def test_badge_consistent_across_nurse_pages(self):
+        self.client.force_login(self.nurse)
+        urls = (self.dashboard_url, self.list_url, reverse("vaccination:sms_log_list"))
+        for url in urls:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context["missed_dose_total"], 3)
+                self.assertIn('aria-label="3 missed vaccination doses"', response.content.decode())
+
+    def test_vaccination_records_highlight_missed_patients(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("Missed Dose (1)", content)
+        self.assertIn("Missed Dose (2)", content)
+        self.assertIn("No Missed Dose", content)
+        # Each patient renders once in the desktop table and once in the mobile cards.
+        self.assertEqual(content.count("John Paul R Borling"), 2)
+        manage_a = reverse("vaccination:nurse_schedule_manage", args=[self.schedule_a.pk])
+        self.assertEqual(content.count(manage_a), 2)
+        self.assertIn("Administer", content)
+        self.assertIn('name="q"', content)
+        self.assertIn('name="barangay"', content)
+
+    def test_manage_page_shows_missed_status_and_alert(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(
+            reverse("vaccination:nurse_schedule_manage", args=[self.schedule_a.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["missed_count"], 1)
+        content = response.content.decode()
+        self.assertIn("status-missed", content)
+        self.assertIn("Missed Vaccination Appointment", content)
+        self.assertIn("John Paul R Borling missed the scheduled 2nd Dose on", content)
+
+    def test_badge_clears_when_missed_dose_completed(self):
+        self.client.force_login(self.nurse)
+        before = self.client.get(self.dashboard_url)
+        self.assertEqual(before.context["missed_dose_total"], 3)
+        self._complete(self.a_missed)
+        after = self.client.get(self.dashboard_url)
+        self.assertEqual(after.context["missed_dose_total"], 2)
+        self.assertIn('aria-label="2 missed vaccination doses"', after.content.decode())
+
+    def test_badge_clears_when_missed_dose_rescheduled_to_future(self):
+        self.client.force_login(self.nurse)
+        before = self.client.get(self.dashboard_url)
+        self.assertEqual(before.context["missed_dose_total"], 3)
+        self.a_missed.scheduled_date = self.today + datetime.timedelta(days=2)
+        self.a_missed.dose_status = "scheduled"
+        self.a_missed.save(update_fields=["scheduled_date", "dose_status"])
+        after = self.client.get(self.dashboard_url)
+        self.assertEqual(after.context["missed_dose_total"], 2)
+        self.assertNotIn(self.a_missed.pk, set(
+            missed_dose_queryset(today=self.today).values_list("pk", flat=True)))
+
+    def test_refreshing_pages_does_not_send_or_duplicate_sms(self):
+        self.client.force_login(self.nurse)
+        before = SMSLog.objects.count()
+        manage_a = reverse("vaccination:nurse_schedule_manage", args=[self.schedule_a.pk])
+        for _ in range(3):
+            self.client.get(self.dashboard_url)
+            self.client.get(self.list_url)
+            self.client.get(manage_a)
+        self.assertEqual(SMSLog.objects.count(), before)
+
+    def test_missed_dose_feeds_automatic_sms_reminder(self):
+        self.assertIn(self.a_missed, missed_dose_queryset(today=self.today))
+        call_command(
+            "send_vaccination_reminders", "--type", "missed",
+            "--date", self.today.isoformat(), stdout=StringIO(),
+        )
+        log = SMSLog.objects.get(dose=self.a_missed, reminder_type="missed_appointment")
+        self.assertEqual(log.status, "queued")
+        self.assertEqual(log.message, missed_reminder_message(self.a_missed))
+        # Sending SMS never changes the missed-dose count.
+        self.assertEqual(missed_dose_count(today=self.today), 3)
+
+    def test_missed_dose_counted_once_even_with_multiple_sms(self):
+        self.client.force_login(self.nurse)
+        for _ in range(2):
+            call_command(
+                "send_vaccination_reminders", "--type", "missed",
+                "--date", self.today.isoformat(), stdout=StringIO(),
+            )
+        self.assertEqual(SMSLog.objects.filter(
+            dose=self.a_missed, reminder_type="missed_appointment").count(), 1)
+        self.assertEqual(missed_dose_count(today=self.today), 3)
+        response = self.client.get(self.dashboard_url)
+        self.assertEqual(response.context["missed_dose_total"], 3)
 
 
 class SmsReminderPagesTests(TestCase):
@@ -1786,83 +3715,101 @@ class SmsReminderPagesTests(TestCase):
         self.client.force_login(user)
         return self.client.get(reverse("vaccination:sms_log_list"), params)
 
-    def test_both_managers_see_the_same_redesigned_layout(self):
-        markers = (
-            "SMS Reminders",
-            "Manage and monitor patient vaccination reminders.",
-            "Send Due Reminders",
-            "How SMS Reminders Work",
-            "Confirmation SMS",
-            "Advance Reminder",
-            "On-Day Reminder",
-            "Search Reminders",
-            "Search patient name, case number, or mobile number...",
-            "Reminder History",
-            "Patient / Case",
-            "Dose / Date",
-            "Reminder Type",
-            "Status",
-            "Actions",
-        )
+    def test_both_managers_see_patient_list_with_one_row_per_patient(self):
         for user in (self.admin, self.nurse):
             with self.subTest(role=user.role):
                 response = self._list(user)
                 self.assertEqual(response.status_code, 200)
                 content = response.content.decode()
-                for text in markers:
+                for text in (
+                    "SMS Reminders", "Patient List", "Patient Name",
+                    "Contact Number", "Next Dose", "Next Scheduled Date",
+                    "Reminder Status", "Action", "View", "Search...",
+                ):
                     self.assertIn(text, content)
+                self.assertEqual(content.count('id="sms-search"'), 1)
+                self.assertEqual(len(response.context["patients"]), 1)
+                self.assertEqual(response.context["page_obj"].paginator.count, 1)
+                self.assertEqual(content.count("Maria Santos"), 1)
                 self.assertEqual(response.context["total"], 3)
                 self.assertEqual(response.context["sent"], 1)
                 self.assertEqual(response.context["queued"], 1)
                 self.assertEqual(response.context["failed"], 1)
                 self.assertContains(response, reverse(
-                    "vaccination:sms_log_detail", args=[self.confirmation.pk]))
-                # Message bodies belong on the details page, not the history table.
+                    "vaccination:sms_patient_detail", args=[self.patient.pk]))
                 self.assertNotIn(self.confirmation.message, content)
-                # Only the search field remains; the extra filters are hidden.
-                self.assertNotIn('id="sms-type"', content)
-                self.assertNotIn('id="sms-status"', content)
-                self.assertNotIn('id="sms-scheduled"', content)
-                self.assertNotIn("Apply Filters", content)
-                self.assertNotIn(">Reset<", content)
+                self.assertNotIn("Upcoming Vaccination Reminders", content)
+                self.assertNotIn("Reminder History", content)
+                self.assertNotIn("Send SMS", content)
+                self.assertEqual(content.count('class="sms-view-button"'), 1)
 
-    def test_history_maps_patient_case_and_saved_dose_sequence(self):
-        content = self._list(self.nurse).content.decode()
-        self.assertIn("Maria Santos", content)
-        self.assertIn("ABC-S0001", content)
-        self.assertIn("1st Dose", content)
-        self.assertIn("2nd Dose", content)
-        self.assertNotIn("Day 0", content)
-        self.assertNotIn("Day 3", content)
-
-    def test_reminder_type_uses_portal_labels(self):
-        content = self._list(self.nurse).content.decode()
-        self.assertIn("Confirmation", content)
-        self.assertIn("3 Days Before", content)
-        self.assertIn("On Day", content)
-        self.assertNotIn('<option value="schedule_set"', content)
-
-    def test_filters_narrow_the_history(self):
-        self.assertEqual(
-            self._list(self.nurse, type="3days_before").context["page_obj"].paginator.count, 1)
-        self.assertEqual(
-            self._list(self.nurse, status="failed").context["page_obj"].paginator.count, 1)
-        self.assertEqual(
-            self._list(self.nurse, scheduled="2026-11-13").context["page_obj"].paginator.count, 1)
-        self.assertEqual(
-            self._list(self.nurse, q="ABC-S0001").context["page_obj"].paginator.count, 2)
-        self.assertEqual(
-            self._list(self.nurse, q="Maria").context["page_obj"].paginator.count, 3)
-        self.assertEqual(
-            self._list(self.nurse, q="639173334444").context["page_obj"].paginator.count, 3)
-        self.assertEqual(
-            self._list(self.nurse, q="PAT-S0001").context["page_obj"].paginator.count, 2)
-        self.assertEqual(
-            self._list(self.nurse, q="").context["page_obj"].paginator.count, 3)
+    def test_global_search_matches_patient_case_contact_dose_date_and_status(self):
+        searches = ("Maria", "ABC-S0001", "0917", "2nd Dose", "Nov 13, 2026",
+                    "Sent", "Queued", "Failed")
+        for keyword in searches:
+            with self.subTest(keyword=keyword):
+                response = self._list(self.nurse, q=keyword)
+                self.assertEqual(response.context["page_obj"].paginator.count, 1)
+                self.assertContains(response, "Maria Santos")
 
         empty = self._list(self.nurse, q="no-such-patient")
         self.assertEqual(empty.context["page_obj"].paginator.count, 0)
-        self.assertIn("No reminders match your search", empty.content.decode())
+        self.assertContains(empty, "No patients match your search.")
+
+    def test_patient_sms_details_show_only_patient_schedules_and_history(self):
+        other_patient = Patient.objects.create(
+            patient_number="PAT-S0002", first_name="Other", last_name="Person",
+            birthdate=datetime.date(1990, 1, 1), contact_number="09175556666",
+        )
+        other_case = AnimalBiteCase.objects.create(
+            case_number="ABC-S0002", patient=other_patient, created_by=self.admin,
+            animal_type="cat", exposure_type="bite",
+            date_time_bite=datetime.datetime(2026, 10, 2, 9, 0),
+        )
+        other_schedule = VaccinationSchedule.objects.create(
+            bite_case=other_case, created_by=self.admin)
+        VaccineDose.objects.create(
+            schedule=other_schedule, dose_label="Day 3",
+            scheduled_date=datetime.date(2026, 11, 14), dose_status="scheduled")
+        SMSLog.objects.create(
+            patient=other_patient, bite_case=other_case,
+            reminder_type="on_day", recipient="639175556666",
+            message="Other patient's reminder", status="sent",
+        )
+        self.client.force_login(self.nurse)
+        url = reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk])
+        with patch('django.utils.timezone.now', return_value=datetime.datetime(
+            2026, 11, 12, 9, tzinfo=ZoneInfo('Asia/Manila'),
+        )):
+            response = self.client.get(url)
+        content = response.content.decode()
+        self.assertEqual(response.status_code, 200)
+        for text in (
+            "Patient SMS Details", "PAT-S0001", "ABC-S0001",
+            "Current Treatment Status", "Vaccination Schedules",
+            "1st Dose", "2nd Dose", "SMS Reminder History",
+            "Schedule Confirmation", "Advance Reminder",
+            "Appointment Day Reminder", "Queued", "Sent", "Failed",
+            "Send SMS", "Send Vaccination Reminder",
+            "Confirm Send SMS", "Select Scheduled Dose",
+        ):
+            self.assertIn(text, content)
+        self.assertNotIn("PAT-S0002", content)
+        self.assertNotIn("ABC-S0002", content)
+        self.assertNotIn("Other patient's reminder", content)
+        self.assertEqual(
+            len(re.findall(r'<button\b[^>]*id="open-sms-modal"[^>]*>', content)),
+            1)
+        self.assertEqual(
+            response.context["eligible_doses"][0]["dose"], self.second_dose)
+
+    def test_patient_details_do_not_show_send_button_to_admin(self):
+        self.client.force_login(self.admin)
+        response = self.client.get(reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, ">Send SMS</button>", html=False)
 
     def test_detail_page_shows_the_complete_saved_record(self):
         self.client.force_login(self.nurse)
@@ -1897,28 +3844,43 @@ class SmsReminderPagesTests(TestCase):
 
     def test_non_staff_roles_cannot_reach_sms_pages(self):
         detail_url = reverse("vaccination:sms_log_detail", args=[self.confirmation.pk])
+        patient_detail_url = reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk])
         for user, destination in (
             (self.doctor, reverse("dashboard:index")),
             (self.patient_user, reverse("accounts:patient_portal")),
         ):
             self.client.force_login(user)
-            for url in (reverse("vaccination:sms_log_list"), detail_url):
+            for url in (
+                    reverse("vaccination:sms_log_list"), detail_url,
+                    patient_detail_url):
                 with self.subTest(role=user.role, url=url):
                     self.assertRedirects(
                         self.client.get(url), destination,
                         fetch_redirect_response=False)
 
     def test_pagination_keeps_active_filters(self):
-        for index in range(18):
+        for index in range(26):
+            patient = Patient.objects.create(
+                patient_number=f"PAT-P{index:04d}", first_name="Page",
+                last_name=f"Patient {index:02d}",
+                birthdate=datetime.date(1990, 1, 1),
+                contact_number=f"0917333{index:04d}",
+            )
+            case = AnimalBiteCase.objects.create(
+                case_number=f"ABC-P{index:04d}", patient=patient,
+                created_by=self.admin, animal_type="dog", exposure_type="bite",
+                date_time_bite=datetime.datetime(2026, 10, 1, 9, 0),
+            )
             SMSLog.objects.create(
-                dose=self.first_dose, bite_case=self.case,
+                bite_case=case, patient=patient,
                 reminder_type="schedule_set", recipient="639173334444",
                 message="ABTC Dumingag: extra reminder %s." % index,
                 scheduled_date=datetime.date(2026, 11, 10), status="sent",
             )
-        response = self._list(self.nurse, q="Maria")
-        self.assertEqual(response.context["page_obj"].paginator.count, 21)
-        self.assertIn("?page=2&q=Maria", response.content.decode())
+        response = self._list(self.nurse, q="Patient")
+        self.assertEqual(response.context["page_obj"].paginator.count, 26)
+        self.assertIn("?q=Patient&amp;page=2", response.content.decode())
 
 
 @override_settings(SEMAPHORE_ENABLED=False)
@@ -1976,11 +3938,13 @@ class SmsUpcomingAndManualSendTests(TestCase):
         return self.client.get(self.list_url, params)
 
     def _send(self, dose=None, kind="manual_2days_before", note="",
-              confirm=False, user=None):
+              confirm=False, user=None, return_to_patient=False):
         self.client.force_login(user or self.nurse)
         payload = {"reminder_type": kind, "custom_message": note}
         if confirm:
             payload["confirm_duplicate"] = "1"
+        if return_to_patient:
+            payload["return_to_patient"] = str(self.patient.pk)
         dose = dose or self.second
         return self.client.post(
             reverse("vaccination:sms_manual_send", args=[dose.pk]), payload)
@@ -1990,93 +3954,65 @@ class SmsUpcomingAndManualSendTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
 
-        self.assertIn("Upcoming Vaccination Reminders", content)
-        self.assertIn(
-            "Patients with upcoming scheduled vaccine doses. Send an additional reminder when necessary.",
-            content)
-        self.assertEqual(
-            [dose.pk for dose in response.context["upcoming_doses"]],
-            [self.due.pk, self.third.pk, self.second.pk, self.fourth.pk])
-        doses = {dose.pk: dose for dose in response.context["upcoming_doses"]}
-        self.assertEqual(doses[self.due.pk].date_badge, "Today")
-        self.assertEqual(doses[self.third.pk].date_badge, "Tomorrow")
-        self.assertEqual(doses[self.second.pk].date_badge, "2 Days Left")
-        self.assertEqual(doses[self.fourth.pk].date_badge, "Upcoming")
-        self.assertEqual(doses[self.second.pk].reminder_status_label, "Not Sent")
-
+        self.assertEqual(response.context["page_obj"].paginator.count, 1)
         self.assertIn("Juan Dela Cruz", content)
-        self.assertIn("ABC-U0001", content)
-        self.assertIn("2nd Dose", content)
-        self.assertIn("3rd Dose", content)
-        self.assertIn("4th Dose", content)
-        self.assertIn("Send SMS", content)
-        self.assertIn("Mobile Number", content)
+        self.assertIn("5th Dose", content)
         self.assertIn("View", content)
-        self.assertIn(
-            'data-mobile="%s"' % doses[self.second.pk].masked_mobile, content)
-        # The full number is available to the details modal, but the table masks it.
-        self.assertEqual(doses[self.second.pk].full_mobile, "639173334444")
-        self.assertTrue(doses[self.second.pk].has_mobile)
-        self.assertIn('data-full-mobile="639173334444"', content)
-        self.assertIn('data-has-mobile="1"', content)
-        self.assertNotIn(">639173334444<", content)
-        self.assertIn("Send Now", content)
-        self.assertIn(
-            'data-msg-now="%s"' % doses[self.second.pk].preview_immediate, content)
-        # Opening the page must never send a reminder.
+        self.assertNotIn("Send SMS", content)
+        self.assertNotIn("Upcoming Vaccination Reminders", content)
         self.assertEqual(SMSLog.objects.count(), 0)
 
-    def test_upcoming_details_modal_is_read_only_and_shows_patient_information(self):
-        response = self._list()
-        content = response.content.decode()
-        doses = {dose.pk: dose for dose in response.context["upcoming_doses"]}
-        second = doses[self.second.pk]
-
-        self.assertIn("Vaccination Reminder Details", content)
-        self.assertIn("Patient appointment information.", content)
-        self.assertIn("Section A – Patient Information", content)
-        self.assertIn("Section B – SMS Reminder Information", content)
-        self.assertIn("Section C – SMS Message Preview", content)
-        self.assertIn("No previous SMS record.", content)
-        self.assertIn(
-            "Preview only — no SMS is sent until you confirm.", content)
-        self.assertIn('data-appt-status="Scheduled"', content)
-        self.assertIn('data-reminder-status="Not Sent"', content)
-        self.assertIn('data-has-sms="0"', content)
-        self.assertIn(
-            'data-preview-details="%s"' % second.preview_details, content)
-        self.assertEqual(
-            second.preview_details,
-            "ABTC Dumingag: Paalala, Juan Dela Cruz (ABC-U0001) - "
-            "2nd Dose sa %s. Pumunta sa RHU sa loob ng 2 araw. "
-            "Dalhin ang card. -ABTC Dumingag"
-            % second.scheduled_date.strftime("%b %d, %Y (%a)"),
+    def test_patient_details_provide_one_send_button_and_confirmation_modal(self):
+        second_case = AnimalBiteCase.objects.create(
+            case_number="ABC-U0002", patient=self.patient,
+            created_by=self.admin, animal_type="cat", exposure_type="bite",
+            date_time_bite=datetime.datetime(2026, 10, 2, 9, 0),
         )
-        # Opening the page or its details modal must never send a reminder.
+        second_schedule = VaccinationSchedule.objects.create(
+            bite_case=second_case, created_by=self.admin)
+        VaccineDose.objects.create(
+            schedule=second_schedule, dose_label="Day 0",
+            scheduled_date=self.today + datetime.timedelta(days=2),
+            dose_status="scheduled")
+        VaccineDose.objects.create(
+            schedule=second_schedule, dose_label="Day 3",
+            scheduled_date=self.today + datetime.timedelta(days=4),
+            dose_status="scheduled")
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk]))
+        content = response.content.decode()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Select Animal Bite Case", content)
+        self.assertIn("Select Scheduled Dose", content)
+        self.assertIn("SMS Message Preview", content)
+        self.assertIn("manual_2days_before", content)
+        self.assertEqual(
+            len(re.findall(r'<button\b[^>]*id="open-sms-modal"[^>]*>', content)),
+            1)
+        self.assertEqual(len(response.context["eligible_doses"]), 5)
+        self.assertEqual(len(response.context["eligible_cases"]), 2)
         self.assertEqual(SMSLog.objects.count(), 0)
 
     def test_upcoming_details_modal_summarises_the_latest_sms_record(self):
-        SMSLog.objects.create(
+        log = SMSLog.objects.create(
             dose=self.second, patient=self.patient, bite_case=self.case,
             reminder_type="manual_2days_before", recipient="639173334444",
             message="ABTC Dumingag: earlier manual reminder.",
             scheduled_date=self.second.scheduled_date, status="sent",
             sent_at=timezone.now(),
         )
-        response = self._list()
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk]))
         content = response.content.decode()
-        doses = {dose.pk: dose for dose in response.context["upcoming_doses"]}
-        second = doses[self.second.pk]
-
-        self.assertTrue(second.has_sms)
-        self.assertEqual(second.last_sms_type, "Manual – 2 Days Before")
-        self.assertEqual(second.last_sms_result, "Sent")
-        self.assertTrue(second.last_sms_at)
-        self.assertIn('data-has-sms="1"', content)
-        self.assertIn('data-last-type="Manual – 2 Days Before"', content)
-        self.assertIn('data-last-result="Sent"', content)
+        self.assertContains(response, "Manual Reminder")
+        self.assertContains(response, "Sent")
+        self.assertContains(response, timezone.localtime(log.sent_at).strftime('%b %d, %Y'))
         self.assertEqual(
-            self.client.get(self.list_url).status_code, 200)
+            self.client.get(reverse(
+                "vaccination:sms_patient_detail", args=[self.patient.pk])).status_code,
+            200)
         self.assertEqual(SMSLog.objects.count(), 1)
 
     def test_upcoming_shows_no_registered_number_and_disables_send(self):
@@ -2086,33 +4022,18 @@ class SmsUpcomingAndManualSendTests(TestCase):
         self.patient_user.mobile = ""
         self.patient_user.save(update_fields=["mobile"])
 
-        response = self._list()
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk]))
         content = response.content.decode()
-        doses = {dose.pk: dose for dose in response.context["upcoming_doses"]}
-        second = doses[self.second.pk]
-
-        self.assertEqual(second.full_mobile, "")
-        self.assertFalse(second.has_mobile)
-        self.assertEqual(second.masked_mobile, "No registered number.")
-        self.assertIn("No registered number.", content)
-        self.assertIn('data-has-mobile="0"', content)
-        self.assertIn(
-            'disabled title="No registered mobile number"', content)
+        self.assertEqual(response.context["eligible_doses"], [])
+        self.assertIn('disabled title="No eligible scheduled doses or registered mobile number"', content)
         self.assertEqual(SMSLog.objects.count(), 0)
 
     def test_upcoming_filters_use_saved_appointment_dates(self):
-        tomorrow = self._list(upcoming="tomorrow")
-        self.assertEqual(
-            [dose.pk for dose in tomorrow.context["upcoming_doses"]], [self.third.pk])
-        two_days = self._list(upcoming="2days")
-        self.assertEqual(
-            [dose.pk for dose in two_days.context["upcoming_doses"]], [self.second.pk])
-        today_qs = self._list(upcoming="today")
-        self.assertEqual(
-            [dose.pk for dose in today_qs.context["upcoming_doses"]], [self.due.pk])
-        all_qs = self._list(upcoming="all")
-        self.assertEqual(len(all_qs.context["upcoming_doses"]), 4)
-        self.assertEqual(all_qs.context["upcoming_filter"], "all")
+        response = self._list()
+        row = response.context["patients"][0]
+        self.assertEqual(row["next_dose"], self.due)
 
     def test_manual_send_records_history_and_details(self):
         response = self._send(self.second, "manual_2days_before")
@@ -2135,14 +4056,24 @@ class SmsUpcomingAndManualSendTests(TestCase):
                 action="SEND_SMS", description__contains="Manual SMS").exists())
 
         listing = self._list().content.decode()
-        self.assertIn("Manual – 2 Days Before", listing)
         self.assertIn("Queued", listing)
 
-        detail = self.client.get(
+        detail = self.client.get(reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk])).content.decode()
+        self.assertIn("Manual Reminder", detail)
+        log_detail = self.client.get(
             reverse("vaccination:sms_log_detail", args=[log.pk])).content.decode()
-        self.assertIn("Manual – 2 Days Before", detail)
+        self.assertIn("Manual – 2 Days Before", log_detail)
         self.assertIn("Manual", detail)
         self.assertIn(log.message, detail)
+
+    def test_confirmed_manual_send_returns_to_selected_patient_details(self):
+        response = self._send(
+            self.second, "manual_2days_before", return_to_patient=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["redirect"],
+            reverse("vaccination:sms_patient_detail", args=[self.patient.pk]))
 
     def test_manual_send_now_works_for_any_appointment_date(self):
         two_days = self._send(self.second, "manual_immediate")
@@ -2158,7 +4089,8 @@ class SmsUpcomingAndManualSendTests(TestCase):
         self.assertIn(
             "3rd Dose",
             SMSLog.objects.get(dose=self.third, reminder_type="manual_immediate").message)
-        self.assertIn("Manual – Send Now", self._list().content.decode())
+        self.assertIn("Manual Reminder", self.client.get(reverse(
+            "vaccination:sms_patient_detail", args=[self.patient.pk])).content.decode())
 
         duplicate = self._send(self.second, "manual_immediate")
         self.assertEqual(duplicate.status_code, 409)
@@ -2212,6 +4144,8 @@ class SmsUpcomingAndManualSendTests(TestCase):
         self.client.force_login(self.nurse)
         self.assertEqual(self.client.get(self.send_url).status_code, 405)
 
+        admin_response = self._send(self.second, user=self.admin)
+        self.assertEqual(admin_response.status_code, 403)
         doctor_response = self._send(self.second, user=self.doctor)
         self.assertEqual(doctor_response.status_code, 403)
         # Patients are kept inside patient-facing routes by the portal middleware.

@@ -25,6 +25,8 @@ urlpatterns = [
     path('observations/<int:pk>/', views.observation_detail, name='observation_detail'),
     # SMS reminders
     path('sms/logs/', views.sms_log_list, name='sms_log_list'),
+    path('sms/logs/patient/<int:patient_pk>/', views.sms_patient_detail,
+         name='sms_patient_detail'),
     path('sms/logs/<int:pk>/', views.sms_log_detail, name='sms_log_detail'),
     path('sms/manual/<int:pk>/', views.sms_manual_send, name='sms_manual_send'),
     path('sms/send/dose/<int:pk>/', views.send_sms_for_dose, name='send_sms_for_dose'),

@@ -1,5 +1,6 @@
 """Nurse Portal → View Doctor Findings read-only assessment page."""
 import datetime
+import re
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -106,7 +107,21 @@ class DoctorFindingDetailTests(TestCase):
             "bite_case": case,
             "assessed_by": self.doctor,
             "chief_complaint": "Dog bite on the left forearm",
+            "history_present_illness": "Pain and swelling began after the bite.",
             "exposure_narrative": "Patient was bitten by the family dog while feeding it.",
+            "animal_type_verified": "dog",
+            "animal_owned_verified": "owned",
+            "animal_vax_verified": "vaccinated",
+            "wound_washed_verified": True,
+            "body_part_verified": "left forearm",
+            "number_of_wounds_verified": 2,
+            "date_time_bite_verified": datetime.datetime(2026, 10, 1, 9, 30),
+            "exam_heent": "HEENT normal.",
+            "exam_chest_lungs": "Chest clear.",
+            "exam_cardiac": "Regular rhythm.",
+            "exam_abdomen": "Abdomen soft.",
+            "skin_wound_description": "Two puncture wounds on left forearm.",
+            "systemic_review": "No fever.",
             "category_confirmed": "category_iii",
             "dose_protocol": "essen",
             "first_dose_date": datetime.date(2026, 10, 1),
@@ -114,11 +129,14 @@ class DoctorFindingDetailTests(TestCase):
             "vaccine_dose_ml": "0.5",
             "vaccine_quantity": 5,
             "treatment_plan": "Complete the Essen regimen and monitor the wound.",
+            "dose_schedule_plan": "Days 0, 3, 7, 14, 28",
+            "vaccine_lot_number": "LOT-D1",
             "dosage_instructions": "1 tablet every 8 hours for 7 days.",
             "follow_up_instructions": "Return on Day 3 and Day 7.",
             "additional_notes": "No known drug allergies.",
             "is_finalized": True,
             "status": "final",
+            "finalized_at": timezone.now(),
         }
         data.update(overrides)
         return ClinicalAssessment.objects.create(**data)
@@ -154,7 +172,7 @@ class DoctorFindingDetailTests(TestCase):
     def test_archived_case_is_admin_only(self):
         AnimalBiteCase.objects.filter(pk=self.case.pk).update(case_status="archived")
         self._login()
-        self.assertRedirects(self.client.get(self.url), reverse("bite_cases:case_list"))
+        self.assertEqual(self.client.get(self.url).status_code, 404)
 
     # -------------------------------------------------- header + layout
     def test_header_values_come_from_the_record(self):
@@ -178,42 +196,37 @@ class DoctorFindingDetailTests(TestCase):
         self._login()
         content = self.client.get(self.url).content.decode()
         markers = [
-            "1</span> Patient Information",
-            "2</span> Animal Bite Case",
-            "3</span> Vital Signs",
-            "4</span> Clinical Assessment",
-            "Chief Complaint",
-            "Exposure Narrative (Verified)",
-            "Bite Category",
-            "Dose Schedule &amp; Vaccine",
-            "Dose Schedule Records",
-            "Vaccine Brand",
-            "Treatment, Prescription &amp; Follow-up",
+            "A</span> Chief Complaint",
+            "B</span> Exposure Narrative (Verified)",
+            "C</span> Bite Category",
+            "D</span> Clinical Assessment and Findings",
+            "E</span> Vaccination and Treatment Plan",
+            "F</span> Treatment Prescription and Recommendations",
         ]
         positions = [content.index(marker) for marker in markers]
         self.assertEqual(positions, sorted(positions))
+        self.assertIn("DOCTOR FINDINGS · READ-ONLY", content)
+        self.assertNotIn("Patient Information", content)
+        self.assertNotIn("Animal Bite Case", content)
+        self.assertNotIn("Vital Signs", content)
 
     # -------------------------------------------------- patient + case data
     def test_all_patient_information_is_shown(self):
         self._login()
         response = self.client.get(self.url)
         for value in (
-            "PAT-D0001", "Record Patient", "April 04, 1990", "Female", "Married",
-            self.patient.contact_display, "Maria Patient", "Jose Patient",
-            self.patient.emergency_contact_display,
-            "Purok 2", "Dumingag", "Ada Admin",
+            "PAT-D0001", "Record Patient", "ABC-D0001",
         ):
             self.assertContains(response, value)
+        self.assertNotContains(response, "Maria Patient")
+        self.assertNotContains(response, "Ada Admin")
 
     def test_all_bite_case_information_is_shown(self):
         self._login()
         response = self.client.get(self.url)
-        for value in (
-            "ABC-D0001", "New", "October 01, 2026", "09:30 AM", "Purok 2",
-            "Dog", "Owned", "Alive", "Vaccinated", "Bite", "2",
-            "left forearm", "Yes", "Washed with soap and water",
-        ):
-            self.assertContains(response, value)
+        self.assertContains(response, "ABC-D0001")
+        self.assertContains(response, "Patient was bitten by the family dog while feeding it.")
+        self.assertNotContains(response, "Washed with soap and water")
 
     def test_selected_case_never_mixes_another_case_of_the_same_patient(self):
         second = AnimalBiteCase.objects.create(
@@ -232,10 +245,11 @@ class DoctorFindingDetailTests(TestCase):
     # -------------------------------------------------- vitals
     def test_recorded_vitals_render(self):
         self._login()
-        response = self.client.get(self.url)
-        for value in ("120/80 mmHg", "36.7", "72 bpm", "98 %", "55", "160", "21.48", "3 / 10", "Nina Nurse"):
-            self.assertContains(response, value)
-        self.assertNotContains(response, "NO VITALS YET")
+        content = self.client.get(self.url).content.decode()
+        main = content[content.index("<main"):content.index("</main>")]
+        for value in ("120/80 mmHg", "36.7", "72 bpm", "98 %", "Nina Nurse"):
+            self.assertNotIn(value, main)
+        self.assertNotIn("NO VITALS YET", main)
 
     def test_no_vitals_empty_state(self):
         patient = Patient.objects.create(
@@ -248,10 +262,12 @@ class DoctorFindingDetailTests(TestCase):
             animal_type="dog", exposure_type="bite",
             date_time_bite=datetime.datetime(2026, 10, 6, 9, 0),
         )
+        self._assessment(case, chief_complaint="Assessment with no vitals")
         self._login()
         response = self.client.get(reverse("nurse:doctor_finding_detail", args=[case.pk]))
-        self.assertContains(response, "NO VITALS YET")
-        self.assertContains(response, "No vital signs recorded for this patient.")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "NO VITALS YET")
+        self.assertNotContains(response, "Vital Signs")
 
     # -------------------------------------------------- assessment
     def test_complete_assessment_is_shown(self):
@@ -259,10 +275,19 @@ class DoctorFindingDetailTests(TestCase):
         response = self.client.get(self.url)
         for value in (
             "Dog bite on the left forearm",
+            "Pain and swelling began after the bite.",
             "family dog while feeding it",
+            "HEENT normal.",
+            "Chest clear.",
+            "Regular rhythm.",
+            "Abdomen soft.",
+            "Two puncture wounds on left forearm.",
+            "No fever.",
             "Category III",
             "Transdermal bites/scratches",
             "Complete the Essen regimen",
+            "Days 0, 3, 7, 14, 28",
+            "LOT-D1",
             "Amoxicillin",
             "21 capsules",
             "1 tablet every 8 hours for 7 days.",
@@ -281,11 +306,7 @@ class DoctorFindingDetailTests(TestCase):
         )
         self._login()
         response = self.client.get(reverse("nurse:doctor_finding_detail", args=[case.pk]))
-        self.assertContains(response, "NO ASSESSMENT YET")
-        self.assertContains(response, "No doctor assessment has been recorded for this case.")
-        self.assertContains(response, ">No Assessment<")
-        self.assertNotContains(response, ">Final<")
-        self.assertNotContains(response, ">Draft<")
+        self.assertEqual(response.status_code, 404)
 
     def test_draft_assessment_stays_draft(self):
         ClinicalAssessment.objects.filter(pk=self.assessment.pk).update(
@@ -293,8 +314,7 @@ class DoctorFindingDetailTests(TestCase):
         )
         self._login()
         response = self.client.get(self.url)
-        self.assertContains(response, ">Draft<")
-        self.assertNotContains(response, ">Final<")
+        self.assertEqual(response.status_code, 404)
 
     def test_empty_assessment_fields_show_not_recorded(self):
         ClinicalAssessment.objects.filter(pk=self.assessment.pk).update(
@@ -304,7 +324,7 @@ class DoctorFindingDetailTests(TestCase):
         )
         self._login()
         response = self.client.get(self.url)
-        self.assertContains(response, "Not recorded")
+        self.assertEqual(response.status_code, 404)
 
     # -------------------------------------------------- doses
     def test_dose_rows_use_stored_dates_and_statuses(self):
@@ -404,15 +424,16 @@ class DoctorFindingListTests(TestCase):
             date_time_bite=datetime.datetime(2026, 10, 1, 9, 0),
         )
 
-    def test_nurse_view_button_opens_the_read_only_findings_page(self):
+    def test_nurse_findings_navigation_uses_the_assessment_list(self):
         self.client.force_login(self.nurse)
-        response = self.client.get(reverse("bite_cases:case_list"))
-        self.assertContains(
-            response, reverse("nurse:doctor_finding_detail", args=[self.case.pk])
+        response = self.client.get(reverse("nurse:dashboard"))
+        self.assertContains(response, reverse("nurse:doctor_finding_list"))
+        self.assertEqual(
+            self.client.get(reverse("nurse:doctor_finding_list")).status_code,
+            200,
         )
-        self.assertNotContains(
-            response, reverse("bite_cases:case_edit", args=[self.case.pk])
-        )
+        case_list = self.client.get(reverse("bite_cases:case_list"))
+        self.assertEqual(case_list.status_code, 200)
 
     def test_admin_view_and_edit_buttons_are_unchanged(self):
         self.client.force_login(self.admin)
@@ -438,71 +459,120 @@ class DoctorFindingListTableTests(TestCase):
         )
 
     def _make_case(self, number, animal="dog"):
+        if not self.patient.barangay_id:
+            self.patient.barangay = Barangay.objects.create(name="Dumingag")
+            self.patient.save(update_fields=["barangay"])
         return AnimalBiteCase.objects.create(
             case_number=number, patient=self.patient, created_by=self.admin,
             animal_type=animal, exposure_type="bite",
             date_time_bite=datetime.datetime(2026, 10, 1, 9, 0),
         )
 
+    def _make_assessment(self, case, finalized_at=None, **overrides):
+        doctor, _ = U.objects.get_or_create(
+            username="doctor.tbl", defaults={"role": "doctor"}
+        )
+        values = {
+            "patient": self.patient,
+            "bite_case": case,
+            "assessed_by": doctor,
+            "chief_complaint": "Dog bite",
+            "exposure_narrative": "Verified exposure",
+            "category_confirmed": "category_iii",
+            "treatment_plan": "Complete treatment",
+            "status": "final",
+            "is_finalized": True,
+            "finalized_at": finalized_at or timezone.now(),
+        }
+        values.update(overrides)
+        return ClinicalAssessment.objects.create(**values)
+
     def test_nurse_table_has_number_column_first_in_required_order(self):
-        self._make_case("ABC-TBL01")
+        self._make_assessment(self._make_case("ABC-TBL01"))
         self.client.force_login(self.nurse)
-        response = self.client.get(reverse("bite_cases:case_list"))
+        response = self.client.get(reverse("nurse:doctor_finding_list"))
         content = response.content.decode()
 
-        headers = ["No.", "Case #", "Patient", "Date", "Animal", "Exposure", "Status", "Actions"]
-        positions = [content.index(f">{label}<") for label in headers]
+        headers = ["#", "PATIENT", "AGE/SEX", "APPROVED DATE", "ACTION"]
+        positions = [content.index(f">{label}</th>") for label in headers]
         self.assertEqual(positions, sorted(positions))
 
-    def test_numbering_is_sequential_and_resets_with_filters(self):
-        self._make_case("ABC-TBL01", animal="dog")
-        self._make_case("ABC-TBL02", animal="cat")
-        self._make_case("ABC-TBL03", animal="dog")
+    def test_only_finalized_doctor_assessments_are_listed(self):
+        approved_at = timezone.make_aware(datetime.datetime(2026, 10, 12, 14, 30))
+        finalized = self._make_assessment(
+            self._make_case("ABC-TBL01"), finalized_at=approved_at,
+        )
+        draft = self._make_assessment(
+            self._make_case("ABC-TBL02"), status="draft", is_finalized=False,
+            finalized_at=None,
+        )
+        unfinished = self._make_assessment(
+            self._make_case("ABC-TBL03"), chief_complaint="",
+        )
+        non_doctor = self._make_assessment(
+            self._make_case("ABC-TBL04"),
+            assessed_by=self.admin,
+        )
         self.client.force_login(self.nurse)
-
-        response = self.client.get(reverse("bite_cases:case_list"))
+        response = self.client.get(reverse("nurse:doctor_finding_list"))
         content = response.content.decode()
-        self.assertIn('row-number">1</td>', content)
-        self.assertIn('row-number">2</td>', content)
-        self.assertIn('row-number">3</td>', content)
-
-        response = self.client.get(reverse("bite_cases:case_list"), {"animal": "cat"})
-        content = response.content.decode()
-        self.assertIn('row-number">1</td>', content)
-        self.assertNotIn('row-number">2</td>', content)
+        self.assertContains(response, finalized.patient.full_name())
+        self.assertContains(response, finalized.patient.patient_number)
+        self.assertContains(response, finalized.patient.contact_display)
+        self.assertContains(response, "Dumingag")
+        self.assertContains(response, f"{finalized.patient.age} / Male")
+        self.assertContains(response, "Oct 12, 2026")
+        for assessment in (draft, unfinished, non_doctor):
+            self.assertNotContains(response, assessment.bite_case.case_number)
+        self.assertEqual(response.context["assessments"].paginator.count, 1)
 
     def test_numbering_continues_across_pages(self):
         for index in range(25):
-            self._make_case(f"ABC-P{index:04d}")
+            self._make_assessment(self._make_case(f"ABC-P{index:04d}"))
         self.client.force_login(self.nurse)
 
-        page_one = self.client.get(reverse("bite_cases:case_list")).content.decode()
+        page_one = self.client.get(
+            reverse("nurse:doctor_finding_list")
+        ).content.decode()
         page_two = self.client.get(
-            reverse("bite_cases:case_list"), {"page": 2}
+            reverse("nurse:doctor_finding_list"), {"page": 2}
         ).content.decode()
 
-        self.assertIn('row-number">1</td>', page_one)
-        self.assertIn('row-number">20</td>', page_one)
-        self.assertNotIn('row-number">21</td>', page_one)
-        self.assertIn('row-number">21</td>', page_two)
-        self.assertNotIn('row-number">1</td>', page_two)
+        page_one_numbers = re.findall(
+            r'class="[^"]*findings-row-number[^"]*">\s*(\d+)\s*</td>',
+            page_one,
+        )
+        page_two_numbers = re.findall(
+            r'class="[^"]*findings-row-number[^"]*">\s*(\d+)\s*</td>',
+            page_two,
+        )
+        self.assertEqual(page_one_numbers, [str(value) for value in range(1, 21)])
+        self.assertEqual(page_two_numbers, ["21", "22", "23", "24", "25"])
 
     def test_nurse_view_button_is_dark_green_with_eye_icon(self):
-        self._make_case("ABC-TBL01")
+        case = self._make_case("ABC-TBL01")
+        self._make_assessment(case)
         self.client.force_login(self.nurse)
-        response = self.client.get(reverse("bite_cases:case_list"))
+        response = self.client.get(reverse("nurse:doctor_finding_list"))
         self.assertContains(response, "findings-view-btn")
-        self.assertContains(response, "#0B4D3B")
+        self.assertContains(response, "#0D382C")
         self.assertContains(response, "#0E6349")
-        self.assertContains(response, 'aria-label="View doctor findings for ABC-TBL01')
+        self.assertContains(
+            response,
+            reverse("nurse:doctor_finding_detail", args=[case.pk]),
+        )
+        self.assertContains(response, 'aria-label="View finalized assessment')
 
     def test_nurse_list_is_view_only(self):
-        self._make_case("ABC-TBL01")
+        case = self._make_case("ABC-TBL01")
+        self._make_assessment(case)
         self.client.force_login(self.nurse)
-        response = self.client.get(reverse("bite_cases:case_list"))
-        self.assertNotContains(response, "+ New Case")
+        response = self.client.get(reverse("nurse:doctor_finding_list"))
+        self.assertNotContains(response, "Case Number")
+        self.assertNotContains(response, "Edit Assessment")
+        self.assertNotContains(response, "Delete Assessment")
         self.assertNotContains(
-            response, reverse("bite_cases:case_edit", args=[AnimalBiteCase.objects.get().pk])
+            response, reverse("bite_cases:case_edit", args=[case.pk])
         )
 
     def test_admin_table_is_unchanged(self):

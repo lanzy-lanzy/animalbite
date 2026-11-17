@@ -10,7 +10,10 @@ from django.db.models import Count, Q
 from django.utils import timezone
 
 from bite_cases.models import AnimalBiteCase
-from inventory.models import MedicineInventory, VaccineInventory
+from inventory.models import (
+    MedicineInventory, MedicineStockMovement, VaccineInventory,
+    VaccineStockMovement,
+)
 from inventory.notifications import get_inventory_alerts
 from vaccination.models import VaccinationSchedule
 
@@ -40,6 +43,11 @@ ALERT_SECTION_ORDER = [
     ('out_of_stock', 'Out of Stock', 'Products with zero usable available stock.'),
     ('expiring', 'Expiring Soon', 'Batches inside the expiry warning window.'),
     ('expired', 'Expired', 'Expired batches that still hold stock.'),
+    (
+        'pulled_out',
+        'Pulled Out Stocks',
+        'Completed medicine and vaccine stock pull-out records.',
+    ),
 ]
 
 
@@ -232,9 +240,37 @@ def stock_alert_sections():
     sections = []
     for kind, title, description in ALERT_SECTION_ORDER:
         rows = []
+        if kind == 'pulled_out':
+            rows = _completed_pull_out_rows()
+            sections.append({
+                'key': kind,
+                'title': title,
+                'description': description,
+                'rows': rows,
+            })
+            continue
         for alert in alerts:
             if alert['kind'] != kind:
                 continue
+            batch_details = alert.get('batch_details', [])
+            for detail in batch_details:
+                detail['pending_pull_out'] = detail.get(
+                    'pending_pull_out', 0)
+            batch_summary = '; '.join(
+                (
+                    f"{detail['batch']} · "
+                    f"{detail['pending_pull_out']} {alert['unit']} pending pull-out"
+                    if kind == 'expired'
+                    else f"{detail['batch']} · {detail['available']} {alert['unit']}"
+                )
+                for detail in batch_details if detail['batch']
+            ) or alert['batch'] or '—'
+            expiry_summary = '; '.join(
+                f"{detail['batch']}: {detail['expiration']:%b %d, %Y}"
+                for detail in batch_details if detail['expiration']
+            )
+            if not expiry_summary and alert['expiration']:
+                expiry_summary = alert['expiration'].strftime('%b %d, %Y')
             rows.append({
                 'module': alert['module'],
                 'module_label': (
@@ -242,11 +278,22 @@ def stock_alert_sections():
                 'product': alert['product'],
                 'batch': alert['batch'] or 'All batches',
                 'quantity': alert['quantity_label'],
+                'available': alert.get('available', alert['quantity']),
+                'pending_pull_out': alert.get('pending_pull_out', 0),
+                'batch_details': alert.get('batch_details', []),
+                'batch_summary': batch_summary,
+                'expiry_summary': expiry_summary or '—',
                 'threshold': alert['threshold'],
                 'expiration': alert['expiration'],
                 'status': ALERT_STATUS_LABELS[kind],
                 'status_class': ALERT_STATUS_CLASSES[kind],
                 'url': alert['url'],
+                'form': alert.get('form', ''),
+                'unit': alert['unit'],
+                'pull_out_date': None,
+                'reason': '',
+                'responsible': '',
+                'reference': '',
             })
         sections.append({
             'key': kind,
@@ -257,8 +304,117 @@ def stock_alert_sections():
     return sections
 
 
+def _pull_out_reason(notes):
+    return next(
+        (
+            line.partition(':')[2].strip()
+            for line in (notes or '').splitlines()
+            if line.casefold().startswith('reason:')
+        ),
+        '—',
+    )
+
+
+def _completed_pull_out_rows():
+    rows = []
+    medicine_movements = (
+        MedicineStockMovement.objects
+        .filter(movement_type='expired_pull_out')
+        .select_related('medicine', 'moved_by')
+    )
+    for movement in medicine_movements:
+        item = movement.medicine
+        rows.append({
+            'module': 'medicine',
+            'module_label': 'Medicine',
+            'product': ' '.join(
+                part for part in (item.medicine_name, item.strength) if part),
+            'form': item.get_dosage_form_display(),
+            'unit': item.unit,
+            'batch': movement.batch_number or item.batch_number,
+            'quantity': movement.quantity,
+            'expiration': movement.expiration_date or item.expiration_date,
+            'pull_out_date': timezone.localtime(movement.created_at).date(),
+            'reason': _pull_out_reason(movement.notes),
+            'responsible': (
+                movement.moved_by.get_full_name()
+                or movement.moved_by.username
+                if movement.moved_by else '—'
+            ),
+            'reference': movement.reference or '—',
+            'status': 'Pulled Out',
+            'status_class': 'bg-emerald-100 text-emerald-800',
+            'url': '',
+            'threshold': None,
+            'available': 0,
+            'pending_pull_out': 0,
+            'batch_details': [],
+            'batch_summary': (
+                f"{movement.batch_number or item.batch_number} · "
+                f"{movement.quantity} {item.unit} pulled out"
+            ),
+            'expiry_summary': (
+                (movement.expiration_date or item.expiration_date)
+                .strftime('%b %d, %Y')
+            ),
+            '_sort_datetime': movement.created_at,
+        })
+
+    vaccine_movements = (
+        VaccineStockMovement.objects
+        .filter(movement_type='expired_pull_out')
+        .select_related('vaccine', 'moved_by')
+    )
+    for movement in vaccine_movements:
+        item = movement.vaccine
+        rows.append({
+            'module': 'vaccine',
+            'module_label': 'Vaccine',
+            'product': ' '.join(
+                part for part in (item.vaccine_name, item.brand) if part),
+            'form': item.get_dosage_form_display(),
+            'unit': item.unit,
+            'batch': movement.batch_number or item.batch_number,
+            'quantity': movement.quantity,
+            'expiration': movement.expiration_date or item.expiration_date,
+            'pull_out_date': timezone.localtime(movement.created_at).date(),
+            'reason': _pull_out_reason(movement.notes),
+            'responsible': (
+                movement.moved_by.get_full_name()
+                or movement.moved_by.username
+                if movement.moved_by else '—'
+            ),
+            'reference': movement.reference or '—',
+            'status': 'Pulled Out',
+            'status_class': 'bg-emerald-100 text-emerald-800',
+            'url': '',
+            'threshold': None,
+            'available': 0,
+            'pending_pull_out': 0,
+            'batch_details': [],
+            'batch_summary': (
+                f"{movement.batch_number or item.batch_number} · "
+                f"{movement.quantity} {item.unit} pulled out"
+            ),
+            'expiry_summary': (
+                (movement.expiration_date or item.expiration_date)
+                .strftime('%b %d, %Y')
+            ),
+            '_sort_datetime': movement.created_at,
+        })
+
+    rows.sort(key=lambda row: row['_sort_datetime'], reverse=True)
+    for row in rows:
+        del row['_sort_datetime']
+    return rows
+
+
 def stock_alert_total():
-    return sum(len(section['rows']) for section in stock_alert_sections())
+    return sum(
+        len(section['rows'])
+        for section in stock_alert_sections()
+        if section['key'] != 'pulled_out'
+    )
 
 
 # ---------- animal bite statistics ----------

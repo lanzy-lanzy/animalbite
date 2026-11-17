@@ -14,10 +14,6 @@
         {% include 'reports/_report_toolbar.html' %}
     </div>
 
-    <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">
-        Current inventory snapshot as of {{ snapshot_date|date:'M d, Y' }}. Available quantities exclude expired batches; this is not a historical total.
-    </div>
-
     <div class="card">
         <form method="GET" class="flex flex-wrap items-end gap-2">
             <div class="flex-1 min-w-[200px]">

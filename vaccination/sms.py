@@ -6,6 +6,7 @@ Params: apikey, number (comma-separated, 63...), message, sendername
 """
 import logging
 import re
+import json
 import requests
 from django.conf import settings
 from utils.phone import normalize_to_63 as _normalize_to_63
@@ -92,6 +93,36 @@ def build_reminder_message(patient, case, dose, reminder_type: str, custom_note:
         ).strip()
 
 
+def safe_gateway_response(value):
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    key = getattr(settings, 'SEMAPHORE_API_KEY', '')
+    if key:
+        text = text.replace(json.dumps(key)[1:-1], '[hidden]')
+    text = re.sub(
+        r'(?i)(api[ _-]?key|token|secret|password|bearer)(["\s:=]+)([^"\s,}]+)',
+        r'\1\2[hidden]', text,
+    )
+    return json.loads(text)
+
+
+def gateway_outcome(result):
+    if result.get('simulated'):
+        return 'queued'
+    if result.get('uncertain'):
+        return 'unknown'
+    if not result.get('success'):
+        return 'failed'
+    response = result.get('response')
+    if isinstance(response, list) and response and isinstance(response[0], dict):
+        item = response[0]
+        status = str(item.get('status', '')).casefold()
+        if status in ('failed', 'rejected', 'refunded', 'error'):
+            return 'failed'
+        if item.get('message_id') and str(item['message_id']) != '0' and status in ('queued', 'pending', 'sent', 'delivered'):
+            return 'sent'
+    return 'unknown'
+
+
 def send_semaphore_sms(number: str, message: str, sendername: str | None = None) -> dict:
     """
     Low-level Semaphore call.
@@ -124,7 +155,7 @@ def send_semaphore_sms(number: str, message: str, sendername: str | None = None)
 
     apikey = getattr(settings, "SEMAPHORE_API_KEY", "")
     if not apikey:
-        return {"success": False, "error": "SEMAPHORE_API_KEY not configured", "response": None}
+        return {"success": False, "error": "SMS gateway credentials are not configured", "response": None, "retryable": True}
 
     payload = {
         "apikey": apikey,
@@ -134,23 +165,40 @@ def send_semaphore_sms(number: str, message: str, sendername: str | None = None)
     }
 
     try:
-        resp = requests.post(api_url, data=payload, timeout=15)
-        # Semaphore returns JSON list on success, or dict with error
+        resp = requests.post(api_url, data=payload, timeout=15, allow_redirects=False)
         try:
-            data = resp.json()
-        except Exception:
-            data = resp.text
+            data = safe_gateway_response(resp.json())
+        except ValueError:
+            data = None
 
         if resp.status_code in (200, 201):
-            # Success is list of messages; check status field
-            # Consider success if any item has status Queued/Pending/Sent
-            return {"success": True, "response": data, "error": None, "status_code": resp.status_code, "normalized": normalized}
-        else:
-            logger.error(f"Semaphore HTTP {resp.status_code}: {data}")
-            return {"success": False, "error": f"HTTP {resp.status_code}: {data}", "response": data, "status_code": resp.status_code}
-    except requests.RequestException as e:
-        logger.exception(f"Semaphore request failed: {e}")
-        return {"success": False, "error": str(e), "response": None}
+            result = {
+                'success': True, 'response': data, 'error': None,
+                'status_code': resp.status_code, 'normalized': normalized,
+            }
+            outcome = gateway_outcome(result)
+            result['success'] = outcome == 'sent'
+            result['uncertain'] = outcome == 'unknown'
+            result['retryable'] = outcome == 'failed'
+            if outcome != 'sent':
+                result['error'] = (
+                    'Gateway rejected the message' if outcome == 'failed'
+                    else 'Gateway acceptance could not be confirmed; review before any resend'
+                )
+            return result
+        rejected = 400 <= resp.status_code < 500 and resp.status_code != 408
+        logger.warning('SMS gateway returned HTTP %s', resp.status_code)
+        return {
+            'success': False, 'error': f'SMS gateway HTTP {resp.status_code}',
+            'response': data, 'status_code': resp.status_code,
+            'uncertain': not rejected, 'retryable': rejected,
+        }
+    except requests.RequestException:
+        logger.warning('SMS gateway request outcome is unconfirmed; automatic retry blocked')
+        return {
+            'success': False, 'error': 'Gateway request outcome is unknown; review before any resend',
+            'response': None, 'uncertain': True, 'retryable': False,
+        }
 
 
 def send_dose_reminder(dose, reminder_type: str = "3days_before", dry_run: bool = False, force: bool = False, custom_note: str = ""):
@@ -190,7 +238,7 @@ def send_dose_reminder(dose, reminder_type: str = "3days_before", dry_run: bool 
         dose=dose,
         reminder_type=reminder_type,
         scheduled_date=dose.scheduled_date,
-    ).filter(status__in=["sent", "queued", "pending"]).first() if not force and not dry_run else None
+    ).filter(status__in=["sent", "queued", "pending", "unknown"]).first() if not force and not dry_run else None
     # Alternative: prevent duplicate today
     if existing and not force and not dry_run:
         # Compare the Manila calendar day, not the UTC one
@@ -224,27 +272,11 @@ def send_dose_reminder(dose, reminder_type: str = "3days_before", dry_run: bool 
 
     # Prepare log data
     normalized = result.get("normalized") or normalize_ph_number(number) or number
-    status = "failed"
-    api_resp = result.get("response")
+    status = gateway_outcome(result)
+    api_resp = safe_gateway_response(result.get("response"))
     message_id = None
-    if result.get("success"):
-        # Real API returns list; check first item status
-        if isinstance(api_resp, list) and api_resp:
-            first = api_resp[0]
-            status_raw = str(first.get("status", "")).lower()
-            message_id = first.get("message_id")
-            if "failed" in status_raw:
-                status = "failed"
-            elif "queued" in status_raw or "pending" in status_raw or "sent" in status_raw:
-                status = "sent" if not result.get("simulated") else "queued"
-                if result.get("simulated"):
-                    status = "queued"
-            else:
-                status = "sent"
-        else:
-            status = "sent"
-    else:
-        status = "failed"
+    if isinstance(api_resp, list) and api_resp and isinstance(api_resp[0], dict):
+        message_id = api_resp[0].get("message_id")
 
     # Save log
     log = SMSLog.objects.create(

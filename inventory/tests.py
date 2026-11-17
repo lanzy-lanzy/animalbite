@@ -589,8 +589,8 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         headings = (
             "1. Vaccine Information",
             "2. Stock Summary",
-            "3. Stock Transaction History",
-            "4. Vaccination Administration History",
+            "4. Stock Transaction History",
+            "5. Vaccination Administration History",
         )
         positions = [content.index(heading) for heading in headings]
         self.assertEqual(positions, sorted(positions))
@@ -611,8 +611,8 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Vaccination Administration History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Vaccination Administration History")
         ]
         headers = re.findall(
             r'<th class="table-header">([^<]+)</th>', history)
@@ -638,8 +638,8 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Vaccination Administration History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Vaccination Administration History")
         ]
         row = next(
             r for r in re.findall(r"<tr[^>]*>(.*?)</tr>", history, re.S)
@@ -655,8 +655,8 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Vaccination Administration History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Vaccination Administration History")
         ]
         row = next(
             r for r in re.findall(r"<tr[^>]*>(.*?)</tr>", history, re.S)
@@ -673,8 +673,8 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Vaccination Administration History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Vaccination Administration History")
         ]
         for hidden in ("Reference", "Recorded By", "PO-2026-01", "med.nurse"):
             self.assertNotIn(hidden, history)
@@ -698,6 +698,22 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
                        "Expiration Date", "Remarks", "Keep refrigerated."):
             self.assertNotIn(hidden, info)
 
+    def test_stock_summary_cards_are_available_used_and_pulled_out(self):
+        for user in (self.nurse, self.admin):
+            self.client.force_login(user)
+            content = self.client.get(self.url).content.decode()
+            summary = content[
+                content.index("2. Stock Summary"):
+                content.index("3. Pulled Out History")
+            ]
+            labels = re.findall(
+                r'vd-stock-label[^>]*>\s*([^<]+?)\s*<', summary)
+            self.assertEqual(labels, ["Available", "Used", "Pulled Out"])
+            self.assertNotIn("Received", summary)
+            self.assertIn(
+                "grid-template-columns: repeat(3, minmax(0, 1fr))",
+                content)
+
     def test_stock_summary_totals_every_batch_of_the_product(self):
         VaccineInventory.objects.create(
             vaccine_name="Rabies Vaccine", brand="Verorab",
@@ -715,10 +731,10 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         content = self.client.get(self.url).content.decode()
         summary = content[
             content.index("2. Stock Summary"):
-            content.index("3. Stock Transaction History")
+            content.index("3. Pulled Out History")
         ]
         values = re.findall(r'vd-stock-value[^>]*>\s*(\d+)\s*<', summary)
-        self.assertEqual(values, ["25", "9", "16", "0", "0"])
+        self.assertEqual(values, ["16", "9", "0"])
         self.assertNotIn("100", summary)
 
     def test_stock_history_combines_batch_deliveries_with_their_own_details(self):
@@ -738,8 +754,8 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Vaccination Administration History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Vaccination Administration History")
         ]
         for value in ("DOH Region IX", "ABC Pharma", "VAC-1", "VAC-2",
                       "Jun 01, 2027", "Sep 01, 2027"):
@@ -762,7 +778,7 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         dispensing = content[
-            content.index("4. Vaccination Administration History"):]
+            content.index("5. Vaccination Administration History"):]
         self.assertIn("1st Dose", dispensing)
         self.assertIn("2nd Dose", dispensing)
 
@@ -771,7 +787,7 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         response = self.client.get(self.url)
         content = response.content.decode()
         dispensing = content[
-            content.index("4. Vaccination Administration History"):]
+            content.index("5. Vaccination Administration History"):]
         for value in ("Mia Stock", "ABC-M0001", "1st Dose", "1 vial",
                       "Nov 02, 2026", "11:02 AM"):
             self.assertIn(value, dispensing)
@@ -794,6 +810,36 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         ]
         self.assertEqual(cells[4], "Nov 02, 2026")
         self.assertEqual(cells[5], "11:02 AM")
+
+    def test_administration_history_uses_ordinal_dose_sequence(self):
+        first = self.schedule.doses.get(pk=self.dose.pk)
+        first.dose_label = "Day 0"
+        first.save(update_fields=["dose_label"])
+        for day, label in ((3, "Day 3"), (7, "Day 7"),
+                           (14, "Day 14"), (28, "Day 28")):
+            VaccineDose.objects.create(
+                schedule=self.schedule, dose_label=label, protocol_day=day,
+                batch_number="VAC-1", vaccine_brand="Verorab",
+                dose_status="completed",
+                actual_date=datetime.date(2026, 11, 2) + datetime.timedelta(days=day),
+                actual_time=datetime.time(11, 2), administered_by=self.nurse,
+            )
+
+        for user in (self.nurse, self.admin):
+            self.client.force_login(user)
+            content = self.client.get(self.url).content.decode()
+            history = content[content.index("5. Vaccination Administration History"):]
+            for label in ("1st Dose", "2nd Dose", "3rd Dose",
+                          "4th Dose", "5th Dose"):
+                self.assertIn(label, history)
+            for day_label in ("Day 0", "Day 3", "Day 7", "Day 14", "Day 28"):
+                self.assertNotIn(day_label, history)
+            self.assertIn("Nov 30, 2026", history)
+
+        self.assertEqual(
+            list(self.schedule.doses.order_by("id")
+                 .values_list("dose_label", flat=True)),
+            ["Day 0", "Day 3", "Day 7", "Day 14", "Day 28"])
 
     def test_unadministered_dose_is_shown_as_pending(self):
         VaccineDose.objects.create(
@@ -831,8 +877,8 @@ class VaccineInventoryDetailRedesignTests(InventoryTestCase):
         headings = (
             "1. Vaccine Information",
             "2. Stock Summary",
-            "3. Stock Transaction History",
-            "4. Vaccination Administration History",
+            "4. Stock Transaction History",
+            "5. Vaccination Administration History",
         )
         positions = [content.index(heading) for heading in headings]
         self.assertEqual(positions, sorted(positions))
@@ -1070,6 +1116,59 @@ class VaccineAddStockTests(InventoryTestCase):
             self.assertContains(detail, header)
         self.assertNotContains(detail, "Recorded By")
 
+    def _add_stock_content(self, user):
+        self.client.force_login(user)
+        return self.client.get(self.url).content.decode()
+
+    def test_last_entry_shows_the_latest_recorded_batch(self):
+        for user in (self.nurse, self.admin):
+            content = self._add_stock_content(user)
+            self.assertIn('Last Entry: <strong>Batch 1</strong>', content)
+
+    def test_last_entry_tracks_the_most_recent_batch(self):
+        latest = VaccineInventory.objects.create(
+            vaccine_name="Imovax", brand="Sanofi", batch_number="Batch 2",
+            expiration_date=datetime.date(2028, 3, 1),
+            quantity_received=12, quantity_available=12,
+            date_received=datetime.date(2026, 11, 1),
+            created_by=self.nurse,
+        )
+        VaccineStockMovement.objects.create(
+            vaccine=latest, movement_type="stock_in", quantity=12,
+            supplier="ABC Pharma",
+            date_received=datetime.date(2026, 11, 1),
+            batch_number="Batch 2",
+            expiration_date=datetime.date(2028, 3, 1),
+            moved_by=self.nurse,
+        )
+        self.assertIn(
+            'Last Entry: <strong>Batch 2</strong>',
+            self._add_stock_content(self.nurse))
+
+    def test_last_entry_shows_none_when_no_batch_was_recorded(self):
+        VaccineStockMovement.objects.all().delete()
+        self.vaccine.batch_number = ""
+        self.vaccine.save(update_fields=["batch_number"])
+        self.assertIn(
+            'Last Entry: <strong>None</strong>',
+            self._add_stock_content(self.nurse))
+
+    def test_last_entry_updates_after_a_batch_is_saved(self):
+        self.client.force_login(self.nurse)
+        self.client.post(self.url, self.payload, follow=True)
+        content = self.client.get(self.url).content.decode()
+        self.assertIn('Last Entry: <strong>IMX-2026-002</strong>', content)
+
+    def test_existing_batch_stock_in_warns_about_the_duplicate_identifier(self):
+        payload = dict(
+            self.payload, batch_number="Batch 1",
+            quantity_received="5", expiration_date="2027-10-15",
+        )
+        self.client.force_login(self.nurse)
+        response = self.client.post(self.url, payload, follow=True)
+        self.assertContains(response, "already recorded for this vaccine")
+        self.assertEqual(VaccineInventory.objects.count(), 1)
+
     def test_existing_batch_is_topped_up_without_losing_delivery_history(self):
         payload = dict(
             self.payload, batch_number="Batch 1",
@@ -1240,8 +1339,8 @@ class VaccineAddStockTests(InventoryTestCase):
             reverse("inventory:vaccine_detail", args=[self.vaccine.pk])
         ).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Vaccination Administration History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Vaccination Administration History")
         ]
         self.assertIn("Stock In", history)
         self.assertIn("Stock Out", history)
@@ -1574,7 +1673,7 @@ class ExpiredStockPullOutTests(InventoryTestCase):
             **extra,
         })
 
-    def test_expired_stock_summary_and_batch_card_use_actual_batch_values(self):
+    def test_expired_stock_is_alerted_but_not_shown_as_pending_in_details(self):
         self.client.force_login(self.nurse)
         response = self.client.get(reverse(
             "inventory:medicine_detail", args=[self.expired_medicine.pk]))
@@ -1583,16 +1682,18 @@ class ExpiredStockPullOutTests(InventoryTestCase):
         self.assertEqual(response.context["totals"]["received"], 100)
         self.assertEqual(response.context["totals"]["dispensed"], 40)
         self.assertEqual(response.context["totals"]["available"], 0)
-        self.assertEqual(response.context["totals"]["expired_quantity"], 60)
         self.assertEqual(response.context["totals"]["pulled_out"], 0)
-        self.assertEqual(response.context["expired_batches"], [self.expired_medicine])
-        for value in (
-            "Expired Stock Batches", "MED-EXPIRED-1", "Pending Pull Out",
-            "Pull Out Expired Stock", "Pull-Out Quantity", "Authorized Personnel",
-        ):
-            self.assertContains(response, value)
-        self.assertContains(response, 'class="vd-stock-grid vd-stock-grid--secondary"')
-        self.assertContains(response, "width: 100%")
+        self.assertNotIn("expired_quantity", response.context["totals"])
+        self.assertNotIn("expired_batches", response.context)
+        for value in ("Expired Stock Batches", "Pending Pull Out",
+                      "Pull Out Expired Stock", "Expired Quantity"):
+            self.assertNotContains(response, value)
+        self.assertContains(response, "3. Pulled Out History")
+        self.assertContains(response, "No pulled-out stock records yet.")
+        history = response.content.decode().split(
+            "3. Pulled Out History", 1)[1].split(
+                "4. Stock Transaction History", 1)[0]
+        self.assertNotIn("MED-EXPIRED-1", history)
 
     def test_medicine_pull_out_updates_only_physical_stock_and_is_audited(self):
         self.client.force_login(self.nurse)
@@ -1629,12 +1730,74 @@ class ExpiredStockPullOutTests(InventoryTestCase):
 
         detail = self.client.get(reverse(
             "inventory:medicine_detail", args=[self.expired_medicine.pk]))
-        self.assertEqual(detail.context["totals"]["expired_quantity"], 60)
         self.assertEqual(detail.context["totals"]["pulled_out"], 60)
-        self.assertEqual(detail.context["totals"]["expired_remaining"], 0)
-        self.assertContains(detail, "Pulled Out")
+        self.assertEqual(
+            detail.context["pulled_out_history"][0].remaining_after_pull_out, 0)
+        history = detail.content.decode().split(
+            "3. Pulled Out History", 1)[1].split(
+                "4. Stock Transaction History", 1)[0]
+        self.assertIn("MED-EXPIRED-1", history)
+        self.assertIn("Expired Stock", history)
+        self.assertIn(self.nurse.username, history)
+        self.assertIn("0 tablet", history)
+        self.assertIn("Pulled Out", history)
         self.assertContains(detail, "Expired Stock Pull Out")
         self.assertNotContains(detail, "Confirm Pull Out")
+        self.assertNotContains(detail, "Expired Stock Batches")
+
+    def _pull_out_history_section(self, module, batch):
+        detail = self.client.get(reverse(
+            f"inventory:{module}_detail", args=[batch.pk]))
+        return detail.content.decode().split(
+            "3. Pulled Out History", 1)[1].split(
+                "4. Stock Transaction History", 1)[0]
+
+    def test_pulled_out_history_uses_the_grouped_five_column_layout(self):
+        self.client.force_login(self.nurse)
+        self._pull_out("medicine", self.expired_medicine, 60)
+        self._pull_out("vaccine", self.expired_vaccine, 6)
+        for module, batch, number, quantity, unit in (
+            ("medicine", self.expired_medicine, "MED-EXPIRED-1", 60, "tablet"),
+            ("vaccine", self.expired_vaccine, "VAC-EXPIRED-1", 6, "vial"),
+        ):
+            for user in (self.nurse, self.admin):
+                with self.subTest(module=module, role=user.role):
+                    self.client.force_login(user)
+                    history = self._pull_out_history_section(module, batch)
+                    headers = re.findall(
+                        r'<th class="table-header[^"]*">([^<]+)</th>',
+                        history)
+                    self.assertEqual(headers, [
+                        "Batch Details", "Quantity", "Pull-Out Details",
+                        "Reason", "Status",
+                    ])
+                    self.assertIn(number, history)
+                    self.assertIn("Expiry:", history)
+                    self.assertIn(f"{quantity} {unit}", history)
+                    self.assertIn(f"Remaining: 0 {unit}", history)
+                    self.assertIn(f"By: {self.nurse.username}", history)
+                    self.assertIn("Expired Stock", history)
+                    self.assertIn("Pulled Out", history)
+                    self.assertNotIn("Responsible Personnel", history)
+                    self.assertNotIn("Remaining Physical Stock", history)
+
+    def test_expired_alert_has_authorized_pull_out_confirmation(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse("inventory:medicine_list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Paracetamol")
+        self.assertContains(response, "MED-EXPIRED-1")
+        self.assertContains(response, "Expiration Date:")
+        self.assertContains(response, "Remaining physical stock: 60 tablets")
+        self.assertContains(response, "Pull Out")
+        self.assertContains(
+            response,
+            reverse("inventory:medicine_pull_out",
+                    args=[self.expired_medicine.pk]),
+        )
+        self.assertContains(response, 'name="submission_token"')
+        self.assertContains(response, 'name="quantity"')
 
     def test_invalid_pull_out_quantities_do_not_change_stock(self):
         self.client.force_login(self.nurse)
@@ -1772,8 +1935,8 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
         headings = (
             "1. Medicine Information",
             "2. Stock Summary",
-            "3. Stock Transaction History",
-            "4. Dispensing History",
+            "4. Stock Transaction History",
+            "5. Dispensing History",
         )
         positions = [content.index(heading) for heading in headings]
         self.assertEqual(positions, sorted(positions))
@@ -1795,23 +1958,39 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
                        "DOH Region IX", "Store dry."):
             self.assertNotIn(hidden, info)
 
+    def test_stock_summary_cards_are_available_dispensed_and_pulled_out(self):
+        for user in (self.nurse, self.admin):
+            self.client.force_login(user)
+            content = self.client.get(self.url).content.decode()
+            summary = content[
+                content.index("2. Stock Summary"):
+                content.index("3. Pulled Out History")
+            ]
+            labels = re.findall(
+                r'vd-stock-label[^>]*>\s*([^<]+?)\s*<', summary)
+            self.assertEqual(labels, ["Available", "Dispensed", "Pulled Out"])
+            self.assertNotIn("Received", summary)
+            self.assertIn(
+                "grid-template-columns: repeat(3, minmax(0, 1fr))",
+                content)
+
     def test_stock_summary_totals_only_matching_batches(self):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         summary = content[
             content.index("2. Stock Summary"):
-            content.index("3. Stock Transaction History")
+            content.index("3. Pulled Out History")
         ]
         values = re.findall(r'vd-stock-value[^>]*>\s*(\d+)\s*<', summary)
-        self.assertEqual(values, ["25", "3", "22", "0", "0"])
+        self.assertEqual(values, ["22", "3", "0"])
         self.assertNotIn("100", summary)
 
     def test_stock_history_columns_are_ordered_with_type_last(self):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Dispensing History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Dispensing History")
         ]
         headers = re.findall(
             r'<th class="table-header">([^<]+)</th>', history)
@@ -1836,8 +2015,8 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Dispensing History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Dispensing History")
         ]
         row = next(
             r for r in re.findall(r"<tr[^>]*>(.*?)</tr>", history, re.S)
@@ -1853,8 +2032,8 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Dispensing History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Dispensing History")
         ]
         row = next(
             r for r in re.findall(r"<tr[^>]*>(.*?)</tr>", history, re.S)
@@ -1873,8 +2052,8 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Dispensing History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Dispensing History")
         ]
         self.assertIn("Stock In", history)
         self.assertIn("Dispensed", history)
@@ -1885,8 +2064,8 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Dispensing History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Dispensing History")
         ]
         rows = [
             row for row in re.findall(r"<tr[^>]*>(.*?)</tr>", history, re.S)
@@ -1905,8 +2084,8 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Dispensing History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Dispensing History")
         ]
         for hidden in ("Reference", "Recorded By", "PO-2026-01", "med.nurse"):
             self.assertNotIn(hidden, history)
@@ -1919,7 +2098,7 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
     def test_dispensing_history_shows_confirmed_and_pending_records(self):
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
-        dispensing = content[content.index("4. Dispensing History"):]
+        dispensing = content[content.index("5. Dispensing History"):]
         for value in ("Mia Stock", "ABC-M0001", "1 capsule", "2 capsule",
                       "3 capsule", "Pending"):
             self.assertIn(value, dispensing)
@@ -1937,7 +2116,7 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
         dispensed_at = timezone.localtime(self.dispensed_rx.dispensed_at)
         self.client.force_login(self.nurse)
         content = self.client.get(self.url).content.decode()
-        dispensing = content[content.index("4. Dispensing History"):]
+        dispensing = content[content.index("5. Dispensing History"):]
         rows = re.findall(r"<tr[^>]*>(.*?)</tr>", dispensing, re.S)
         row = next(r for r in rows if "3 capsule" in r)
         cells = [
@@ -1980,15 +2159,15 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
         content = self.client.get(self.url).content.decode()
         summary = content[
             content.index("2. Stock Summary"):
-            content.index("3. Stock Transaction History")
+            content.index("4. Stock Transaction History")
         ]
         self.assertEqual(
             re.findall(r'vd-stock-value[^>]*>\s*(\d+)\s*<', summary),
-            ["25", "5", "20", "0", "0"],
+            ["20", "5", "0"],
         )
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Dispensing History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Dispensing History")
         ]
         rows = [
             row for row in re.findall(r"<tr[^>]*>(.*?)</tr>", history, re.S)
@@ -2018,8 +2197,8 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
 
         content = self.client.get(self.url).content.decode()
         history = content[
-            content.index("3. Stock Transaction History"):
-            content.index("4. Dispensing History")
+            content.index("4. Stock Transaction History"):
+            content.index("5. Dispensing History")
         ]
         for value in ("DOH Region IX", "Oct 01, 2026",
                       "Second Supplier", "Nov 02, 2026", "09:30 AM", "+5"):
@@ -2057,8 +2236,8 @@ class MedicineInventoryDetailRedesignTests(InventoryTestCase):
         headings = (
             "1. Medicine Information",
             "2. Stock Summary",
-            "3. Stock Transaction History",
-            "4. Dispensing History",
+            "4. Stock Transaction History",
+            "5. Dispensing History",
         )
         positions = [content.index(heading) for heading in headings]
         self.assertEqual(positions, sorted(positions))
@@ -2266,11 +2445,11 @@ class MedicineProductGroupingTests(InventoryTestCase):
         content = self.client.get(self.detail_url()).content.decode()
         summary = content[
             content.index("2. Stock Summary"):
-            content.index("3. Stock Transaction History")
+            content.index("4. Stock Transaction History")
         ]
         self.assertEqual(
             re.findall(r'vd-stock-value[^>]*>\s*(\d+)\s*<', summary),
-            ["130", "10", "30", "90", "0"],
+            ["30", "10", "0"],
         )
 
     def test_group_actions_open_the_product_detail_and_add_stock(self):
@@ -2439,6 +2618,14 @@ class InventoryNotificationTests(InventoryTestCase):
             {alert['module'] for alert in response.context['alerts']},
             {'medicine'})
         self.assertIn('Inventory Alerts', response.content.decode())
+
+    def test_search_section_sits_above_inventory_alerts(self):
+        for user in (self.nurse, self.admin):
+            self.client.force_login(user)
+            for name in ("inventory:vaccine_list", "inventory:medicine_list"):
+                content = self.client.get(reverse(name)).content.decode()
+                self.assertLess(content.index('name="q"'),
+                                content.index('id="inventory-alerts-title"'))
 
     def test_bell_is_only_rendered_for_nurses(self):
         self._add_vaccine(qty=2, reorder=5)
@@ -2642,8 +2829,8 @@ class AdminNurseInventoryParityTests(InventoryTestCase):
             self._stock_values(admin.content.decode()))
         headings = (
             "1. Vaccine Information", "2. Stock Summary",
-            "3. Stock Transaction History",
-            "4. Vaccination Administration History",
+            "4. Stock Transaction History",
+            "5. Vaccination Administration History",
         )
         for response in (nurse, admin):
             content = response.content.decode()
@@ -2670,7 +2857,7 @@ class AdminNurseInventoryParityTests(InventoryTestCase):
             self._stock_values(admin.content.decode()))
         headings = (
             "1. Medicine Information", "2. Stock Summary",
-            "3. Stock Transaction History", "4. Dispensing History",
+            "4. Stock Transaction History", "5. Dispensing History",
         )
         for response in (nurse, admin):
             content = response.content.decode()

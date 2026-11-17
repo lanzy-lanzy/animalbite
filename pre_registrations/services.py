@@ -1,9 +1,15 @@
+from copy import copy
+
+from django.contrib.auth import get_user_model
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.forms.models import model_to_dict
 from django.utils import timezone
 
 from audit.models import AuditLog
 from bite_cases.models import AnimalBiteCase
 from patients.models import Barangay, Patient
+from utils.names import format_person_name
 
 from .models import PreRegistration
 
@@ -20,26 +26,94 @@ def generate_case_number():
     return f"ABC-{sequence:05d}"
 
 
-@transaction.atomic
-def convert_to_official_case(pre_registration, user):
-    if pre_registration.converted_patient_id and pre_registration.converted_case_id:
-        return pre_registration.converted_patient, pre_registration.converted_case
+PENDING_STATUSES = (
+    PreRegistration.Status.SUBMITTED,
+    PreRegistration.Status.FOR_VERIFICATION,
+)
+CONVERTIBLE_STATUSES = (*PENDING_STATUSES, PreRegistration.Status.VERIFIED)
 
-    barangay, _ = Barangay.objects.get_or_create(name=pre_registration.barangay, defaults={"is_active": True})
-    patient = None
+
+def require_review_admin(user):
+    if not user.is_authenticated or getattr(user, "role", "") != "admin":
+        raise PermissionDenied("Only an Admin can approve or reject online registrations.")
+
+
+class DuplicateConfirmationRequired(Exception):
+    def __init__(self, record, duplicates):
+        self.record = record
+        self.duplicates = duplicates
+        super().__init__("Review possible duplicates before confirming conversion.")
+
+
+def validate_conversion_source(record):
+    """Run intake validators on a copy, never normalizing the saved submission."""
+    from .forms import PreRegistrationForm
+
+    candidate = copy(record)
+    candidate.full_clean(validate_unique=False)
+    data = model_to_dict(record, fields=PreRegistrationForm.Meta.fields)
+    local_bite = timezone.localtime(record.bite_datetime)
+    data.update(bite_date=local_bite.date(), bite_time=local_bite.time())
+    form = PreRegistrationForm(data, instance=candidate)
+    if not form.is_valid():
+        raise ValidationError({field: list(errors) for field, errors in form.errors.items()})
+
+
+def conversion_patient(record):
+    """Check fresh state/links; a patient-only link can be reused, not a case-only link."""
+    if record.is_archived:
+        raise ValidationError("Archived registrations cannot be converted.")
+    if record.status not in (*CONVERTIBLE_STATUSES, PreRegistration.Status.CONVERTED):
+        raise ValidationError("This registration is not eligible for conversion.")
+    patient = record.converted_patient if record.converted_patient_id else None
+    if patient and record.account_id and patient.account_id != record.account_id:
+        raise ValidationError("The linked patient does not match the registration account.")
+    if record.converted_case_id:
+        if (
+            not patient
+            or record.converted_case.patient_id != patient.pk
+            or record.status != PreRegistration.Status.CONVERTED
+        ):
+            raise ValidationError("The registration has inconsistent official record links.")
+    elif record.status == PreRegistration.Status.CONVERTED:
+        raise ValidationError("The converted registration is missing official record links.")
+    return patient
+
+
+@transaction.atomic
+def convert_to_official_case(pre_registration, user, *, confirm_duplicates=False):
+    require_review_admin(user)
+    # Never trust the caller's instance: approve, reject and edit share this lock.
+    pre_registration = PreRegistration.objects.select_for_update().get(pk=pre_registration.pk)
+    patient = conversion_patient(pre_registration)
+    if pre_registration.converted_case_id:
+        return patient, pre_registration.converted_case
+
+    # Serialize different registrations for the same existing account before
+    # looking up its one-to-one patient, including when no patient exists yet.
     if pre_registration.account_id:
-        patient = Patient.objects.filter(account=pre_registration.account).first()
+        get_user_model().objects.select_for_update().get(pk=pre_registration.account_id)
+        if patient is None:
+            patient = Patient.objects.filter(account_id=pre_registration.account_id).first()
+    if patient and patient.is_archived:
+        raise ValidationError("The linked patient is archived.")
+    validate_conversion_source(pre_registration)
+    duplicates = list(pre_registration.possible_duplicates())
+    if duplicates and not confirm_duplicates:
+        raise DuplicateConfirmationRequired(pre_registration, duplicates)
+
     if patient is None:
+        barangay, _ = Barangay.objects.get_or_create(name=pre_registration.barangay, defaults={"is_active": True})
         # Use guardian contact as fallback for emergency if emergency not provided
         emergency_name = pre_registration.emergency_contact_name or pre_registration.guardian_name
         emergency_number = pre_registration.emergency_contact_number or pre_registration.guardian_contact_number
         patient = Patient.objects.create(
             patient_number=generate_patient_number(),
             account=pre_registration.account,
-            first_name=pre_registration.first_name,
-            middle_name=pre_registration.middle_name,
-            last_name=pre_registration.last_name,
-            suffix=pre_registration.suffix,
+            first_name=format_person_name(pre_registration.first_name),
+            middle_name=format_person_name(pre_registration.middle_name),
+            last_name=format_person_name(pre_registration.last_name),
+            suffix=format_person_name(pre_registration.suffix),
             birthdate=pre_registration.birthdate,
             sex=pre_registration.sex,
             civil_status=pre_registration.civil_status or "single",
@@ -60,14 +134,11 @@ def convert_to_official_case(pre_registration, user):
         # username/password during signup, so SMS is redundant. Staff can share temp
         # creds verbally via the one-time display on the detail page.
         if patient.account_id is None:
-            try:
-                from utils.credentials import create_patient_user
-                new_user, temp_pwd, _ = create_patient_user(patient, created_by=user)
-                # Attach for view to display one-time
-                patient._temp_username = new_user.username
-                patient._temp_password = temp_pwd
-            except Exception:
-                pass
+            from utils.credentials import create_patient_user
+            new_user, temp_pwd, _ = create_patient_user(patient, created_by=user)
+            # Credential/number collisions must roll back the entire conversion.
+            patient._temp_username = new_user.username
+            patient._temp_password = temp_pwd
     case = AnimalBiteCase.objects.create(
         case_number=generate_case_number(),
         patient=patient,
@@ -88,41 +159,61 @@ def convert_to_official_case(pre_registration, user):
     )
     # NOTE: the vaccination schedule is intentionally NOT created here.
     # A nurse triggers it once the case has been assessed.
-    # Link account if we just auto-created one for patient
-    if pre_registration.account_id is None and patient.account_id:
-        pre_registration.account = patient.account
-    pre_registration.status = PreRegistration.Status.CONVERTED
-    pre_registration.verified_by = user
-    pre_registration.verified_at = timezone.now()
-    pre_registration.converted_patient = patient
-    pre_registration.converted_case = case
-    # Include account in update if we set it
-    update_fields = [
-        "status",
-        "verified_by",
-        "verified_at",
-        "converted_patient",
-        "converted_case",
-        "updated_at",
-    ]
-    if pre_registration.account_id and "account" not in update_fields:
-        # Need to include account if it was just set
-        update_fields = ["account"] + update_fields
-        pre_registration.save(update_fields=update_fields)
-    else:
-        pre_registration.save(update_fields=update_fields)
+    # Update review metadata only: model.save() also normalizes submitted fields.
+    now = timezone.now()
+    PreRegistration.objects.filter(pk=pre_registration.pk).update(
+        account_id=pre_registration.account_id or patient.account_id,
+        status=PreRegistration.Status.CONVERTED,
+        verified_by=user,
+        verified_at=now,
+        converted_patient=patient,
+        converted_case=case,
+        updated_at=now,
+    )
     AuditLog.objects.create(
         user=user,
         action="CONVERT_PRE_REGISTRATION",
+        target_type="pre_registration",
+        target_id=pre_registration.pk,
         description=f"Converted online registration {pre_registration.pre_registration_number} to case {case.case_number}",
     )
     return patient, case
 
 
-PENDING_STATUSES = (
-    PreRegistration.Status.SUBMITTED,
-    PreRegistration.Status.FOR_VERIFICATION,
-)
+@transaction.atomic
+def reject_pre_registration(record, user, reason):
+    """Reject only pending intake; retries retain the first review verbatim."""
+    from .forms import validate_rejection_reason
+
+    require_review_admin(user)
+    record = PreRegistration.objects.select_for_update().get(pk=record.pk)
+    if record.status == PreRegistration.Status.REJECTED:
+        return record, False
+    if (
+        record.is_archived
+        or record.status not in PENDING_STATUSES
+        or record.converted_patient_id
+        or record.converted_case_id
+    ):
+        raise ValidationError("Only unlinked, pending registrations can be rejected.")
+    validate_rejection_reason(reason)
+    now = timezone.now()
+    PreRegistration.objects.filter(pk=record.pk).update(
+        status=PreRegistration.Status.REJECTED,
+        rejection_reason=reason,
+        rejected_by=user,
+        rejected_at=now,
+        updated_at=now,
+    )
+    AuditLog.objects.create(
+        user=user,
+        action="REJECT_PRE_REGISTRATION",
+        target_type="pre_registration",
+        target_id=record.pk,
+        description=f"Rejected online registration {record.pre_registration_number}: {reason}",
+    )
+    record.refresh_from_db()
+    return record, True
 
 
 class RegistrationDeletionBlocked(Exception):
