@@ -1709,6 +1709,25 @@ def _send_schedule_set_reminder(dose, user):
     """
     from .sms import normalize_ph_number, send_dose_reminder
 
+    today = timezone.localdate()
+    if dose.scheduled_date and (
+        dose.scheduled_date < today
+        or (dose.scheduled_date == today and dose.dose_status == 'missed')
+    ):
+        # Saving yesterday's date is not a new upcoming appointment. Use the
+        # missed event's consent checks and durable claim, never a confirmation
+        # to a fallback/emergency contact or an unprotected second SMS.
+        from notifications.utils import dispatch_missed_schedule
+        try:
+            _, log, result = dispatch_missed_schedule(
+                dose.pk, today=today, expected_date=dose.scheduled_date)
+        except Exception:
+            logger.error('Past schedule SMS requires review in SMS history.')
+            return None, 'failed'
+        if not result.get('success'):
+            return None, 'failed'
+        return log, None
+
     patient = dose.schedule.bite_case.patient
     candidates = [
         patient.contact_number,

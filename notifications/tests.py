@@ -105,3 +105,21 @@ class MissedScheduleNotificationTests(_MissedAppointmentFixture, TestCase):
         self.client.force_login(other)
         response = self.client.get(reverse('accounts:patient_portal'))
         self.assertNotContains(response, 'You have missed your schedule')
+
+    def test_setting_yesterday_date_uses_missed_sms_not_confirmation(self):
+        from vaccination.views import _send_schedule_set_reminder
+
+        yesterday = self.today - timedelta(days=1)
+        VaccineDose.objects.filter(pk=self.dose.pk).update(
+            scheduled_date=yesterday, dose_status='scheduled')
+        self.dose.refresh_from_db()
+        with patch('vaccination.views.timezone.localdate', return_value=self.today):
+            log, reason = _send_schedule_set_reminder(self.dose, self.nurse)
+        self.assertIsNone(reason)
+        self.assertEqual(log.reminder_type, 'missed_appointment')
+        self.assertIn('missed your schedule', log.message)
+        self.assertEqual(log.scheduled_date, yesterday)
+        self.gateway.assert_called_once()
+        with patch('vaccination.views.timezone.localdate', return_value=self.today):
+            _send_schedule_set_reminder(self.dose, self.nurse)
+        self.gateway.assert_called_once()

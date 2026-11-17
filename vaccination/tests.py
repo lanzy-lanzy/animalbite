@@ -3152,11 +3152,14 @@ class NurseVaccinationManageTests(TestCase):
         return pending, target
 
     def _schedule(self, dose, target):
-        return self.client.post(
-            reverse("vaccination:dose_schedule", args=[dose.pk]),
-            {"scheduled_date": target.isoformat()},
-            follow=True,
-        )
+        # Confirmation tests schedule dates ahead of the fixture's clinic day,
+        # rather than depending on the date the test suite is executed.
+        with patch('vaccination.views.timezone.localdate', return_value=self.first_dose.scheduled_date):
+            return self.client.post(
+                reverse("vaccination:dose_schedule", args=[dose.pk]),
+                {"scheduled_date": target.isoformat()},
+                follow=True,
+            )
 
     def test_setting_a_dose_date_texts_the_patient(self):
         pending, target = self._next_dose_and_protocol_date()
