@@ -613,7 +613,7 @@
                     Sign in
                 </a>
                 <a href="{% url 'pre_registrations:public_create' %}" class="btn-emerald inline-flex items-center gap-2 text-sm font-semibold px-5 py-[11px] rounded-full">
-                    Register online
+                    Register
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
                 </a>
                 <button id="mobile-menu-btn" class="lg:hidden w-10 h-10 round neu-sm border flex items-center justify-center" style="color:var(--emerald-800)">
@@ -667,11 +667,11 @@
 
                 <div id="hero-cta" class="reveal mt-9 flex flex-wrap items-center justify-center gap-3.5">
                     <a href="{% url 'pre_registrations:public_create' %}" class="magnetic btn-gold inline-flex items-center gap-2.5 px-8 py-4 rounded-full text-[14px] font-bold">
-                        Register online
+                        Register
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
                     </a>
-                    <a href="{% url 'pre_registrations:public_status' %}" class="glass-chip inline-flex items-center gap-2 px-8 py-4 rounded-full text-[14px] font-bold text-emerald-950">
-                        Check registration status
+                    <a href="{% url 'accounts:login' %}" class="glass-chip inline-flex items-center gap-2 px-8 py-4 rounded-full text-[14px] font-bold text-emerald-950">
+                        Sign in
                     </a>
                 </div>
 
@@ -1016,7 +1016,7 @@
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
                         </a>
                         <a href="{% url 'pre_registrations:public_create' %}" class="glass-chip inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-full font-bold text-sm text-emerald-950">
-                            Register online as patient
+                            Register
                         </a>
                     </div>
                 </div>
@@ -1048,7 +1048,7 @@
                         <a href="#features" class="hover:text-gold-700">Features</a>
                         <a href="#workflow" class="hover:text-gold-700">Workflow</a>
                         <a href="#security" class="hover:text-gold-700">Security</a>
-                        <a href="{% url 'pre_registrations:public_create' %}" class="hover:text-gold-700">Register online</a>
+                        <a href="{% url 'pre_registrations:public_create' %}" class="hover:text-gold-700">Register</a>
                         <a href="{% url 'accounts:login' %}" class="hover:text-gold-700">Sign in</a>
                     </div>
                     <p class="text-xs text-muted-2">© <span id="year"></span> Municipal Health Office · Animal Bite Treatment Center · Built for care, audited for trust.</p>
