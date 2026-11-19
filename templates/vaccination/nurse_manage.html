@@ -145,7 +145,6 @@
                   </button>
                   {% elif row.dose.dose_status == 'completed' %}
                   <span class="text-xs font-bold text-emerald-700">Completed{% if row.dose.administered_by %} · {{ row.dose.administered_by.get_full_name|default:row.dose.administered_by.username }}{% endif %}</span>
-                  {% if row.dose.tetanus_administered %}<span class="text-xs text-muted">Rabies + Tetanus · {{ row.dose.tetanus_vaccine_name }} · Batch {{ row.dose.tetanus_batch_number }}</span>{% endif %}
                   {% endif %}
                 </div>
               </td>
@@ -337,22 +336,6 @@
             <div>
               <label for="administerTime" class="manage-label">Administration time</label>
               <input type="time" id="administerTime" name="actual_time" class="form-input mt-1">
-              {% if assessment.tt_indicated %}
-              <div class="mt-4 border-t border-line pt-3">
-                <label class="flex items-center gap-2 text-sm font-bold">
-                  <input type="checkbox" id="includeTetanus" name="include_tetanus" onchange="document.getElementById('tetanusInventory').required = this.checked">
-                  Rabies + Tetanus for this administration
-                </label>
-                <p class="text-xs text-muted mt-1">Leave unchecked for Rabies only. Selecting Tetanus deducts one stock unit from the lot below.</p>
-                <label for="tetanusInventory" class="manage-label mt-2 block">Tetanus stock lot administered</label>
-                <select id="tetanusInventory" name="tetanus_inventory" class="form-input mt-1">
-                  <option value="">Select Tetanus lot</option>
-                  {% for lot in tetanus_lots %}<option value="{{ lot.pk }}" {% if lot.pk == assessment.tetanus_inventory_id %}selected{% endif %}>{{ lot }} · Available: {{ lot.quantity_available }} {{ lot.unit }}</option>{% endfor %}
-                </select>
-              </div>
-              {% else %}
-              <p class="text-xs text-muted mt-3">Rabies-only plan. Tetanus stock will not be deducted.</p>
-              {% endif %}
             </div>
           </div>
           <p class="text-xs font-medium text-muted">Confirming marks this dose Completed and deducts one vial from vaccine inventory. This cannot be submitted twice.</p>
@@ -436,10 +419,6 @@
       return;
     }
     document.getElementById('administerForm').action = action;
-    const tetanusCheckbox = document.getElementById('includeTetanus');
-    if (tetanusCheckbox) tetanusCheckbox.checked = false;
-    const tetanusLotSelect = document.getElementById('tetanusInventory');
-    if (tetanusLotSelect) tetanusLotSelect.required = false;
     document.getElementById('administerDoseLabel').textContent = label || '';
     document.getElementById('administerBrand').value = brand || '';
     document.getElementById('administerBatch').value = batch || '';

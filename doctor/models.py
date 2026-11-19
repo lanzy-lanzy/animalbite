@@ -81,11 +81,6 @@ class ClinicalAssessment(models.Model):
                                           related_name='assessment_plans',
                                           help_text="Planned vaccine lot — stock is only deducted when a dose is administered")
     vaccine_lot_number = models.CharField(max_length=100, blank=True, verbose_name="Lot / batch number")
-    tetanus_inventory = models.ForeignKey(
-        'inventory.VaccineInventory', on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='tetanus_assessment_plans',
-        help_text='Optional Tetanus lot; deducted only on confirmed administration.',
-    )
     vaccine_dose_ml = models.CharField(max_length=20, blank=True, verbose_name="Volume per dose (mL)")
     vaccine_quantity = models.PositiveSmallIntegerField(null=True, blank=True, verbose_name="Quantity (vials/doses)")
     treatment_plan = models.TextField(blank=True, help_text="Detailed treatment & management plan")

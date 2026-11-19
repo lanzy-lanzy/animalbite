@@ -14,11 +14,6 @@ DOSE_SCHEDULE_CHOICES = [
 ]
 
 class ClinicalAssessmentForm(forms.ModelForm):
-    vaccine_protocol = forms.ChoiceField(
-        label='Vaccine treatment', required=False,
-        choices=[('rabies_only', 'Rabies only'), ('rabies_tetanus', 'Rabies + Tetanus')],
-        widget=forms.Select(attrs={'class': 'form-input'}),
-    )
     # The selected option is the total number of doses in the schedule (1–5).
     dose_schedule = forms.ChoiceField(
         label='Dose schedule', choices=DOSE_SCHEDULE_CHOICES, required=True,
@@ -36,7 +31,7 @@ class ClinicalAssessmentForm(forms.ModelForm):
             'exposure_narrative', 'animal_type_verified', 'animal_owned_verified', 'animal_vax_verified',
             'wound_washed_verified', 'body_part_verified', 'number_of_wounds_verified', 'date_time_bite_verified',
             'category_confirmed', 'pep_indicated', 'rig_indicated', 'tt_indicated',
-            'vaccine_inventory', 'tetanus_inventory', 'vaccine_brand_plan', 'vaccine_lot_number', 'vaccine_dose_ml',
+            'vaccine_inventory', 'vaccine_brand_plan', 'vaccine_lot_number', 'vaccine_dose_ml',
             'vaccine_quantity', 'dose_protocol', 'first_dose_date', 'dose_schedule_plan',
             'treatment_plan', 'dosage_instructions', 'follow_up_instructions', 'additional_notes',
             'prc_number', 'status',
@@ -53,7 +48,6 @@ class ClinicalAssessmentForm(forms.ModelForm):
             'date_time_bite_verified': forms.DateTimeInput(attrs={'type': 'datetime-local', 'class': 'form-input'}),
             'category_confirmed': forms.Select(attrs={'class': 'form-input font-bold'}),
             'vaccine_inventory': forms.Select(attrs={'class': 'form-input'}),
-            'tetanus_inventory': forms.Select(attrs={'class': 'form-input'}),
             'vaccine_lot_number': forms.TextInput(attrs={'class': 'form-input', 'placeholder': 'e.g., 24A0123'}),
             'vaccine_dose_ml': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.1', 'min': '0', 'placeholder': '0.5 mL'}),
             'vaccine_quantity': forms.NumberInput(attrs={'class': 'form-input', 'min': '0', 'placeholder': 'Vials / doses'}),
@@ -87,16 +81,6 @@ class ClinicalAssessmentForm(forms.ModelForm):
         self.fields['vaccine_inventory'].queryset = (
             VaccineInventory.objects.filter(usable).order_by('brand', 'expiration_date')
         )
-        from inventory.vaccine_types import tetanus_stock_filter
-        self.fields['vaccine_inventory'].queryset = self.fields['vaccine_inventory'].queryset.exclude(tetanus_stock_filter())
-        tetanus_usable = Q(expiration_date__gt=today, quantity_available__gt=0)
-        if self.instance.pk and self.instance.tetanus_inventory_id:
-            tetanus_usable |= Q(pk=self.instance.tetanus_inventory_id)
-        self.fields['tetanus_inventory'].queryset = VaccineInventory.objects.filter(
-            tetanus_stock_filter(), tetanus_usable).order_by('expiration_date', 'pk')
-        self.fields['tetanus_inventory'].label = 'Tetanus Toxoid stock lot (optional)'
-        self.fields['tetanus_inventory'].empty_label = '— Select Tetanus lot —'
-        self.initial['vaccine_protocol'] = 'rabies_tetanus' if self.instance.tt_indicated else 'rabies_only'
         self.fields['vaccine_inventory'].empty_label = '— Not from stock list —'
         self.fields['vaccine_inventory'].label = 'Vaccine brand (from stock)'
         self.fields['vaccine_brand_plan'].label = 'Brand / preparation'
@@ -128,13 +112,6 @@ class ClinicalAssessmentForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
-        choice = cleaned.get('vaccine_protocol')
-        selected = choice == 'rabies_tetanus' if choice else cleaned.get('tt_indicated', False)
-        cleaned['tt_indicated'] = selected
-        if selected and not cleaned.get('tetanus_inventory'):
-            self.add_error('tetanus_inventory', 'Select a Tetanus stock lot for Rabies + Tetanus.')
-        if not selected:
-            cleaned['tetanus_inventory'] = None
         protocol = cleaned.get('dose_protocol')
         date = cleaned.get('dose_schedule_date') or cleaned.get('first_dose_date')
         if date:

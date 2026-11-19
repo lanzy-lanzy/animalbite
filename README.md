@@ -2,24 +2,6 @@
 
 Django application for managing animal bite cases.
 
-### Optional Tetanus inventory
-
-The assessment's **Vaccine treatment** selector offers **Rabies only** and
-**Rabies + Tetanus**. A combined plan needs a separate Tetanus stock lot; saving
-or viewing a plan does not deduct stock. The stock name must identify Tetanus
-(for example, `Tetanus Toxoid` or `TT`), keeping it out of the Rabies lot selector.
-
-When confirming actual administration, the nurse explicitly checks **Rabies +
-Tetanus for this administration** and selects the Tetanus lot used. The checkbox
-starts unchecked each time. One stock unit is deducted from each selected lot,
-in the same transaction. Leaving it unchecked deducts only Rabies stock, even
-when Tetanus is part of the doctor's plan. Invalid, empty or expired Tetanus
-stock prevents the combined operation; unavailable Rabies stock also rolls it
-back. Completed-dose replay cannot deduct either stock a second time. Each dose
-retains the administered Tetanus product and batch, and the stock deduction is
-recorded in the administration audit log. Apply the included doctor/vaccination
-migrations before using this workflow.
-
 ### Seenode deployment accounts
 
 Missed schedule alerts support both Semaphore SMS and the patient's in-app

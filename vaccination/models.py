@@ -35,13 +35,6 @@ class VaccineDose(models.Model):
     actual_time = models.TimeField(null=True, blank=True, help_text="Time the dose was actually administered")
     vaccine_brand = models.CharField(max_length=100, blank=True)
     batch_number = models.CharField(max_length=100, blank=True)
-    tetanus_administered = models.BooleanField(default=False)
-    tetanus_inventory = models.ForeignKey(
-        'inventory.VaccineInventory', on_delete=models.SET_NULL, null=True, blank=True,
-        related_name='tetanus_administrations',
-    )
-    tetanus_vaccine_name = models.CharField(max_length=200, blank=True)
-    tetanus_batch_number = models.CharField(max_length=100, blank=True)
     expiration_date = models.DateField(null=True, blank=True)
     dose_status = models.CharField(max_length=20, choices=DOSE_STATUS, default='scheduled')
     administered_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='administered_doses')
