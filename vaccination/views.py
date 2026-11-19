@@ -18,6 +18,8 @@ from .schedule_utils import prescribed_minimum_date
 from bite_cases.models import AnimalBiteCase
 from patients.models import Patient
 from audit.models import AuditLog
+from inventory.models import VaccineInventory
+from inventory.vaccine_types import tetanus_stock_filter
 
 logger = logging.getLogger(__name__)
 
@@ -1591,6 +1593,10 @@ def nurse_schedule_manage(request, pk):
         'missed_count': missed_count,
         'missed_doses': missed_doses,
         'today': today,
+        'tetanus_lots': VaccineInventory.objects.filter(
+            tetanus_stock_filter(),
+            expiration_date__gt=today, quantity_available__gt=0,
+        ).order_by('expiration_date', 'pk'),
     })
 
 
@@ -1847,7 +1853,7 @@ def _deduct_one_vial(dose):
         return False
 
     usable = VaccineInventory.objects.select_for_update().filter(
-        expiration_date__gt=timezone.localdate(), quantity_available__gt=0)
+        expiration_date__gt=timezone.localdate(), quantity_available__gt=0).exclude(tetanus_stock_filter())
 
     inventory = None
     if dose.batch_number:
@@ -1999,6 +2005,24 @@ def dose_administer(request, pk):
 
         brand = request.POST.get('vaccine_brand', '').strip() or assessment.vaccine_brand_plan
         batch = request.POST.get('batch_number', '').strip() or assessment.vaccine_lot_number
+        include_tetanus = request.POST.get('include_tetanus') in ('on', '1', 'true')
+        tetanus_lot = None
+        if include_tetanus:
+            if not assessment.tt_indicated:
+                messages.error(request, 'Rabies + Tetanus must be selected in the finalized doctor assessment first.')
+                return manage_url
+            try:
+                tetanus_id = int(request.POST.get('tetanus_inventory', ''))
+            except (TypeError, ValueError):
+                messages.error(request, 'Select the Tetanus stock lot administered.')
+                return manage_url
+            tetanus_lot = VaccineInventory.objects.select_for_update().filter(
+                tetanus_stock_filter(), pk=tetanus_id,
+                expiration_date__gt=today, quantity_available__gte=1,
+            ).first()
+            if not tetanus_lot:
+                messages.error(request, 'The selected Tetanus lot is invalid, expired, or out of stock. Nothing was deducted.')
+                return manage_url
         dose.actual_date = actual_date
         dose.actual_time = actual_time
         dose.vaccine_brand = brand
@@ -2010,6 +2034,23 @@ def dose_administer(request, pk):
             'dose_status', 'administered_by', 'updated_at',
         ])
         deducted = _deduct_one_vial(dose)
+        if tetanus_lot:
+            if not deducted:
+                transaction.set_rollback(True)
+                messages.error(request, 'A usable Rabies stock lot is required for combined administration. Nothing was deducted.')
+                return manage_url
+            tetanus_lot.quantity_available -= 1
+            tetanus_lot.quantity_used += 1
+            tetanus_lot.save(update_fields=['quantity_available', 'quantity_used', 'updated_at'])
+            dose.tetanus_administered = True
+            dose.tetanus_inventory = tetanus_lot
+            dose.tetanus_vaccine_name = tetanus_lot.vaccine_name
+            dose.tetanus_batch_number = tetanus_lot.batch_number
+            dose.save(update_fields=[
+                'tetanus_administered', 'tetanus_inventory', 'tetanus_vaccine_name',
+                'tetanus_batch_number', 'updated_at',
+            ])
+            VaccinationSchedule.objects.filter(pk=dose.schedule_id).update(tetanus_toxoid_given=True)
         AuditLog.objects.create(
             user=request.user, action='ADMINISTER_VACCINE',
             description=(
@@ -2017,6 +2058,7 @@ def dose_administer(request, pk):
                 f'for {bite_case.case_number} on {actual_date}'
                 + (f' at {actual_time.strftime("%H:%M")}' if actual_time else '')
                 + ('; stock deducted' if deducted else '; no stock lot matched')
+                + (f'; Tetanus administered: {tetanus_lot.vaccine_name}, batch {tetanus_lot.batch_number}; 1 stock unit deducted' if tetanus_lot else '; Rabies only, no Tetanus stock deducted')
             ),
         )
 
