@@ -48,6 +48,7 @@ class EncounterTestCase(TestCase):
         )
 
     def _payload(self, **overrides):
+        today_iso = timezone.localdate().isoformat()
         data = {
             "assess-chief_complaint": "Dog bite on the right hand, 1 hour ago",
             "assess-history_present_illness": "Bled immediately, washed with soap.",
@@ -61,8 +62,8 @@ class EncounterTestCase(TestCase):
             "assess-vaccine_quantity": "5",
             "assess-dose_protocol": "essen",
             "assess-dose_schedule": "5",
-            "assess-dose_schedule_date": "2026-10-30",
-            "assess-first_dose_date": "2026-10-30",
+            "assess-dose_schedule_date": today_iso,
+            "assess-first_dose_date": today_iso,
             "assess-treatment_plan": "Wound irrigation, rabies PEP, antibiotics.",
             "assess-prc_number": "1234567",
             # The hidden field no longer decides finalization; Save validates the
@@ -198,9 +199,15 @@ class EncounterLayoutTests(EncounterTestCase):
     def test_section_six_renders_dose_schedule_and_vaccine_brand(self):
         for text in ("Dose Schedule &amp; Vaccine", "Dose schedule *", "Date (1st dose) *",
                      "Vaccine Brand", "Vaccine brand (from stock) *",
-                     "Volume per dose (mL)", "Quantity (vials/doses)", "1st dose date",
+                     "Volume per dose (mL)", "Quantity (vials/doses)",
                      "Treatment, Prescription &amp; Follow-up"):
             self.assertContains(self.response, text)
+        self.assertNotContains(self.response, ">1st dose date</label>")
+        self.assertContains(self.response, 'type="hidden" name="assess-first_dose_date"')
+        self.assertRegex(
+            self.response.content.decode(),
+            r'name="assess-dose_schedule_date"[^>]*min="%s"' % timezone.localdate().isoformat(),
+        )
         for label in ("1 Dose", "2 Doses", "3 Doses", "4 Doses", "5 Doses"):
             self.assertContains(self.response, label)
         for name in ("assess-dose_schedule", "assess-dose_schedule_date",
@@ -418,37 +425,46 @@ class AssessmentSaveTests(EncounterTestCase):
         self.assertContains(response, "Needed to date the 5 doses of this protocol.")
         self.assertFalse(VaccinationSchedule.objects.filter(bite_case=self.case).exists())
 
+    def test_past_first_dose_date_is_rejected(self):
+        yesterday = (timezone.localdate() - datetime.timedelta(days=1)).isoformat()
+        response = self._post(**{"assess-dose_schedule_date": yesterday, "assess-first_dose_date": yesterday})
+        self.assertContains(response, "1st dose date cannot be in the past.")
+        self.assertFalse(VaccinationSchedule.objects.filter(bite_case=self.case).exists())
+
     def test_existing_schedule_is_not_duplicated_and_first_date_syncs(self):
+        today = timezone.localdate()
         schedule = VaccinationSchedule.objects.create(bite_case=self.case, created_by=self.nurse)
         VaccineDose.objects.create(schedule=schedule, dose_label="Day 0",
-                                   scheduled_date=datetime.date(2026, 11, 2))
-        self._post(**{"assess-dose_schedule": "5", "assess-first_dose_date": "2026-10-30"})
+                                   scheduled_date=today + datetime.timedelta(days=3))
+        self._post(**{"assess-dose_schedule": "5", "assess-first_dose_date": today.isoformat()})
         self.assertEqual(VaccinationSchedule.objects.filter(bite_case=self.case).count(), 1)
         doses = list(schedule.doses.order_by("id"))
         self.assertEqual(len(doses), 5)
-        self.assertEqual(doses[0].scheduled_date, datetime.date(2026, 10, 30))
+        self.assertEqual(doses[0].scheduled_date, today)
         self.assertTrue(all(d.scheduled_date is None for d in doses[1:]))
         self.assertTrue(all(d.dose_status == "pending" for d in doses[1:]))
 
     def test_dose_count_controls_how_many_records_exist(self):
+        today = timezone.localdate()
         self._post(**{"assess-dose_schedule": "2"})
         schedule = VaccinationSchedule.objects.get(bite_case=self.case)
         doses = list(schedule.doses.order_by("id"))
         self.assertEqual(len(doses), 2)
-        self.assertEqual(doses[0].scheduled_date, datetime.date(2026, 10, 30))
+        self.assertEqual(doses[0].scheduled_date, today)
         self.assertIsNone(doses[1].scheduled_date)
         self.assertEqual(doses[1].dose_status, "pending")
         self.inventory.refresh_from_db()
         self.assertEqual(self.inventory.quantity_used, 0)
 
     def test_first_dose_date_drives_the_plan_date(self):
-        self._post(**{"assess-dose_schedule_date": "2026-11-01",
-                      "assess-first_dose_date": "2026-10-30"})
+        today = timezone.localdate()
+        chosen = today + datetime.timedelta(days=2)
+        self._post(**{"assess-dose_schedule_date": chosen.isoformat(),
+                      "assess-first_dose_date": today.isoformat()})
         assessment = ClinicalAssessment.objects.get(bite_case=self.case)
-        self.assertEqual(assessment.first_dose_date, datetime.date(2026, 11, 1))
+        self.assertEqual(assessment.first_dose_date, chosen)
         schedule = VaccinationSchedule.objects.get(bite_case=self.case)
-        self.assertEqual(schedule.doses.order_by("id").first().scheduled_date,
-                         datetime.date(2026, 11, 1))
+        self.assertEqual(schedule.doses.order_by("id").first().scheduled_date, chosen)
 
     def test_raising_the_count_adds_pending_doses_only(self):
         self._post(**{"assess-dose_schedule": "2"})
@@ -460,25 +476,27 @@ class AssessmentSaveTests(EncounterTestCase):
         self.assertTrue(all(d.dose_status == "pending" for d in doses[1:]))
 
     def test_lowering_the_count_keeps_scheduled_history(self):
+        second_date = timezone.localdate() + datetime.timedelta(days=3)
         self._post(**{"assess-dose_schedule": "5"})
         schedule = VaccinationSchedule.objects.get(bite_case=self.case)
         second = list(schedule.doses.order_by("id"))[1]
-        second.scheduled_date = datetime.date(2026, 11, 2)
+        second.scheduled_date = second_date
         second.dose_status = "scheduled"
         second.save(update_fields=["scheduled_date", "dose_status", "updated_at"])
         self._post(**{"assess-dose_schedule": "2"})
         doses = list(schedule.doses.order_by("id"))
         self.assertEqual(len(doses), 2)
-        self.assertEqual(doses[1].scheduled_date, datetime.date(2026, 11, 2))
+        self.assertEqual(doses[1].scheduled_date, second_date)
         self.assertEqual(doses[1].dose_status, "scheduled")
 
     def test_completed_doses_are_never_redated(self):
+        later = (timezone.localdate() + datetime.timedelta(days=5)).isoformat()
         schedule = VaccinationSchedule.objects.create(bite_case=self.case, created_by=self.nurse)
         VaccineDose.objects.create(schedule=schedule, dose_label="Day 0",
                                    scheduled_date=datetime.date(2026, 10, 1),
                                    dose_status="completed")
-        self._post(**{"assess-dose_schedule": "1", "assess-dose_schedule_date": "2026-11-10",
-                      "assess-first_dose_date": "2026-11-10"})
+        self._post(**{"assess-dose_schedule": "1", "assess-dose_schedule_date": later,
+                      "assess-first_dose_date": later})
         dose = VaccineDose.objects.get(schedule=schedule)
         self.assertEqual(dose.scheduled_date, datetime.date(2026, 10, 1))
 
@@ -689,13 +707,14 @@ class PrescriptionTests(EncounterTestCase):
             birthdate=datetime.date(1990, 1, 1), contact_number="09170000001",
         )
         self.client.force_login(self.doctor)
+        today_iso = timezone.localdate().isoformat()
         data = {
             "assess-chief_complaint": "Fever review",
             "assess-exposure_narrative": "No animal exposure; review of febrile illness.",
             "assess-category_confirmed": "category_i",
             "assess-dose_schedule": "1",
-            "assess-dose_schedule_date": "2026-10-30",
-            "assess-first_dose_date": "2026-10-30",
+            "assess-dose_schedule_date": today_iso,
+            "assess-first_dose_date": today_iso,
             "assess-treatment_plan": "Symptomatic care and review in 48 hours.",
             "assess-status": "draft",
             "rx-TOTAL_FORMS": "1", "rx-INITIAL_FORMS": "0",

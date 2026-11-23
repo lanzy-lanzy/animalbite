@@ -970,6 +970,157 @@ def under_treatment_report(request):
     return _vaccination_followup_report(request, 'treatment')
 
 
+@reports_access
+def vaccinated_by_dose_report(request):
+    start, end, report_type, label = _parse_dates(request, simplified=True)
+    query = request.GET.get('q', '').strip()
+    selected_dose = request.GET.get('dose', 'all').strip()
+    if selected_dose not in ('all', '1', '2', '3', '4', '5'):
+        selected_dose = 'all'
+
+    doses = (
+        VaccineDose.objects
+        .select_related('schedule__bite_case__patient__barangay', 'administered_by')
+        .prefetch_related('schedule__doses')
+        .filter(dose_status='completed', actual_date__isnull=False)
+        .order_by('-actual_date', 'schedule_id', 'pk')
+    )
+    if start:
+        doses = doses.filter(actual_date__gte=start)
+    if end:
+        doses = doses.filter(actual_date__lte=end)
+
+    dose_list = list(doses.distinct())
+    schedule_doses = []
+    seen_schedules = set()
+    for dose in dose_list:
+        if dose.schedule_id not in seen_schedules:
+            schedule_doses.extend(dose.schedule.doses.all())
+            seen_schedules.add(dose.schedule_id)
+
+    pos_numbers = {}
+    counts_by_sched = {}
+    for d in sorted(schedule_doses, key=lambda item: (item.schedule_id, item.pk)):
+        counts_by_sched[d.schedule_id] = counts_by_sched.get(d.schedule_id, 0) + 1
+        pos_numbers[d.pk] = counts_by_sched[d.schedule_id]
+
+    dose_counts = {n: 0 for n in range(1, 6)}
+    dose_patient_ids = {n: set() for n in range(1, 6)}
+    all_rows = []
+    for dose in dose_list:
+        pos = pos_numbers.get(dose.pk, 1)
+        dose_label = _ordinal_label(pos)
+        case = dose.schedule.bite_case
+        patient = case.patient
+        administered_by = (
+            dose.administered_by.get_full_name() or dose.administered_by.username
+            if dose.administered_by else '—'
+        )
+        vaccine_brand = dose.vaccine_brand or '—'
+        actual_str = dose.actual_date.strftime('%b %d, %Y')
+        search_values = [
+            patient.patient_number,
+            patient.full_name(),
+            case.case_number,
+            dose_label,
+            vaccine_brand,
+            actual_str,
+            administered_by,
+            'Administered',
+        ] + _date_search_values(dose.actual_date)
+        if query and not _search_report_values(query, search_values):
+            continue
+        if pos in dose_counts:
+            dose_counts[pos] += 1
+            dose_patient_ids[pos].add(patient.pk)
+        all_rows.append({
+            'pos': pos,
+            'dose_label': dose_label,
+            'patient': patient,
+            'case': case,
+            'vaccine_brand': vaccine_brand,
+            'actual_date': dose.actual_date,
+            'actual_str': actual_str,
+            'administered_by': administered_by,
+        })
+
+    if selected_dose != 'all':
+        target_pos = int(selected_dose)
+        filtered_rows = [r for r in all_rows if r['pos'] == target_pos]
+    else:
+        filtered_rows = all_rows
+
+    dose_breakdown = [
+        {
+            'number': str(n),
+            'label': _ordinal_label(n),
+            'count': dose_counts[n],
+            'patients': len(dose_patient_ids[n]),
+        }
+        for n in range(1, 6)
+    ]
+    total_doses = len(filtered_rows)
+    unique_patients = len({r['patient'].pk for r in filtered_rows})
+
+    headers = [
+        'No.', 'Patient ID', 'Patient Name', 'Case Number', 'Dose',
+        'Vaccine / Brand', 'Administration Date', 'Administered By', 'Status',
+    ]
+    export = request.GET.get('export')
+    if export in ('print', 'pdf'):
+        generated_at = timezone.localtime()
+        export_rows = [
+            [
+                idx, r['patient'].patient_number, r['patient'].full_name(),
+                r['case'].case_number, r['dose_label'], r['vaccine_brand'],
+                r['actual_str'], r['administered_by'], 'Administered',
+            ]
+            for idx, r in enumerate(filtered_rows, start=1)
+        ]
+        filter_label = (
+            _ordinal_label(int(selected_dose))
+            if selected_dose != 'all' else 'All Doses (1st–5th)'
+        )
+        summary_lines = [
+            ('Dose Filter', filter_label),
+            ('Total Administered Doses', str(total_doses)),
+            ('Unique Vaccinated Patients', str(unique_patients)),
+        ] + [(item['label'], f"{item['patients']} patient(s) · {item['count']} dose(s)") for item in dose_breakdown]
+        if export == 'print':
+            return _render_report_print(
+                request,
+                'VACCINATED PATIENTS BY DOSE',
+                f'{label} · {filter_label} · Generated {generated_at:%B %d, %Y}',
+                headers, export_rows, summary_lines, summary_at_bottom=True,
+            )
+        pdf = _build_pdf(
+            'VACCINATED PATIENTS BY DOSE', f'{label} · {filter_label}',
+            headers, export_rows, summary_lines, landscape=True,
+        )
+        return _pdf_response(
+            pdf, f"ABTC_Vaccinated_By_Dose_{date.today().isoformat()}.pdf",
+            inline=request.GET.get('preview') == '1',
+        )
+
+    page_obj = Paginator(filtered_rows, 25).get_page(request.GET.get('page'))
+    return render(request, 'reports/vaccinated_by_dose_report.html', {
+        'page_obj': page_obj,
+        'total': total_doses,
+        'unique_patients': unique_patients,
+        'dose_breakdown': dose_breakdown,
+        'selected_dose': selected_dose,
+        'q': query,
+        'report_type': report_type,
+        'label': label,
+        'period_options': [
+            ('daily', 'Today'),
+            ('weekly', 'This Week'),
+            ('monthly', 'This Month'),
+            ('all', 'All Time'),
+        ],
+    })
+
+
 def _ordinal_label(position):
     suffix = 'th'
     if position % 100 not in (11, 12, 13):

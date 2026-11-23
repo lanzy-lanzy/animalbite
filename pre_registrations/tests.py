@@ -309,6 +309,12 @@ class PublicPreRegistrationTests(TestCase):
         self.assertEqual(download.status_code, 200)
         self.assertEqual(download["Content-Type"], "image/png")
         self.assertIn("attachment;", download["Content-Disposition"])
+        self.assertIn("Lina_M_Garcia", download["Content-Disposition"])
+        from PIL import Image
+        import io as _io
+        slip_img = Image.open(_io.BytesIO(download.content))
+        self.assertEqual(slip_img.width, 760)
+        self.assertGreater(slip_img.height, 700)
 
     def test_public_form_hides_email_field(self):
         response = self.client.get(reverse("pre_registrations:public_create"))

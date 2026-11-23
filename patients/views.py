@@ -1541,6 +1541,40 @@ def _patient_qr_data_uri(patient):
         return None, payload
 
 
+@login_required
+def patient_qr_download(request, pk):
+    """Download a printable QR identification slip PNG with the patient's name and details."""
+    if request.user.role == 'patient':
+        patient = get_object_or_404(Patient, pk=pk, account=request.user)
+    else:
+        patient = get_object_or_404(Patient.objects.select_related('barangay'), pk=pk)
+
+    from django.utils import timezone
+    from utils.qr import qr_slip_filename, qr_slip_png_bytes
+
+    registered = timezone.localtime(patient.created_at).strftime('%b %d, %Y')
+    png = qr_slip_png_bytes(
+        _patient_qr_payload(patient),
+        title='Patient Identification QR Slip',
+        full_name=patient.full_name(),
+        reference_label='Patient ID',
+        reference_value=patient.patient_number,
+        details=[
+            ('Patient ID', patient.patient_number),
+            ('Full Name', patient.full_name()),
+            ('Age / Sex', f'{patient.age} / {patient.get_sex_display()}'),
+            ('Contact Number', patient.contact_display or patient.contact_number),
+            ('Barangay', patient.barangay.name if patient.barangay else '—'),
+            ('Registered', registered),
+        ],
+        footer='Present this QR slip at the ABTC clinic on every visit.',
+    )
+    filename = qr_slip_filename(patient.patient_number, patient.full_name())
+    response = HttpResponse(png, content_type='image/png')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
 # Recognised identifier patterns inside a scanned string.
 _PATIENT_NUM_RE = re.compile(r'PAT-[0-9A-Za-z-]+', re.IGNORECASE)
 _PREREG_NUM_RE = re.compile(r'AB-\d{8}-\d{3,}', re.IGNORECASE)

@@ -457,7 +457,7 @@
     <div class="flex items-center justify-between mb-3">
         <h2 class="text-[11px] font-bold tracking-widest uppercase text-amber-700">D · Follow-up Reports</h2>
     </div>
-    <div class="rep-grid rep-grid--3">
+    <div class="rep-grid rep-grid--4">
         <a href="{% url 'reports:missed_appointments' %}?type={{ report_type }}{% if q %}&q={{ q|urlencode }}{% endif %}" class="rep-card rep-card--rose group">
             <span class="rep-card__icon">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 3v3m8-3v3M4 10h16M6 5h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2zm3 9 2 2 4-4"/></svg>
@@ -480,6 +480,14 @@
             </span>
             <h3 class="rep-card__title">Under Treatment</h3>
             <p class="rep-card__desc">Patients with active vaccination treatment plans and remaining scheduled doses.</p>
+            <span class="rep-card__link">View Report →</span>
+        </a>
+        <a href="{% url 'reports:vaccinated_by_dose_report' %}?type={{ report_type }}{% if q %}&q={{ q|urlencode }}{% endif %}" class="rep-card rep-card--lavender group">
+            <span class="rep-card__icon">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 4.5l-15 15M15 3l6 6M12 6l6 6M9 9l6 6M6 12l6 6"/></svg>
+            </span>
+            <h3 class="rep-card__title">Vaccinated Patients by Dose</h3>
+            <p class="rep-card__desc">Administered vaccine records grouped by dose number (1st to 5th dose).</p>
             <span class="rep-card__link">View Report →</span>
         </a>
     </div>

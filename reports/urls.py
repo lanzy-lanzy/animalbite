@@ -29,4 +29,6 @@ urlpatterns = [
          name='completed_vaccinations'),
     path('under-treatment/', views.under_treatment_report,
          name='under_treatment_report'),
+    path('vaccinated-by-dose/', views.vaccinated_by_dose_report,
+         name='vaccinated_by_dose_report'),
 ]

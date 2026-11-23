@@ -84,15 +84,21 @@ class ClinicalAssessmentForm(forms.ModelForm):
         self.fields['vaccine_inventory'].empty_label = '— Not from stock list —'
         self.fields['vaccine_inventory'].label = 'Vaccine brand (from stock)'
         self.fields['vaccine_brand_plan'].label = 'Brand / preparation'
+        self.fields['dose_schedule_date'].widget.attrs['min'] = today.isoformat()
         self.fields['chief_complaint'].required = True
         for f in ['history_present_illness','exposure_narrative','treatment_plan']:
             self.fields[f].required = False
+        schedule = None
+        if self.instance.bite_case_id:
+            from vaccination.models import VaccinationSchedule
+            schedule = VaccinationSchedule.objects.filter(
+                bite_case_id=self.instance.bite_case_id).first()
+        self._existing_first_dose_date = self.instance.first_dose_date if self.instance.pk else None
+        if schedule:
+            first_dose = schedule.doses.order_by('id').first()
+            if first_dose and first_dose.scheduled_date:
+                self._existing_first_dose_date = first_dose.scheduled_date
         if not self.is_bound:
-            schedule = None
-            if self.instance.bite_case_id:
-                from vaccination.models import VaccinationSchedule
-                schedule = VaccinationSchedule.objects.filter(
-                    bite_case_id=self.instance.bite_case_id).first()
             if schedule:
                 doses = list(schedule.doses.order_by('id'))
                 if doses:
@@ -103,7 +109,7 @@ class ClinicalAssessmentForm(forms.ModelForm):
             if not self.initial.get('first_dose_date'):
                 # An unbound form renders from self.initial (snapshotted from the instance in
                 # super().__init__), so the Day 0 default belongs there, not on field.initial.
-                self.initial['first_dose_date'] = self.instance.first_dose_date or timezone.localdate()
+                self.initial['first_dose_date'] = self.instance.first_dose_date or today
             if not self.initial.get('dose_schedule'):
                 days = ClinicalAssessment.protocol_days(self.instance.dose_protocol or '')
                 self.initial['dose_schedule'] = str(min(len(days), len(DOSE_SCHEDULE_CHOICES)))
@@ -114,7 +120,13 @@ class ClinicalAssessmentForm(forms.ModelForm):
         cleaned = super().clean()
         protocol = cleaned.get('dose_protocol')
         date = cleaned.get('dose_schedule_date') or cleaned.get('first_dose_date')
-        if date:
+        today = timezone.localdate()
+        if date and date < today and date != self._existing_first_dose_date:
+            self.add_error(
+                'dose_schedule_date',
+                '1st dose date cannot be in the past.',
+            )
+        elif date:
             cleaned['first_dose_date'] = date
         count = int(cleaned.get('dose_schedule') or 0)
         if protocol:

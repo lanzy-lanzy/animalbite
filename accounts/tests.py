@@ -1041,12 +1041,14 @@ class MyProfilePageTests(TestCase):
         self.assertIn('href="%s" class="mp-btn mp-btn--edit"' % reverse("accounts:profile_edit"), html)
         self.assertIn('href="%s" class="mp-btn mp-btn--password"' % reverse("accounts:change_password"), html)
         labels = ["My Profile", "Edit Profile", "Change Password", "Profile Overview",
-                  "Personal Information", "First Name", "Last Name", "Email Address",
+                  "Personal Information", "First Name", "Last Name",
                   "Mobile Number", "Account Information", "Username", ">Role<",
                   "Account Status", "Date Joined"]
         content = html[html.index('class="mp-page"'):]
         positions = [content.index(label) for label in labels]
         self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("Email Address", content)
+        self.assertNotIn("admin@abtc.test", html)
 
     def test_each_role_sees_its_own_real_values(self):
         users = [self.admin]
@@ -1074,7 +1076,7 @@ class MyProfilePageTests(TestCase):
         response = self._profile(self.admin)
         self.assertContains(
             response, '<dd class="mp-value"><span class="mp-empty">Not Set</span></dd>', count=1, html=True)
-        self.assertContains(response, "admin@abtc.test")
+        self.assertNotContains(response, "admin@abtc.test")
 
     def test_edit_profile_saves_only_allowed_fields(self):
         self.client.force_login(self.admin)
@@ -1086,15 +1088,16 @@ class MyProfilePageTests(TestCase):
         }, follow=True)
         self.assertRedirects(response, reverse("accounts:profile"))
         self.assertContains(response, "Profile updated successfully.")
-        for value in ("Sys Administrator", "sys@abtc.test", "09179998888"):
+        for value in ("Sys Administrator", "09179998888"):
             self.assertContains(response, value)
+        self.assertNotContains(response, "sys@abtc.test")
         self.admin.refresh_from_db()
         self.assertEqual(
             (self.admin.role, self.admin.is_active, self.admin.username,
-             self.admin.is_superuser, self.admin.is_staff),
-            ("admin", True, "profile.admin", False, False))
+             self.admin.email, self.admin.is_superuser, self.admin.is_staff),
+            ("admin", True, "profile.admin", "admin@abtc.test", False, False))
         form_html = self.client.get(reverse("accounts:profile_edit")).content.decode()
-        for name in ("role", "is_active", "username"):
+        for name in ("email", "role", "is_active", "username"):
             self.assertNotIn(f'name="{name}"', form_html)
 
     def test_change_password_validates_and_keeps_the_session(self):

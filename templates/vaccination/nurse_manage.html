@@ -64,7 +64,7 @@
         <span class="w-6 h-6 rounded-lg bg-white/15 flex items-center justify-center text-xs">A</span>
         Administer Vaccine
       </h2>
-      <span class="text-xs font-bold uppercase tracking-widest text-emerald-200">{{ completed }} / {{ total }} doses completed</span>
+      <span class="text-xs font-bold uppercase tracking-widest text-emerald-200">{{ completed }} / {{ total }} doses administered</span>
     </div>
     <div class="p-5 space-y-4">
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -144,7 +144,7 @@
                     Administer
                   </button>
                   {% elif row.dose.dose_status == 'completed' %}
-                  <span class="text-xs font-bold text-emerald-700">Completed{% if row.dose.administered_by %} · {{ row.dose.administered_by.get_full_name|default:row.dose.administered_by.username }}{% endif %}</span>
+                  <span class="text-xs font-bold text-emerald-700">Administered{% if row.dose.administered_by %} · {{ row.dose.administered_by.get_full_name|default:row.dose.administered_by.username }}{% endif %}</span>
                   {% endif %}
                 </div>
               </td>
@@ -249,7 +249,7 @@
           <p id="scheduleDoseLabel" class="text-sm font-bold text-ink"></p>
           <div>
             <label for="scheduleDate" class="form-label">Scheduled Date <span class="text-red-600">*</span></label>
-            <input type="date" id="scheduleDate" name="scheduled_date" class="form-input" required>
+            <input type="date" id="scheduleDate" name="scheduled_date" class="form-input" min="{{ today|date:'Y-m-d' }}" required>
           </div>
         </div>
         <div class="flex justify-end gap-2 px-5 py-3 border-t border-line">
@@ -338,7 +338,7 @@
               <input type="time" id="administerTime" name="actual_time" class="form-input mt-1">
             </div>
           </div>
-          <p class="text-xs font-medium text-muted">Confirming marks this dose Completed and deducts one vial from vaccine inventory. This cannot be submitted twice.</p>
+          <p class="text-xs font-medium text-muted">Confirming marks this dose Administered and deducts one vial from vaccine inventory. This cannot be submitted twice.</p>
         </div>
         <div class="flex justify-end gap-2 px-5 py-3 border-t border-line">
           <button type="button" onclick="closeManageModal('administerModal')" class="px-4 py-2 rounded-full bg-white border border-line text-sm font-bold text-ink hover:bg-sage-50">Cancel</button>

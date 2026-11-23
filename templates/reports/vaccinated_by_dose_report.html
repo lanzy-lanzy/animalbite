@@ -1,0 +1,129 @@
+{% extends 'base.html' %}
+{% block title %}Vaccinated Patients by Dose — ABTC{% endblock %}
+{% block content %}
+<div class="space-y-5">
+    <header class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+        <div>
+            <a href="{% url 'reports:reports_index' %}" class="inline-flex items-center gap-1.5 text-xs font-bold text-muted hover:text-ink no-print">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                Back to Reports Center
+            </a>
+            <h1 class="font-display text-2xl font-bold text-ink mt-1">Vaccinated Patients by Dose</h1>
+            <p class="text-sm font-medium text-muted">Administered vaccine doses grouped by dose number (1st to 5th dose).</p>
+            <p class="text-sm font-medium text-muted mt-1">{{ label }} · Total administered doses: <strong class="text-ink">{{ total }}</strong> · Unique vaccinated patients: <strong class="text-ink">{{ unique_patients }}</strong></p>
+        </div>
+        <a href="?type={{ report_type }}&amp;dose={{ selected_dose }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}&amp;export=print"
+           target="_blank" rel="noopener"
+           class="no-print inline-flex items-center justify-center gap-2 rounded-full bg-emerald-950 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-900">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9V3h12v6M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v7H6z"/></svg>
+            Print Sheet
+        </a>
+    </header>
+
+    <!-- Dose summary cards -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {% for item in dose_breakdown %}
+        <a href="?type={{ report_type }}&amp;dose={{ item.number }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
+           class="card p-4 transition-colors {% if selected_dose == item.number %}border-emerald-900 bg-emerald-50/60{% else %}hover:bg-sage-50{% endif %}">
+            <p class="text-[11px] font-bold tracking-widest uppercase text-muted">{{ item.label }}</p>
+            <p class="font-display text-2xl font-bold text-emerald-950 mt-1">{{ item.patients }}</p>
+            <p class="text-xs font-medium text-muted mt-1">{{ item.patients }} patient{{ item.patients|pluralize }} · {{ item.count }} dose{{ item.count|pluralize }}</p>
+        </a>
+        {% endfor %}
+    </div>
+
+    <section class="card no-print">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <div>
+                <h2 class="font-display text-sm font-bold text-ink mb-2">Reporting Period</h2>
+                <nav class="flex flex-wrap gap-2" aria-label="Vaccinated by dose reporting period">
+                    {% for value, text in period_options %}
+                    <a href="?type={{ value }}&amp;dose={{ selected_dose }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
+                       class="px-3 py-1.5 rounded-full text-xs font-bold border {% if report_type == value %}bg-emerald-950 text-white border-emerald-950{% else %}bg-white text-ink border-line hover:bg-sage-50{% endif %}">{{ text }}</a>
+                    {% endfor %}
+                </nav>
+            </div>
+            <div>
+                <h2 class="font-display text-sm font-bold text-ink mb-2">Filter by Dose</h2>
+                <nav class="flex flex-wrap gap-2" aria-label="Filter by dose number">
+                    <a href="?type={{ report_type }}&amp;dose=all{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
+                       class="px-3 py-1.5 rounded-full text-xs font-bold border {% if selected_dose == 'all' %}bg-emerald-950 text-white border-emerald-950{% else %}bg-white text-ink border-line hover:bg-sage-50{% endif %}">All Doses</a>
+                    {% for item in dose_breakdown %}
+                    <a href="?type={{ report_type }}&amp;dose={{ item.number }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
+                       class="px-3 py-1.5 rounded-full text-xs font-bold border {% if selected_dose == item.number %}bg-emerald-950 text-white border-emerald-950{% else %}bg-white text-ink border-line hover:bg-sage-50{% endif %}">{{ item.label }} ({{ item.count }})</a>
+                    {% endfor %}
+                </nav>
+            </div>
+        </div>
+        <form method="get" class="flex flex-col sm:flex-row gap-2">
+            <input type="hidden" name="type" value="{{ report_type }}">
+            <input type="hidden" name="dose" value="{{ selected_dose }}">
+            <label class="sr-only" for="vaccinated-dose-search">Search vaccinated patients</label>
+            <input id="vaccinated-dose-search" type="search" name="q" value="{{ q }}"
+                   placeholder="Search patient ID, name, case number, vaccine brand, or date..."
+                   class="form-input min-w-0 flex-1">
+            <button type="submit" class="btn-primary shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                Search
+            </button>
+        </form>
+        <p class="text-xs font-medium text-muted mt-3">Administration date period: {{ label }}</p>
+    </section>
+
+    <section class="card p-0 overflow-hidden">
+        <div class="px-4 sm:px-5 py-4 border-b border-line bg-sage-50 flex flex-wrap items-center justify-between gap-2">
+            <div>
+                <h2 class="font-display text-sm font-bold text-ink">Vaccinated Patients by Dose</h2>
+                <p class="text-xs font-medium text-muted mt-1">Total Administered Doses: <strong class="text-ink">{{ total }}</strong> · Unique Patients: <strong class="text-ink">{{ unique_patients }}</strong></p>
+            </div>
+            <span class="text-xs font-semibold text-muted">{{ label }} · Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages|default:1 }}</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[980px]">
+                <thead>
+                    <tr class="border-b border-line bg-sage-50">
+                        <th class="table-header">No.</th>
+                        <th class="table-header">Patient ID</th>
+                        <th class="table-header">Patient Name</th>
+                        <th class="table-header">Case Number</th>
+                        <th class="table-header">Dose</th>
+                        <th class="table-header">Vaccine / Brand</th>
+                        <th class="table-header">Administration Date</th>
+                        <th class="table-header">Administered By</th>
+                        <th class="table-header">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-sage-100">
+                    {% for row in page_obj %}
+                    <tr class="hover:bg-sage-50">
+                        <td class="table-cell text-muted">{{ page_obj.start_index|add:forloop.counter0 }}</td>
+                        <td class="table-cell font-mono text-xs">{{ row.patient.patient_number }}</td>
+                        <td class="table-cell font-semibold text-ink">{{ row.patient.full_name }}</td>
+                        <td class="table-cell font-mono text-xs">{{ row.case.case_number }}</td>
+                        <td class="table-cell font-semibold">{{ row.dose_label }}</td>
+                        <td class="table-cell">{{ row.vaccine_brand }}</td>
+                        <td class="table-cell">{{ row.actual_str }}</td>
+                        <td class="table-cell">{{ row.administered_by }}</td>
+                        <td class="table-cell"><span class="status-badge bg-emerald-100 text-emerald-800">Administered</span></td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="9" class="text-center py-12">
+                        <p class="text-sm font-semibold text-ink">No matching vaccinated patient records found.</p>
+                        <p class="text-xs text-muted mt-1">Try another dose filter, search keyword, or reporting period.</p>
+                    </td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if page_obj.has_other_pages %}
+        <nav class="flex items-center justify-between px-5 py-3 border-t border-line bg-sage-50 no-print" aria-label="Vaccinated by dose pages">
+            <p class="text-xs font-medium text-muted">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</p>
+            <div class="flex gap-2">
+                {% if page_obj.has_previous %}<a href="?type={{ report_type }}&amp;dose={{ selected_dose }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}&amp;page={{ page_obj.previous_page_number }}" class="btn-secondary btn-xs">Previous</a>{% endif %}
+                {% if page_obj.has_next %}<a href="?type={{ report_type }}&amp;dose={{ selected_dose }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}&amp;page={{ page_obj.next_page_number }}" class="btn-secondary btn-xs">Next</a>{% endif %}
+            </div>
+        </nav>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

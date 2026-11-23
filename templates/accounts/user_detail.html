@@ -128,8 +128,6 @@
             {% endif %}
             <dt>Username</dt>
             <dd>{{ account.username }}</dd>
-            <dt>Email</dt>
-            <dd>{% if account.email %}{{ account.email }}{% else %}<span class="uad-muted">Not recorded</span>{% endif %}</dd>
             <dt>Role</dt>
             <dd>{{ account.get_role_display }}</dd>
             <dt>Status</dt>

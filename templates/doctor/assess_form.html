@@ -185,7 +185,7 @@
             {% if form.vaccine_inventory.errors %}<p class="text-xs text-red-600">{{ form.vaccine_inventory.errors|join:", " }}</p>{% endif %}
             <p class="text-xs text-muted mt-1">Only vaccine lots from Vaccine Inventory are listed — scheduling does not reduce stock.</p>
           </div>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
             <div>
               <label class="text-xs font-bold uppercase text-muted">Volume per dose (mL)</label>
               {{ form.vaccine_dose_ml }}
@@ -194,12 +194,8 @@
               <label class="text-xs font-bold uppercase text-muted">Quantity (vials/doses)</label>
               {{ form.vaccine_quantity }}
             </div>
-            <div>
-              <label class="text-xs font-bold uppercase text-muted">1st dose date</label>
-              {{ form.first_dose_date }}
-              {% if form.first_dose_date.errors %}<p class="text-xs text-red-600">{{ form.first_dose_date.errors|join:", " }}</p>{% endif %}
-            </div>
           </div>
+          {{ form.first_dose_date.as_hidden }}
           {{ form.vaccine_brand_plan.as_hidden }}
           {{ form.vaccine_lot_number.as_hidden }}
           {{ form.dose_schedule_plan.as_hidden }}

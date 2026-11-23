@@ -898,7 +898,8 @@ class MissedAppointmentPresentationTests(_MissedAppointmentFixture, TestCase):
                     manage = self.client.get(reverse(
                         "vaccination:nurse_schedule_manage", args=[self.schedule.pk]))
                     row = next(row for row in manage.context["dose_rows"] if row["dose"].pk == self.dose.pk)
-                    self.assertEqual(row["status_label"], label)
+                    manage_label = "Administered" if code == "completed" else label
+                    self.assertEqual(row["status_label"], manage_label)
                     self.assertEqual(row["status_class"], code)
                     self.assertEqual(row["is_missed"], code == "missed")
                     detail = self._details()
@@ -908,8 +909,9 @@ class MissedAppointmentPresentationTests(_MissedAppointmentFixture, TestCase):
                     dose_row = next(row for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", section, re.S)
                                     if "2nd Dose" in row)
                     badge = f'<span class="status-badge vaccination-status status-{code}">{label}</span>'
+                    manage_badge = f'<span class="status-badge vaccination-status status-{code}">{manage_label}</span>'
                     self.assertIn(badge, dose_row)
-                    self.assertContains(manage, badge)
+                    self.assertContains(manage, manage_badge)
                     self.dose.refresh_from_db()
                     self.assertEqual(self.dose.dose_status, stored)
         self.assertFalse(SMSLog.objects.exists())
@@ -923,6 +925,25 @@ class MissedAppointmentPresentationTests(_MissedAppointmentFixture, TestCase):
             row = next(row for row in manage.context["dose_rows"] if row["dose"].pk == self.dose.pk)
             self.assertEqual(row["status_label"], "Missed")
             self.assertEqual(self._detail_dose(self._details()).effective_status, "Missed")
+
+    def test_set_date_disables_and_rejects_previous_dates(self):
+        self.client.force_login(self.nurse)
+        with patch("django.utils.timezone.now", return_value=self._at(self.today)):
+            manage = self.client.get(reverse(
+                "vaccination:nurse_schedule_manage", args=[self.schedule.pk]))
+            self.assertContains(
+                manage,
+                f'id="scheduleDate" name="scheduled_date" class="form-input" min="{self.today.isoformat()}"',
+            )
+            two_days_ago = self.today - datetime.timedelta(days=2)
+            response = self.client.post(
+                reverse("vaccination:dose_schedule", args=[self.dose.pk]),
+                {"scheduled_date": two_days_ago.isoformat()},
+                follow=True,
+            )
+            self.assertContains(response, "Scheduled date cannot be in the past.")
+            self.dose.refresh_from_db()
+            self.assertNotEqual(self.dose.scheduled_date, two_days_ago)
 
     def test_missed_schedule_status_uses_only_current_missed_event(self):
         self.client.force_login(self.nurse)

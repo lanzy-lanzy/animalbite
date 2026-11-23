@@ -1487,6 +1487,11 @@ def _dose_rows_for_management(schedule, assessment_is_final, today):
         can_schedule = index > 1 and status not in ('completed', 'cancelled')
         can_administer = assessment_is_final and status not in ('completed', 'cancelled')
         is_missed = status == 'missed'
+        status_label = (
+            'Administered'
+            if status == 'completed'
+            else dict(VaccineDose.DOSE_STATUS)[status]
+        )
         rows.append({
             'dose': dose,
             'label': f'{ordinal} Dose',
@@ -1494,7 +1499,7 @@ def _dose_rows_for_management(schedule, assessment_is_final, today):
             'can_schedule': can_schedule,
             'can_administer': can_administer,
             'is_missed': is_missed,
-            'status_label': dict(VaccineDose.DOSE_STATUS)[status],
+            'status_label': status_label,
             'status_class': status,
         })
     return rows
@@ -1788,6 +1793,12 @@ def dose_schedule(request, pk):
         scheduled_date = date.fromisoformat(raw_date)
     except ValueError:
         messages.error(request, 'Enter a valid scheduled date.')
+        return manage_url
+
+    from zoneinfo import ZoneInfo
+    today = timezone.localdate(timezone=ZoneInfo('Asia/Manila'))
+    if scheduled_date < today:
+        messages.error(request, 'Scheduled date cannot be in the past.')
         return manage_url
 
     minimum = prescribed_minimum_date(dose)

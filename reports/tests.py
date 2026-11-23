@@ -169,6 +169,9 @@ class PatientReportTests(TestCase):
         self.assertContains(response, self.patient.patient_number)
         self.assertContains(response, self.other_patient.patient_number)
         self.assertContains(response, unlinked_patient.patient_number)
+        self.assertContains(response, 'Actions')
+        self.assertContains(response, reverse('patients:patient_detail', args=[self.patient.pk]))
+        self.assertContains(response, reverse('patients:patient_print', args=[self.patient.pk]))
 
         self.patient.sex = 'male'
         self.patient.save(update_fields=['sex'])
@@ -716,17 +719,37 @@ class FollowUpReportTests(TestCase):
         self.assertContains(index, 'Missed Appointments')
         self.assertContains(index, 'Completed Vaccinations')
         self.assertContains(index, 'Under Treatment')
-        self.assertContains(index, 'rep-grid--3')
+        self.assertContains(index, 'Vaccinated Patients by Dose')
+        self.assertContains(index, 'rep-grid--4')
         for name in (
             'missed_appointments',
             'completed_vaccinations',
             'under_treatment_report',
+            'vaccinated_by_dose_report',
         ):
             response = self._report(name)
             self.assertEqual(response.status_code, 200)
             self.assertContains(response, 'Back to Reports Center')
             self.assertContains(response, 'Print Sheet')
             self.assertEqual(response.content.count(b'type="search"'), 1)
+
+    def test_vaccinated_by_dose_report_groups_and_filters_by_dose(self):
+        all_resp = self._report('vaccinated_by_dose_report', {'type': 'all'})
+        self.assertEqual(all_resp.status_code, 200)
+        self.assertContains(all_resp, 'Vaccinated Patients by Dose')
+        self.assertContains(all_resp, '1st Dose')
+        self.assertContains(all_resp, '2nd Dose')
+        self.assertContains(all_resp, 'Administered')
+        breakdown = {item['number']: item for item in all_resp.context['dose_breakdown']}
+        self.assertGreaterEqual(breakdown['1']['count'], 1)
+
+        dose_one = self._report('vaccinated_by_dose_report', {'type': 'all', 'dose': '1'})
+        self.assertEqual(dose_one.status_code, 200)
+        self.assertEqual(dose_one.context['total'], breakdown['1']['count'])
+
+        printed = self._report('vaccinated_by_dose_report', {'type': 'all', 'export': 'print'})
+        self.assertEqual(printed.status_code, 200)
+        self.assertContains(printed, 'VACCINATED PATIENTS BY DOSE')
 
 
 class GlobalReportSearchTests(TestCase):

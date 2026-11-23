@@ -171,6 +171,33 @@ def patient_qr(request):
         return redirect('dashboard:index')
 
     patient = getattr(request.user, 'patient_profile', None)
+    if patient and request.GET.get('download'):
+        from django.http import HttpResponse
+        from django.utils import timezone
+        from utils.qr import build_patient_payload, qr_slip_filename, qr_slip_png_bytes
+
+        registered = timezone.localtime(patient.created_at).strftime('%b %d, %Y')
+        png = qr_slip_png_bytes(
+            build_patient_payload(patient),
+            title='Patient Identification QR Slip',
+            full_name=patient.full_name(),
+            reference_label='Patient ID',
+            reference_value=patient.patient_number,
+            details=[
+                ('Patient ID', patient.patient_number),
+                ('Full Name', patient.full_name()),
+                ('Age / Sex', f'{patient.age} / {patient.get_sex_display()}'),
+                ('Contact Number', patient.contact_display or patient.contact_number),
+                ('Barangay', patient.barangay.name if patient.barangay else '—'),
+                ('Registered', registered),
+            ],
+            footer='Present this QR slip at the ABTC clinic on every visit.',
+        )
+        filename = qr_slip_filename(patient.patient_number, patient.full_name())
+        response = HttpResponse(png, content_type='image/png')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
     qr_uri = None
     if patient:
         from utils.qr import build_patient_payload, qr_data_uri

@@ -17,7 +17,12 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from audit.models import AuditLog
-from utils.qr import qr_png_bytes, build_pre_registration_payload
+from utils.qr import (
+    qr_png_bytes,
+    qr_slip_filename,
+    qr_slip_png_bytes,
+    build_pre_registration_payload,
+)
 from utils.redirects import redirect_back
 
 from .forms import (
@@ -156,13 +161,33 @@ def qr_code(request, number):
     else:
         payload = build_pre_registration_payload(record.pre_registration_number)
     import qrcode.constants
-    png = qr_png_bytes(payload, error_correction=qrcode.constants.ERROR_CORRECT_Q)
-    response = HttpResponse(png, content_type="image/png")
     if request.GET.get("download"):
-        response["Content-Disposition"] = (
-            f'attachment; filename="ABTC_registration_{record.pre_registration_number}.png"'
+        submitted = timezone.localtime(record.submitted_at).strftime("%b %d, %Y %I:%M %p")
+        png = qr_slip_png_bytes(
+            payload,
+            title="Online Registration QR Slip",
+            full_name=record.full_name(),
+            reference_label="Registration No.",
+            reference_value=record.pre_registration_number,
+            details=[
+                ("Registration No.", record.pre_registration_number),
+                ("Full Name", record.full_name()),
+                ("Age / Sex", f"{record.age} / {record.get_sex_display()}"),
+                ("Contact Number", record.contact_number),
+                ("Barangay", record.barangay),
+                ("Submitted", submitted),
+                ("Status", record.get_status_display()),
+            ],
+            footer="Present this QR slip at the ABTC registration desk.",
+            error_correction=qrcode.constants.ERROR_CORRECT_Q,
         )
-    return response
+        filename = qr_slip_filename(record.pre_registration_number, record.full_name())
+        response = HttpResponse(png, content_type="image/png")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    png = qr_png_bytes(payload, error_correction=qrcode.constants.ERROR_CORRECT_Q)
+    return HttpResponse(png, content_type="image/png")
 
 
 @login_required

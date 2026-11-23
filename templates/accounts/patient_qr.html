@@ -21,7 +21,7 @@
         {% if qr_data_uri %}
         <img class="pp-qr-img" src="{{ qr_data_uri }}" alt="Patient identification QR code for {{ patient.patient_number }}">
         <div class="pp-qr-actions">
-            <a href="{{ qr_data_uri }}" download="ABTC-QR-{{ patient.patient_number }}.png" class="btn-secondary">Download QR</a>
+            <a href="{% url 'accounts:patient_qr' %}?download=1" class="btn-secondary">Download QR</a>
             <button type="button" onclick="window.print()" class="btn-primary">Print</button>
         </div>
         {% else %}

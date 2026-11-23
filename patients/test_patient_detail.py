@@ -557,6 +557,13 @@ class PatientDetailRecordTests(TestCase):
         self.assertIn(reverse("patients:patient_edit", args=[self.patient.pk]), content)
         self.assertIn(reverse("bite_cases:case_create"), content)
         self.assertIn("Download QR", content)
+        self.assertIn(reverse("patients:patient_qr_download", args=[self.patient.pk]), content)
+        qr_dl = self.client.get(reverse("patients:patient_qr_download", args=[self.patient.pk]))
+        self.assertEqual(qr_dl.status_code, 200)
+        self.assertEqual(qr_dl["Content-Type"], "image/png")
+        self.assertIn("attachment;", qr_dl["Content-Disposition"])
+        self.assertIn(self.patient.patient_number, qr_dl["Content-Disposition"])
+        self.assertIn(self.patient.first_name, qr_dl["Content-Disposition"])
         self.assertIn(reverse("bite_cases:case_detail", args=[self.case.pk]), content)
         self.assertIn(reverse("vaccination:schedule_detail", args=[self.schedule.pk]), content)
 

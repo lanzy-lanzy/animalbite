@@ -36,7 +36,7 @@
         {% if patient_qr_data_uri %}
         <div class="pd-hero-qr no-print">
             <img src="{{ patient_qr_data_uri }}" alt="Patient verification QR for {{ patient.patient_number }}">
-            <a href="{{ patient_qr_data_uri }}" download="ABTC_patient_{{ patient.patient_number }}.png">Download QR</a>
+            <a href="{% url 'patients:patient_qr_download' patient.pk %}">Download QR</a>
         </div>
         {% endif %}
     </section>
