@@ -175,7 +175,6 @@ class PublicPreRegistrationTests(TestCase):
     def valid_payload(self):
         return {
             "username": "lina.garcia",
-            "email": "lina@example.com",
             "password1": "SafePatient!2026",
             "password2": "SafePatient!2026",
             "first_name": "Lina",
@@ -250,7 +249,6 @@ class PublicPreRegistrationTests(TestCase):
         payload = self.valid_payload()
         payload.update(
             username="john.borling",
-            email="john@example.com",
             first_name="john paul r",
             middle_name="d",
             last_name="borling",
@@ -312,14 +310,22 @@ class PublicPreRegistrationTests(TestCase):
         self.assertEqual(download["Content-Type"], "image/png")
         self.assertIn("attachment;", download["Content-Disposition"])
 
-    def test_existing_email_does_not_create_partial_registration(self):
+    def test_public_form_hides_email_field(self):
+        response = self.client.get(reverse("pre_registrations:public_create"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("email", response.context["form"].fields)
+        self.assertNotContains(response, 'name="email"')
+        self.assertNotContains(response, "Email *")
+
+    def test_existing_username_does_not_create_partial_registration(self):
         User = get_user_model()
-        User.objects.create_user(username="existing", email="lina@example.com", password="SafePatient!2026")
+        User.objects.create_user(username="lina.garcia", password="SafePatient!2026")
 
         response = self.client.post(reverse("pre_registrations:public_create"), self.valid_payload())
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "An account with this email already exists")
+        self.assertContains(response, "That username is already in use.")
         self.assertEqual(PreRegistration.objects.count(), 0)
         self.assertEqual(User.objects.count(), 1)
 
@@ -423,7 +429,7 @@ class PublicPreRegistrationTests(TestCase):
         self.client.post(reverse("pre_registrations:public_create"), self.valid_payload())
         account = get_user_model().objects.get(username="lina.garcia")
         second_payload = self.valid_payload()
-        for field in ("username", "email", "password1", "password2"):
+        for field in ("username", "password1", "password2"):
             second_payload.pop(field)
         second_payload["bite_date"] = "2026-07-30"
         second_payload["bite_time"] = "09:00"

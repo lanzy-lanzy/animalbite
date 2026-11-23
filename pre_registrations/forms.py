@@ -230,9 +230,6 @@ class PatientSignupPreRegistrationForm(PreRegistrationForm):
         widget=forms.TextInput(attrs={"class": INPUT_CLASS, "autocomplete": "username"}),
         help_text="Use this username when you return to track your treatment.",
     )
-    email = forms.EmailField(
-        widget=forms.EmailInput(attrs={"class": INPUT_CLASS, "autocomplete": "email"})
-    )
     password1 = forms.CharField(
         label="Password",
         widget=forms.PasswordInput(attrs={"class": INPUT_CLASS, "autocomplete": "new-password"}),
@@ -246,7 +243,7 @@ class PatientSignupPreRegistrationForm(PreRegistrationForm):
         self.account = account if getattr(account, "is_authenticated", False) else None
         super().__init__(*args, **kwargs)
         if self.account:
-            for field_name in ("username", "email", "password1", "password2"):
+            for field_name in ("username", "password1", "password2"):
                 self.fields.pop(field_name)
 
     def clean_username(self):
@@ -254,12 +251,6 @@ class PatientSignupPreRegistrationForm(PreRegistrationForm):
         if User.objects.filter(username__iexact=username).exists():
             raise forms.ValidationError("That username is already in use.")
         return username
-
-    def clean_email(self):
-        email = self.cleaned_data["email"].strip().lower()
-        if User.objects.filter(email__iexact=email).exists():
-            raise forms.ValidationError("An account with this email already exists. Please log in instead.")
-        return email
 
     def clean(self):
         cleaned_data = super().clean()
@@ -273,7 +264,6 @@ class PatientSignupPreRegistrationForm(PreRegistrationForm):
         if password1:
             candidate = User(
                 username=cleaned_data.get("username", ""),
-                email=cleaned_data.get("email", ""),
                 first_name=cleaned_data.get("first_name", ""),
                 last_name=cleaned_data.get("last_name", ""),
                 role="patient",
@@ -293,7 +283,7 @@ class PatientSignupPreRegistrationForm(PreRegistrationForm):
         if account is None:
             account = User.objects.create_user(
                 username=self.cleaned_data["username"],
-                email=self.cleaned_data["email"],
+                email="",
                 password=self.cleaned_data["password1"],
                 first_name=self.cleaned_data["first_name"],
                 last_name=self.cleaned_data["last_name"],
