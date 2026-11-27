@@ -304,32 +304,14 @@
       </div>
       {% endif %}
 
-      {% if latest_assessment.dose_schedule_plan or latest_assessment.dose_protocol or latest_assessment.first_dose_date %}
-      <div class="cs-block">
-        <div class="cs-head"><span class="cs-letter">D.</span><h3 class="cs-title">Dose Schedule</h3></div>
-        <div class="cs-body">
-          <div class="cs-grid-2">
-            <div class="cs-field">
-              <span class="cs-label">Dose Schedule</span>
-              <div class="cs-value">{{ latest_assessment.dose_schedule_plan|default:latest_assessment.get_dose_protocol_display|default:"—" }}</div>
-            </div>
-            <div class="cs-field">
-              <span class="cs-label">Date (1st Dose)</span>
-              <div class="cs-value">{{ latest_assessment.first_dose_date|date:"F j, Y"|default:"—" }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-      {% endif %}
-
       {% if latest_assessment.vaccine_inventory or latest_assessment.vaccine_brand_plan or latest_assessment.vaccine_dose_ml or latest_assessment.vaccine_quantity is not None %}
       <div class="cs-block">
-        <div class="cs-head"><span class="cs-letter">E.</span><h3 class="cs-title">Vaccine Brand</h3></div>
+        <div class="cs-head"><span class="cs-letter">D.</span><h3 class="cs-title">Vaccine Brand</h3></div>
         <div class="cs-body">
           {% if latest_assessment.vaccine_inventory or latest_assessment.vaccine_brand_plan %}
           <div class="cs-field">
-            <span class="cs-label">Vaccine Brand</span>
-            <div class="cs-value">
+            <span class="cs-label" style="padding:8px 11px;">Vaccine Brand</span>
+            <div class="cs-value" style="padding:8px 11px;">
               {% if latest_assessment.vaccine_inventory %}
                 {{ latest_assessment.vaccine_inventory.brand }}{% if latest_assessment.vaccine_inventory.vaccine_name %} · {{ latest_assessment.vaccine_inventory.vaccine_name }}{% endif %}
               {% else %}
@@ -338,10 +320,16 @@
             </div>
           </div>
           {% endif %}
-          {% if latest_assessment.vaccine_dose_ml or latest_assessment.vaccine_quantity is not None %}
-          <div class="cs-grid-2">
-            <div class="cs-field"><span class="cs-label">Volume per Dose (mL)</span><div class="cs-value">{{ latest_assessment.vaccine_dose_ml|default:"—" }}</div></div>
-            <div class="cs-field"><span class="cs-label">Quantity (Vials/Doses)</span><div class="cs-value">{% if latest_assessment.vaccine_quantity is not None %}{{ latest_assessment.vaccine_quantity }}{% else %}—{% endif %}</div></div>
+          {% if latest_assessment.vaccine_dose_ml %}
+          <div class="cs-field">
+            <span class="cs-label" style="padding:8px 11px;">Volume per Dose (mL)</span>
+            <div class="cs-value" style="padding:8px 11px;">{{ latest_assessment.vaccine_dose_ml }} mL</div>
+          </div>
+          {% endif %}
+          {% if latest_assessment.vaccine_quantity is not None %}
+          <div class="cs-field">
+            <span class="cs-label" style="padding:8px 11px;">Quantity (Vials / Doses)</span>
+            <div class="cs-value" style="padding:8px 11px;">{{ latest_assessment.vaccine_quantity }}</div>
           </div>
           {% endif %}
         </div>
@@ -350,7 +338,7 @@
 
       {% if latest_assessment.treatment_plan or prescription_rows or latest_assessment.prescription or latest_assessment.dosage_instructions or latest_assessment.follow_up_instructions or latest_assessment.additional_notes %}
       <div class="cs-block cs-block--long">
-        <div class="cs-head"><span class="cs-letter">F.</span><h3 class="cs-title">Treatment &amp; Prescription</h3></div>
+        <div class="cs-head"><span class="cs-letter">E.</span><h3 class="cs-title">Treatment &amp; Prescription</h3></div>
         <div class="cs-body">
           {% if latest_assessment.treatment_plan %}
           <div class="cs-field"><span class="cs-label">Treatment Plan</span><div class="cs-value">{{ latest_assessment.treatment_plan }}</div></div>

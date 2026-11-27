@@ -1,0 +1,141 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Alerts Report — ABTC</title>
+    <link rel="stylesheet" href="{% static 'css/print_official.css' %}">
+    <link rel="stylesheet" href="{% static 'css/reports.css' %}">
+    <style>
+        .stock-print-group { margin: 0 0 18px; break-inside: auto; page-break-inside: auto; }
+        .stock-print-heading {
+            display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+            margin: 0 0 6px; padding: 0 0 4px;
+            border-bottom: 1.5px solid #334155;
+            color: #0F172A; font-size: 9.8pt; font-weight: 700;
+            letter-spacing: .05em; text-transform: uppercase;
+            break-after: avoid; page-break-after: avoid;
+        }
+        .stock-print-count { font-size: 8.5pt; font-weight: 600; color: #475569; text-transform: none; letter-spacing: 0; }
+        .stock-print-empty {
+            margin: 0; padding: 8px 10px;
+            border: 1px solid #CBD5E1; background: #F8FAFC;
+            color: #64748B; font-size: 8.5pt; font-style: italic;
+        }
+    </style>
+</head>
+<body class="abtc-print-body abtc-report{% if is_preview %} abtc-is-preview{% endif %}">
+    {% if not is_preview %}
+    <div class="abtc-toolbar abtc-no-print">
+        <span>Official report · A4 Portrait</span>
+        <span>
+            <button type="button" onclick="window.print()">Print</button>
+            <button type="button" class="abtc-toolbar__ghost" onclick="window.close()">Close</button>
+        </span>
+    </div>
+    {% endif %}
+
+    <main class="abtc-doc">
+        {% include 'print/_official_head.html' with document_title="STOCK ALERTS REPORT" %}
+        <p class="abtc-note">
+            {{ label }} &nbsp;·&nbsp; Date Printed: {{ printed_at|date:"F d, Y · g:i A" }}
+        </p>
+
+        <section class="abtc-section">
+            <h2 class="abtc-section-title">Report Summary</h2>
+            <div class="abtc-panel abtc-summary">
+                {% for s_label, s_value in summary_lines %}
+                <div class="abtc-summary__row"><span>{{ s_label }}</span><strong>{{ s_value }}</strong></div>
+                {% endfor %}
+            </div>
+        </section>
+
+        {% for section in sections %}
+        <section class="stock-print-group">
+            <h2 class="stock-print-heading">
+                <span>{{ section.title }}</span>
+                <span class="stock-print-count">{{ section.rows|length }} item{{ section.rows|length|pluralize }}</span>
+            </h2>
+            {% if section.rows %}
+            {% if section.key == 'pulled_out' %}
+            <table class="abtc-table">
+                <thead>
+                    <tr>
+                        <th style="width:5%">No.</th>
+                        <th style="width:12%">Category</th>
+                        <th style="width:22%">Product</th>
+                        <th style="width:14%">Batch</th>
+                        <th style="width:12%">Pulled Out</th>
+                        <th style="width:13%">Pull-out Date</th>
+                        <th style="width:22%">Reason / Responsible</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in section.rows %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ row.module_label }}</td>
+                        <td><strong>{{ row.product }}</strong>{% if row.form %}<div class="abtc-cell-note">{{ row.form }}</div>{% endif %}</td>
+                        <td>{{ row.batch_summary|default:row.batch|default:"—" }}</td>
+                        <td>{{ row.available }} {{ row.unit }}</td>
+                        <td>{% if row.pull_out_date %}{{ row.pull_out_date|date:"M d, Y" }}{% else %}—{% endif %}</td>
+                        <td>{{ row.reason|default:"—" }}{% if row.responsible %}<div class="abtc-cell-note">{{ row.responsible }}</div>{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <table class="abtc-table">
+                <thead>
+                    <tr>
+                        <th style="width:5%">No.</th>
+                        <th style="width:13%">Category</th>
+                        <th style="width:28%">Medicine / Vaccine</th>
+                        <th style="width:12%">Form</th>
+                        <th style="width:17%">Batch(es)</th>
+                        <th style="width:12%">Available</th>
+                        <th style="width:13%">Expiry</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in section.rows %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ row.module_label }}</td>
+                        <td><strong>{{ row.product }}</strong></td>
+                        <td>{{ row.form|default:"—" }}</td>
+                        <td>{{ row.batch_summary|default:row.batch|default:"—" }}</td>
+                        <td>{{ row.available }} {{ row.unit }}</td>
+                        <td>{% if row.expiry_summary %}{{ row.expiry_summary }}{% elif row.expiration %}{{ row.expiration|date:"Y-m-d" }}{% else %}—{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+            {% else %}
+            <p class="stock-print-empty">No items in {{ section.title|lower }}.</p>
+            {% endif %}
+        </section>
+        {% endfor %}
+
+        {% include 'print/_official_footer.html' with confidential=True show_signatories=True %}
+    </main>
+
+    {% if not is_preview %}
+    <script>
+        (function () {
+            var printed = false;
+            function openPrintDialog() {
+                if (printed) return;
+                printed = true;
+                window.setTimeout(function () { window.print(); }, 350);
+            }
+            window.addEventListener('load', openPrintDialog, { once: true });
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') window.close();
+            });
+        })();
+    </script>
+    {% endif %}
+</body>
+</html>

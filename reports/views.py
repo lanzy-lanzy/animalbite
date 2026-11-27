@@ -1896,9 +1896,18 @@ def stock_alerts_report(request):
                 "Stock Alerts Report", label, headers, rows,
                 summary_lines=summary_lines, user=request.user)
         if export == 'print':
-            return _render_report_print(
-                request, "Stock Alerts Report", label, headers, rows,
-                summary_lines)
+            is_preview = preview == '1'
+            response = render(request, 'reports/stock_alerts_print_sheet.html', {
+                'sections': sections,
+                'summary_lines': summary_lines,
+                'label': label,
+                'printed_at': timezone.localtime(),
+                'is_preview': is_preview,
+                'signatories': get_signatories(request.user),
+            })
+            if is_preview:
+                response['X-Frame-Options'] = 'SAMEORIGIN'
+            return response
         pdf = _build_pdf(
             "Stock Alerts Report", label, headers, rows,
             summary_lines=summary_lines, user=request.user)
