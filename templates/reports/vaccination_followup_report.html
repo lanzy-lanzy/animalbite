@@ -35,8 +35,8 @@
         {% if kind == 'missed' or kind == 'completed' %}<label class="block text-sm font-bold text-ink mb-2" for="followup-report-search">Search</label>{% endif %}
         <form method="get" class="flex flex-col sm:flex-row gap-2">
             <input type="hidden" name="type" value="{{ report_type }}">
-            {% if kind != 'missed' and kind != 'completed' %}<label class="sr-only" for="followup-report-search">Search {{ title }}</label>{% endif %}
             <input id="followup-report-search" type="search" name="q" value="{{ q }}"
+                   aria-label="Search"
                    placeholder="Search..."
                    class="{% if kind == 'missed' or kind == 'completed' %}followup-search-input{% else %}form-input{% endif %} min-w-0 flex-1">
             <button type="submit" class="{% if kind == 'missed' or kind == 'completed' %}followup-search-button{% else %}btn-primary shrink-0{% endif %}">
