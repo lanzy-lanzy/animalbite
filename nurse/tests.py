@@ -214,7 +214,7 @@ class NurseDashboardTests(TestCase):
         response = self.client.get(reverse("nurse:dashboard"))
         self.assertEqual(response.status_code, 200)
 
-        # Doctor-dashboard-matched design structure with charts and no Quick Actions
+        # Doctor-dashboard-matched design structure with charts and no Quick Actions / removed tables
         for marker in (
             'class="nurse-dashboard"',
             'class="dash-hero"',
@@ -223,12 +223,16 @@ class NurseDashboardTests(TestCase):
             'id="nurse-dose-status-chart"',
             'id="nurse-daily-administered-chart"',
             'class="dash-card"',
-            'class="dash-table"',
             "Nurse Dashboard",
         ):
             self.assertContains(response, marker)
-        self.assertNotContains(response, "Quick Actions")
-        self.assertNotContains(response, 'class="dash-actions-grid"')
+        for removed in (
+            "Quick Actions",
+            'class="dash-actions-grid"',
+            "Due Today — Administer Now",
+            "Cases Awaiting Schedule",
+        ):
+            self.assertNotContains(response, removed)
 
         # All 6 KPI cards & counts
         for label in (
@@ -244,28 +248,6 @@ class NurseDashboardTests(TestCase):
         self.assertEqual(response.context["pending_scheduling_count"], 1)
         self.assertEqual(response.context["upcoming_count"], 1)
         self.assertEqual(response.context["awaiting_schedule_count"], 1)
-
-        # Due today row + awaiting schedule row
-        self.assertContains(response, case_due.case_number)
-        self.assertContains(response, "Verorab")
-        self.assertContains(response, reverse("vaccination:schedule_detail", args=[schedule.pk]))
-        self.assertContains(response, case_unscheduled.case_number)
-        self.assertContains(
-            response, reverse("vaccination:schedule_trigger", args=[case_unscheduled.pk])
-        )
-
-        # All 8 quick-action links preserved
-        for url_name in (
-            "patients:patient_list",
-            "nurse:doctor_finding_list",
-            "vaccination:patient_schedule_list",
-            "vaccination:sms_log_list",
-            "vaccination:schedule_list",
-            "inventory:vaccine_list",
-            "reports:reports_index",
-            "bite_cases:case_list",
-        ):
-            self.assertContains(response, reverse(url_name))
 
 
 class DoctorFindingDetailTests(TestCase):
