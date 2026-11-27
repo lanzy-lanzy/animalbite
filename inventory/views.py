@@ -104,16 +104,19 @@ def _pull_out_expired_batch(request, module, pk):
         messages.error(request, 'Invalid pull-out submission. Please refresh and try again.')
         return redirect(redirect_url)
 
-    try:
-        quantity = int(request.POST.get('quantity', ''))
-    except (TypeError, ValueError):
-        messages.error(request, 'Enter a valid pull-out quantity.')
-        return redirect(redirect_url)
+    raw_quantity = request.POST.get('quantity', '').strip()
+    requested_quantity = None
+    if raw_quantity != '':
+        try:
+            requested_quantity = int(raw_quantity)
+        except (TypeError, ValueError):
+            messages.error(request, 'Enter a valid pull-out quantity.')
+            return redirect(redirect_url)
+        if requested_quantity <= 0:
+            messages.error(request, 'Pull-out quantity must be greater than zero.')
+            return redirect(redirect_url)
     reason = request.POST.get('reason', '').strip()
     remarks = request.POST.get('remarks', '').strip()
-    if quantity <= 0:
-        messages.error(request, 'Pull-out quantity must be greater than zero.')
-        return redirect(redirect_url)
     if not reason or len(reason) > 100:
         messages.error(request, 'Enter a valid pull-out reason.')
         return redirect(redirect_url)
@@ -136,7 +139,7 @@ def _pull_out_expired_batch(request, module, pk):
             if batch.quantity_available <= 0:
                 messages.info(request, 'This batch has no remaining physical stock.')
                 return redirect(redirect_url)
-            if quantity > batch.quantity_available:
+            if requested_quantity is not None and requested_quantity > batch.quantity_available:
                 messages.error(
                     request,
                     f'Pull-out quantity cannot exceed the remaining '
@@ -144,7 +147,9 @@ def _pull_out_expired_batch(request, module, pk):
                 )
                 return redirect(redirect_url)
 
-            batch.quantity_available -= quantity
+            # Automatically pull out the full expired available quantity of the batch.
+            quantity = batch.quantity_available
+            batch.quantity_available = 0
             batch.save(update_fields=['quantity_available', 'updated_at'])
             movement_model.objects.create(
                 **{
@@ -374,11 +379,16 @@ def vaccine_create(request):
                         item.quantity_available = item.quantity_received
                         item.created_by = request.user
                         item.save()
+                    time_received = (
+                        form.cleaned_data.get('time_received')
+                        or timezone.localtime().time().replace(second=0, microsecond=0)
+                    )
                     VaccineStockMovement.objects.create(
                         vaccine=item, movement_type='stock_in',
                         quantity=form.cleaned_data['quantity_received'],
                         supplier=form.cleaned_data['source_supplier'],
                         date_received=timezone.localdate(),
+                        time_received=time_received,
                         batch_number=item.batch_number,
                         expiration_date=item.expiration_date,
                         moved_by=request.user,
@@ -711,25 +721,68 @@ def medicine_create(request):
         form = MedicineInventoryForm(request.POST)
         if form.is_valid():
             item = form.save(commit=False)
-            item.quantity_available = item.quantity_received
-            item.created_by = request.user
-            item.save()
-            MedicineStockMovement.objects.create(
-                medicine=item, movement_type='stock_in',
-                quantity=item.quantity_received,
-                supplier=item.source_supplier,
-                date_received=item.date_received,
-                batch_number=item.batch_number,
+            same_name_batch = MedicineInventory.objects.filter(
+                medicine_name__iexact=item.medicine_name.strip(),
+                generic_name__iexact=item.generic_name.strip(),
+                strength__iexact=item.strength.strip(),
+                dosage_form=item.dosage_form,
+                unit__iexact=item.unit.strip(),
+                batch_number__iexact=item.batch_number.strip(),
+            ).order_by('id')
+            conflicting_batch = same_name_batch.exclude(
                 expiration_date=item.expiration_date,
-                moved_by=request.user,
-                notes='Initial stock in',
-            )
-            AuditLog.objects.create(
-                user=request.user, action='STOCK_IN',
-                description=f'Added medicine {item.medicine_name} batch {item.batch_number}',
-            )
-            messages.success(request, 'Medicine added to inventory.')
-            return redirect('inventory:medicine_list')
+            ).first()
+            if conflicting_batch:
+                form.add_error(
+                    None,
+                    'This medicine and batch number already exist with a '
+                    'different expiration date. Verify the batch before '
+                    'recording stock.',
+                )
+            else:
+                time_received = (
+                    form.cleaned_data.get('time_received')
+                    or timezone.localtime().time().replace(second=0, microsecond=0)
+                )
+                with transaction.atomic():
+                    existing = same_name_batch.filter(
+                        expiration_date=item.expiration_date,
+                    ).select_for_update().first()
+                    if existing:
+                        existing.quantity_received += item.quantity_received
+                        existing.quantity_available += item.quantity_received
+                        existing.reorder_level = item.reorder_level
+                        if not existing.source_supplier:
+                            existing.source_supplier = item.source_supplier
+                        if not existing.remarks:
+                            existing.remarks = item.remarks
+                        existing.save(update_fields=[
+                            'quantity_received', 'quantity_available',
+                            'reorder_level', 'source_supplier', 'remarks',
+                            'updated_at',
+                        ])
+                        item = existing
+                    else:
+                        item.quantity_available = item.quantity_received
+                        item.created_by = request.user
+                        item.save()
+                    MedicineStockMovement.objects.create(
+                        medicine=item, movement_type='stock_in',
+                        quantity=form.cleaned_data['quantity_received'],
+                        supplier=form.cleaned_data['source_supplier'],
+                        date_received=timezone.localdate(),
+                        time_received=time_received,
+                        batch_number=item.batch_number,
+                        expiration_date=item.expiration_date,
+                        moved_by=request.user,
+                        notes=form.cleaned_data['remarks'] or 'Initial stock in',
+                    )
+                    AuditLog.objects.create(
+                        user=request.user, action='STOCK_IN',
+                        description=f'Added medicine {item.medicine_name} batch {item.batch_number}',
+                    )
+                messages.success(request, 'Medicine added to inventory.')
+                return redirect('inventory:medicine_list')
     else:
         form = MedicineInventoryForm()
     return render(request, 'inventory/medicine_form.html', {
@@ -868,7 +921,8 @@ def prescription_list(request):
             Q(patient__last_name__icontains=query) |
             Q(patient__patient_number__icontains=query) |
             Q(bite_case__case_number__icontains=query) |
-            Q(medicine__medicine_name__icontains=query)
+            Q(medicine__medicine_name__icontains=query) |
+            Q(medicine__source_supplier__icontains=query)
         )
     paginator = Paginator(items.order_by('status', '-created_at'), 20)
     page = paginator.get_page(request.GET.get('page'))
@@ -894,10 +948,37 @@ def prescription_dispense(request, pk):
     except ValueError as error:
         messages.error(request, str(error))
     else:
+        movement = (
+            MedicineStockMovement.objects
+            .filter(
+                medicine=prescription.medicine,
+                movement_type='dispense',
+                moved_by=request.user,
+            )
+            .order_by('-created_at', '-pk')
+            .first()
+        )
+        if movement is not None:
+            update_fields = []
+            if not movement.supplier and prescription.medicine.source_supplier:
+                movement.supplier = prescription.medicine.source_supplier
+                update_fields.append('supplier')
+            if not movement.batch_number and prescription.medicine.batch_number:
+                movement.batch_number = prescription.medicine.batch_number
+                update_fields.append('batch_number')
+            if not movement.expiration_date and prescription.medicine.expiration_date:
+                movement.expiration_date = prescription.medicine.expiration_date
+                update_fields.append('expiration_date')
+            if update_fields:
+                movement.save(update_fields=update_fields)
+        supplier_note = (
+            f' [Supplier: {prescription.medicine.source_supplier}]'
+            if prescription.medicine.source_supplier else ''
+        )
         AuditLog.objects.create(
             user=request.user, action='DISPENSE_MEDICINE',
             description=(f'Dispensed {prescription.quantity} {prescription.medicine.unit} of '
-                         f'{prescription.medicine.medicine_name} for '
+                         f'{prescription.medicine.medicine_name}{supplier_note} for '
                          f'{prescription.patient.patient_number} '
                          f'({prescription.bite_case.case_number if prescription.bite_case_id else "general"})'),
         )

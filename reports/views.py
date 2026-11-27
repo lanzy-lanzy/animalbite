@@ -18,7 +18,8 @@ from vaccination.missed_appointments import missed_vaccination_doses
 from inventory.models import MedicineInventory, VaccineInventory
 from inventory.notifications import get_expiry_warning_days
 
-from .pdf import build_official_pdf
+from .excel import build_official_xlsx
+from .pdf import build_official_pdf, get_signatories
 from .services import (
     barangay_distribution, completed_schedule_case_ids,
     effective_status, grouped_medicine_products, grouped_totals,
@@ -513,6 +514,24 @@ def _export_period(start, end):
     )
 
 
+def _xlsx_response(
+        filename, title, meta, headers, rows, summary_lines=None, user=None):
+    xlsx_bytes = build_official_xlsx(
+        title, meta, headers, rows,
+        summary_lines=summary_lines,
+        signatories=get_signatories(user),
+    )
+    resp = HttpResponse(
+        xlsx_bytes,
+        content_type=(
+            'application/vnd.openxmlformats-officedocument.'
+            'spreadsheetml.sheet'
+        ),
+    )
+    resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return resp
+
+
 def _pdf_response(pdf_bytes, filename, inline=False):
     resp = HttpResponse(pdf_bytes, content_type='application/pdf')
     disp = 'inline' if inline else 'attachment'
@@ -522,20 +541,26 @@ def _pdf_response(pdf_bytes, filename, inline=False):
     # CSP frame-ancestors if present
     return resp
 
-def _build_pdf(title, subtitle, headers, rows, summary_lines=None, landscape=False):
+
+def _build_pdf(
+        title, subtitle, headers, rows, summary_lines=None, landscape=False,
+        user=None):
     """Build every report PDF with the shared official A4 portrait template.
 
     `landscape` is accepted for backwards compatibility and intentionally ignored:
     all ABTC documents print portrait.
     """
-    return build_official_pdf(title, subtitle, headers, rows, summary_lines)
+    return build_official_pdf(
+        title, subtitle, headers, rows, summary_lines,
+        signatories=get_signatories(user),
+    )
 
 
 def _render_report_print(
         request, title, meta, headers, rows, summary_lines=None,
         summary_at_bottom=False):
     """Render the official HTML print document for a report (browser Print)."""
-    return render(request, 'reports/print_official.html', {
+    response = render(request, 'reports/print_official.html', {
         'document_title': title,
         'document_meta': meta,
         'summary_lines': summary_lines or [],
@@ -543,7 +568,11 @@ def _render_report_print(
         'rows': rows,
         'printed_at': timezone.localtime(),
         'summary_at_bottom': summary_at_bottom,
+        'signatories': get_signatories(request.user),
+        'is_preview': request.GET.get('preview') == '1',
     })
+    response['X-Frame-Options'] = 'SAMEORIGIN'
+    return response
 
 
 def _record_report_period(request, queryset, date_field):
@@ -623,7 +652,7 @@ def patients_report(request):
     patients, report_type, label = _patient_records_query(request)
     total = patients.count()
     export = request.GET.get('export')
-    if export in ('print', 'pdf'):
+    if export in ('print', 'pdf', 'csv', 'xlsx'):
         generated_at = timezone.localtime()
         rows = [
             [
@@ -640,13 +669,23 @@ def patients_report(request):
             'Barangay', 'Contact Number', 'Registration Date',
         ]
         summary_lines = [('Total Patients', str(total))]
+        if export == 'csv':
+            return _csv_response(
+                f"ABTC_Patients_{date.today().isoformat()}.csv",
+                headers, rows)
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Patients_{date.today().isoformat()}.xlsx",
+                'PATIENTS REPORT', label, headers, rows,
+                summary_lines=summary_lines, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, 'PATIENTS REPORT',
                 f'{label} · Generated {generated_at:%B %d, %Y}',
                 headers, rows, summary_lines, summary_at_bottom=True)
         pdf = _build_pdf(
-            'PATIENTS REPORT', label, headers, rows, summary_lines)
+            'PATIENTS REPORT', label, headers, rows, summary_lines,
+            user=request.user)
         return _pdf_response(
             pdf, f"ABTC_Patients_{date.today().isoformat()}.pdf",
             inline=request.GET.get('preview') == '1')
@@ -659,6 +698,7 @@ def patients_report(request):
         'report_type': report_type,
         'label': label,
         'period_options': RECORD_REPORT_PERIODS,
+        'pdf_title': 'Patients Report',
     })
 
 
@@ -667,7 +707,7 @@ def animal_bite_cases_report(request):
     cases, report_type, label = _bite_case_records_query(request)
     total = cases.count()
     export = request.GET.get('export')
-    if export in ('print', 'pdf'):
+    if export in ('print', 'pdf', 'csv', 'xlsx'):
         generated_at = timezone.localtime()
         rows = [
             [
@@ -683,13 +723,23 @@ def animal_bite_cases_report(request):
             'Animal Type', 'Exposure Type', 'Barangay', 'Case Status',
         ]
         summary_lines = [('Total Animal Bite Cases', str(total))]
+        if export == 'csv':
+            return _csv_response(
+                f"ABTC_Animal_Bite_Cases_{date.today().isoformat()}.csv",
+                headers, rows)
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Animal_Bite_Cases_{date.today().isoformat()}.xlsx",
+                'ANIMAL BITE CASES REPORT', label, headers, rows,
+                summary_lines=summary_lines, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, 'ANIMAL BITE CASES REPORT',
                 f'{label} · Generated {generated_at:%B %d, %Y}',
                 headers, rows, summary_lines, summary_at_bottom=True)
         pdf = _build_pdf(
-            'ANIMAL BITE CASES REPORT', label, headers, rows, summary_lines)
+            'ANIMAL BITE CASES REPORT', label, headers, rows, summary_lines,
+            user=request.user)
         return _pdf_response(
             pdf, f"ABTC_Animal_Bite_Cases_{date.today().isoformat()}.pdf",
             inline=request.GET.get('preview') == '1')
@@ -704,6 +754,7 @@ def animal_bite_cases_report(request):
         'report_type': report_type,
         'label': label,
         'period_options': RECORD_REPORT_PERIODS,
+        'pdf_title': 'Animal Bite Cases Report',
     })
 
 
@@ -831,8 +882,8 @@ def cases_report(request):
                 w.writerow([c.case_number, c.patient.full_name(), c.date_time_bite.date() if c.date_time_bite else '', c.created_at.date(), c.get_animal_type_display(), c.get_exposure_type_display(), c.incident_barangay, c.get_case_status_display()])
         return resp
 
-    # PDF (preview inline or download) and official browser print document
-    if export in ('pdf', 'print'):
+    # PDF (preview inline or download), Excel (.xlsx), and official browser print document
+    if export in ('pdf', 'print', 'xlsx'):
         rows = []
         if request.GET.get('q', '').strip():
             headers = SEARCH_RESULT_HEADERS
@@ -849,9 +900,16 @@ def cases_report(request):
         subtitle = label + (f" · {qs.count()} record(s)" if qs.count() else "")
         summary = [("Total cases", str(total))]
         summary += _case_filter_summary(request, label, extra_filters=False)
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Cases_{date.today().isoformat()}.xlsx",
+                title, subtitle, headers, rows,
+                summary_lines=summary, user=request.user)
         if export == 'print':
             return _render_report_print(request, title, subtitle, headers, rows, summary)
-        pdf = _build_pdf(title, subtitle, headers, rows, summary_lines=summary)
+        pdf = _build_pdf(
+            title, subtitle, headers, rows, summary_lines=summary,
+            user=request.user)
         inline = preview == '1' or request.GET.get('inline') == '1'
         filename = f"ABTC_Cases_{start.isoformat() if start else 'all'}_{end.isoformat() if end else 'all'}.pdf"
         return _pdf_response(pdf, filename, inline=inline)
@@ -866,7 +924,7 @@ def cases_report(request):
 
     context = {
         'cases': page_obj, 'page_obj': page_obj,
-        'title': title, 'label': label,
+        'title': title, 'label': label, 'pdf_title': title,
         'total': total, 'by_status': by_status, 'by_animal': by_animal, 'by_barangay': by_barangay,
         'report_type': report_type,
         'q': request.GET.get('q',''),
@@ -928,15 +986,22 @@ def vaccine_report(request):
             w.writerow([i.vaccine_name, i.brand, i.batch_number, i.quantity_received, i.quantity_used, i.quantity_available, i.expiration_date, i.date_received])
         return resp
 
-    if export in ('pdf', 'print'):
+    if export in ('pdf', 'print', 'xlsx'):
         headers = ["Vaccine", "Brand", "Batch", "Received", "Used", "Available", "Expiry"]
         rows = [[i.vaccine_name, i.brand, i.batch_number, str(i.quantity_received), str(i.quantity_used), str(i.quantity_available), i.expiration_date.strftime('%Y-%m-%d') if i.expiration_date else ''] for i in items[:1500]]
         subtitle = label + f" · {items.count()} lot(s) · Received {total_received} · Used {total_used} · Available {total_available}"
         summary = [("Total lots", str(items.count())), ("Date range", label), ("Total received", str(total_received)), ("Total used", str(total_used)), ("Available", str(total_available))]
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Vaccine_{date.today().isoformat()}.xlsx",
+                "Vaccine Inventory Report", subtitle, headers, rows,
+                summary_lines=summary, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, "Vaccine Inventory Report", subtitle, headers, rows, summary)
-        pdf = _build_pdf("Vaccine Inventory Report", subtitle, headers, rows, summary_lines=summary)
+        pdf = _build_pdf(
+            "Vaccine Inventory Report", subtitle, headers, rows,
+            summary_lines=summary, user=request.user)
         inline = preview=='1' or request.GET.get('inline')=='1'
         filename = f"ABTC_Vaccine_{start.isoformat() if start else 'all'}_{end.isoformat() if end else 'all'}.pdf"
         return _pdf_response(pdf, filename, inline=inline)
@@ -953,6 +1018,7 @@ def vaccine_report(request):
         'end_date': end.strftime('%Y-%m-%d') if end else '',
         'q': q, 'has_filters': bool(start or end or q),
         'period_type': request.GET.get('type', report_type),
+        'pdf_title': 'Vaccine Usage Report',
     })
 
 @reports_access
@@ -1067,7 +1133,7 @@ def vaccinated_by_dose_report(request):
         'Vaccine / Brand', 'Administration Date', 'Administered By', 'Status',
     ]
     export = request.GET.get('export')
-    if export in ('print', 'pdf'):
+    if export in ('print', 'pdf', 'csv', 'xlsx'):
         generated_at = timezone.localtime()
         export_rows = [
             [
@@ -1086,6 +1152,16 @@ def vaccinated_by_dose_report(request):
             ('Total Administered Doses', str(total_doses)),
             ('Unique Vaccinated Patients', str(unique_patients)),
         ] + [(item['label'], f"{item['patients']} patient(s) · {item['count']} dose(s)") for item in dose_breakdown]
+        if export == 'csv':
+            return _csv_response(
+                f"ABTC_Vaccinated_By_Dose_{date.today().isoformat()}.csv",
+                headers, export_rows)
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Vaccinated_By_Dose_{date.today().isoformat()}.xlsx",
+                'VACCINATED PATIENTS BY DOSE', f'{label} · {filter_label}',
+                headers, export_rows, summary_lines=summary_lines,
+                user=request.user)
         if export == 'print':
             return _render_report_print(
                 request,
@@ -1096,6 +1172,7 @@ def vaccinated_by_dose_report(request):
         pdf = _build_pdf(
             'VACCINATED PATIENTS BY DOSE', f'{label} · {filter_label}',
             headers, export_rows, summary_lines, landscape=True,
+            user=request.user,
         )
         return _pdf_response(
             pdf, f"ABTC_Vaccinated_By_Dose_{date.today().isoformat()}.pdf",
@@ -1112,6 +1189,7 @@ def vaccinated_by_dose_report(request):
         'q': query,
         'report_type': report_type,
         'label': label,
+        'pdf_title': 'Vaccinated Patients by Dose',
         'period_options': [
             ('daily', 'Today'),
             ('weekly', 'This Week'),
@@ -1441,7 +1519,7 @@ def _vaccination_followup_report(request, kind):
     export = request.GET.get('export', '')
     headers = headers_by_kind[kind]
     title = titles[kind]
-    if export in ('print', 'pdf', 'csv'):
+    if export in ('print', 'pdf', 'csv', 'xlsx'):
         export_rows = [row['cells'] for row in rows]
         summary = [
             ('Reporting Period', label),
@@ -1458,11 +1536,17 @@ def _vaccination_followup_report(request, kind):
             writer.writerow(headers)
             writer.writerows(export_rows)
             return response
+        if export == 'xlsx':
+            return _xlsx_response(
+                f'ABTC_{kind.title()}_{today.isoformat()}.xlsx',
+                title, label, headers, export_rows,
+                summary_lines=summary, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, title, label, headers, export_rows, summary)
-        pdf = _build_pdf(title, label, headers, export_rows,
-                         summary_lines=summary)
+        pdf = _build_pdf(
+            title, label, headers, export_rows,
+            summary_lines=summary, user=request.user)
         return _pdf_response(
             pdf, f'ABTC_{kind.title()}_{today.isoformat()}.pdf',
             inline=request.GET.get('preview') == '1')
@@ -1476,6 +1560,7 @@ def _vaccination_followup_report(request, kind):
         'page_obj': page_obj,
         'total': count,
         'title': title,
+        'pdf_title': title,
         'description': descriptions[kind],
         'label': label,
         'report_type': report_type,
@@ -1535,7 +1620,7 @@ def patient_treatment_report(request):
             f"ABTC_Patient_Treatment_{date.today().isoformat()}.csv",
             headers, rows)
 
-    if export in ('pdf', 'print'):
+    if export in ('pdf', 'print', 'xlsx'):
         if request.GET.get('q', '').strip():
             headers = SEARCH_RESULT_HEADERS
             rows = [
@@ -1553,13 +1638,18 @@ def patient_treatment_report(request):
             ('Completed', str(summary['completed'])),
             ('Under treatment', str(summary['under_treatment'])),
         ]
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Patient_Treatment_{date.today().isoformat()}.xlsx",
+                "Patient and Treatment Report", subtitle, headers, rows,
+                summary_lines=summary_lines, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, "Patient and Treatment Report", subtitle,
                 headers, rows, summary_lines)
         pdf = _build_pdf(
             "Patient and Treatment Report", subtitle, headers, rows,
-            summary_lines=summary_lines)
+            summary_lines=summary_lines, user=request.user)
         s, e = _export_period(start, end)
         inline = preview == '1' or request.GET.get('inline') == '1'
         return _pdf_response(
@@ -1642,7 +1732,7 @@ def vaccine_inventory_report(request):
             f"ABTC_Vaccine_Inventory_{today.isoformat()}.csv",
             headers, [row(product) for product in products])
 
-    if export in ('pdf', 'print'):
+    if export in ('pdf', 'print', 'xlsx'):
         summary_lines = [
             ('Snapshot', f"Current inventory as of {today:%b %d, %Y}"),
             ('Vaccine products', str(totals['products'])),
@@ -1652,13 +1742,18 @@ def vaccine_inventory_report(request):
             ('Available (non-expired)', str(totals['available'])),
         ]
         rows = [row(product) for product in products]
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Vaccine_Inventory_{today.isoformat()}.xlsx",
+                "Vaccine Inventory Report", label, headers, rows,
+                summary_lines=summary_lines, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, "Vaccine Inventory Report", label, headers, rows,
                 summary_lines)
         pdf = _build_pdf(
             "Vaccine Inventory Report", label, headers, rows,
-            summary_lines=summary_lines)
+            summary_lines=summary_lines, user=request.user)
         inline = preview == '1' or request.GET.get('inline') == '1'
         return _pdf_response(
             pdf, f"ABTC_Vaccine_Inventory_{today.isoformat()}.pdf",
@@ -1704,7 +1799,7 @@ def medicine_inventory_report(request):
             f"ABTC_Medicine_Inventory_{today.isoformat()}.csv",
             headers, [row(product) for product in products])
 
-    if export in ('pdf', 'print'):
+    if export in ('pdf', 'print', 'xlsx'):
         summary_lines = [
             ('Snapshot', f"Current inventory as of {today:%b %d, %Y}"),
             ('Medicine products', str(totals['products'])),
@@ -1714,13 +1809,18 @@ def medicine_inventory_report(request):
             ('Available (non-expired)', str(totals['available'])),
         ]
         rows = [row(product) for product in products]
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Medicine_Inventory_{today.isoformat()}.xlsx",
+                "Medicine Inventory Report", label, headers, rows,
+                summary_lines=summary_lines, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, "Medicine Inventory Report", label, headers, rows,
                 summary_lines)
         pdf = _build_pdf(
             "Medicine Inventory Report", label, headers, rows,
-            summary_lines=summary_lines)
+            summary_lines=summary_lines, user=request.user)
         inline = preview == '1' or request.GET.get('inline') == '1'
         return _pdf_response(
             pdf, f"ABTC_Medicine_Inventory_{today.isoformat()}.pdf",
@@ -1783,20 +1883,25 @@ def stock_alerts_report(request):
         return _csv_response(
             f"ABTC_Stock_Alerts_{today.isoformat()}.csv", headers, rows)
 
-    if export in ('pdf', 'print'):
+    if export in ('pdf', 'print', 'xlsx'):
         summary_lines = [('Snapshot', f"Current inventory as of {today:%b %d, %Y}")]
         summary_lines += [
             (section['title'], str(len(section['rows']))) for section in sections
         ]
         summary_lines.insert(
             0, ('Active alerts', str(total)))
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Stock_Alerts_{today.isoformat()}.xlsx",
+                "Stock Alerts Report", label, headers, rows,
+                summary_lines=summary_lines, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, "Stock Alerts Report", label, headers, rows,
                 summary_lines)
         pdf = _build_pdf(
             "Stock Alerts Report", label, headers, rows,
-            summary_lines=summary_lines)
+            summary_lines=summary_lines, user=request.user)
         inline = preview == '1' or request.GET.get('inline') == '1'
         return _pdf_response(
             pdf, f"ABTC_Stock_Alerts_{today.isoformat()}.pdf", inline=inline)
@@ -1896,19 +2001,24 @@ def barangay_report(request):
         return _csv_response(
             f"ABTC_Barangay_{date.today().isoformat()}.csv",
             headers, export_rows)
-    if export in ('pdf', 'print'):
+    if export in ('pdf', 'print', 'xlsx'):
         summary_lines = _case_filter_summary(
             request, label, extra_filters=False) + [
                 ('Total cases', str(distribution['total'])),
                 ('Barangays', str(len(rows))),
             ]
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Barangay_{date.today().isoformat()}.xlsx",
+                'Cases by Barangay Report', label, headers, export_rows,
+                summary_lines=summary_lines, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, 'Cases by Barangay Report', label,
                 headers, export_rows, summary_lines)
         pdf = _build_pdf(
             'Cases by Barangay Report', label, headers, export_rows,
-            summary_lines=summary_lines)
+            summary_lines=summary_lines, user=request.user)
         s, e = _export_period(start, end)
         inline = request.GET.get('preview') == '1' or request.GET.get(
             'inline') == '1'
@@ -1916,14 +2026,18 @@ def barangay_report(request):
             pdf, f'ABTC_Barangay_{s}_{e}.pdf', inline=inline)
     if export == 'print-sheet':
         groups = _barangay_case_groups(qs)
-        return render(request, 'reports/barangay_print_sheet.html', {
+        response = render(request, 'reports/barangay_print_sheet.html', {
             'document_title': 'CASES BY BARANGAY REPORT',
             'groups': groups,
             'grand_total': sum(group['total'] for group in groups),
             'reporting_period': label,
             'search_keyword': request.GET.get('q', '').strip(),
             'printed_at': timezone.localtime(),
+            'signatories': get_signatories(request.user),
+            'is_preview': request.GET.get('preview') == '1',
         })
+        response['X-Frame-Options'] = 'SAMEORIGIN'
+        return response
     context = _distribution_context(
         request, distribution, label, report_type)
     context['rows'] = rows
@@ -1963,7 +2077,8 @@ def barangay_detail_report(request, barangay):
             normalized_incident_barangay=selected['name'].strip().casefold())
     cases = cases.order_by('date_time_bite', 'case_number', 'pk')
 
-    if request.GET.get('export') == 'print':
+    export = request.GET.get('export', '')
+    if export in ('print', 'pdf', 'csv', 'xlsx'):
         headers = [
             'No.', 'Case Number', 'Patient Name', 'Date of Incident',
             'Animal Type', 'Exposure Type', 'Case Status',
@@ -1986,6 +2101,23 @@ def barangay_detail_report(request, barangay):
                 '%B %d, %Y · %I:%M %p')),
             ('Total Number of Cases', str(len(rows))),
         ]
+        safe_brgy = selected['name'].replace(' ', '_')
+        if export == 'csv':
+            return _csv_response(
+                f"ABTC_Barangay_{safe_brgy}_{date.today().isoformat()}.csv",
+                headers, rows)
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Barangay_{safe_brgy}_{date.today().isoformat()}.xlsx",
+                f"CASES BY BARANGAY — {selected['name']}", label,
+                headers, rows, summary_lines=summary_lines, user=request.user)
+        if export == 'pdf':
+            pdf = _build_pdf(
+                f"CASES BY BARANGAY — {selected['name']}", label,
+                headers, rows, summary_lines=summary_lines, user=request.user)
+            return _pdf_response(
+                pdf, f"ABTC_Barangay_{safe_brgy}_{date.today().isoformat()}.pdf",
+                inline=request.GET.get('preview') == '1')
         return _render_report_print(
             request, 'CASES BY BARANGAY REPORT', label,
             headers, rows, summary_lines)
@@ -1998,6 +2130,7 @@ def barangay_detail_report(request, barangay):
         'report_type': report_type,
         'q': request.GET.get('q', '').strip(),
         'search_field': _search_field(request),
+        'pdf_title': f"Cases by Barangay — {selected['name']}",
     })
 
 
@@ -2024,33 +2157,42 @@ def animal_type_report(request):
             f"ABTC_Animal_Type_{date.today().isoformat()}.csv",
             headers, export_rows)
 
-    if export in ('pdf', 'print'):
+    if export in ('pdf', 'print', 'xlsx'):
         summary_lines = _case_filter_summary(
             request, label, extra_filters=False) + [
             ('Total cases', str(total)),
             ('Animal types', str(len(rows))),
         ]
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Animal_Type_{date.today().isoformat()}.xlsx",
+                "Cases by Animal Type Report", label, headers, export_rows,
+                summary_lines=summary_lines, user=request.user)
         if export == 'print':
             return _render_report_print(
                 request, "Cases by Animal Type Report", label, headers,
                 export_rows, summary_lines)
         pdf = _build_pdf(
             "Cases by Animal Type Report", label, headers, export_rows,
-            summary_lines=summary_lines)
+            summary_lines=summary_lines, user=request.user)
         s, e = _export_period(start, end)
         inline = preview == '1' or request.GET.get('inline') == '1'
         return _pdf_response(
             pdf, f"ABTC_Animal_Type_{s}_{e}.pdf", inline=inline)
 
     if export == 'print-sheet':
-        return render(request, 'reports/animal_type_print_sheet.html', {
+        response = render(request, 'reports/animal_type_print_sheet.html', {
             'groups': groups,
             'grand_total': total,
             'reporting_period': label,
             'search_keyword': request.GET.get('q', '').strip(),
             'printed_at': timezone.localtime(),
             'document_title': 'CASES BY ANIMAL TYPE REPORT',
+            'signatories': get_signatories(request.user),
+            'is_preview': request.GET.get('preview') == '1',
         })
+        response['X-Frame-Options'] = 'SAMEORIGIN'
+        return response
 
     return render(request, 'reports/animal_type_report.html', {
         'rows': rows,
@@ -2060,6 +2202,7 @@ def animal_type_report(request):
         'period_options': RECORD_REPORT_PERIODS,
         'q': request.GET.get('q', '').strip(),
         'search_field': 'all',
+        'pdf_title': 'Cases by Animal Type Report',
     })
 
 
@@ -2076,16 +2219,62 @@ def animal_type_detail_report(request, animal_type):
         raise Http404
     cases = cases.order_by('date_time_bite', 'case_number', 'pk')
 
-    if request.GET.get('export') == 'print-sheet':
+    export = request.GET.get('export', '')
+    if export == 'print-sheet':
         group = _animal_type_case_groups(cases)[0]
-        return render(request, 'reports/animal_type_print_sheet.html', {
+        response = render(request, 'reports/animal_type_print_sheet.html', {
             'groups': [group],
             'grand_total': group['total'],
             'reporting_period': label,
             'search_keyword': request.GET.get('q', '').strip(),
             'printed_at': timezone.localtime(),
             'document_title': 'CASES BY ANIMAL TYPE REPORT',
+            'signatories': get_signatories(request.user),
+            'is_preview': request.GET.get('preview') == '1',
         })
+        response['X-Frame-Options'] = 'SAMEORIGIN'
+        return response
+
+    if export in ('print', 'pdf', 'csv', 'xlsx'):
+        headers = [
+            'No.', 'Case Number', 'Patient Name', 'Date of Incident',
+            'Barangay', 'Exposure Type', 'Case Status',
+        ]
+        rows = [
+            [
+                index, case.case_number, case.patient.full_name(),
+                timezone.localtime(case.date_time_bite).strftime('%b %d, %Y')
+                if case.date_time_bite else '',
+                case.incident_barangay or 'Unspecified',
+                case.get_exposure_type_display(),
+                case.get_case_status_display(),
+            ]
+            for index, case in enumerate(cases, start=1)
+        ]
+        summary_lines = [
+            ('Animal Type', animal_labels[animal_type]),
+            ('Reporting Period', label),
+            ('Total Number of Cases', str(len(rows))),
+        ]
+        if export == 'csv':
+            return _csv_response(
+                f"ABTC_Animal_{animal_type}_{date.today().isoformat()}.csv",
+                headers, rows)
+        if export == 'xlsx':
+            return _xlsx_response(
+                f"ABTC_Animal_{animal_type}_{date.today().isoformat()}.xlsx",
+                f"CASES BY ANIMAL TYPE — {animal_labels[animal_type]}", label,
+                headers, rows, summary_lines=summary_lines, user=request.user)
+        if export == 'pdf':
+            pdf = _build_pdf(
+                f"CASES BY ANIMAL TYPE — {animal_labels[animal_type]}", label,
+                headers, rows, summary_lines=summary_lines, user=request.user)
+            return _pdf_response(
+                pdf, f"ABTC_Animal_{animal_type}_{date.today().isoformat()}.pdf",
+                inline=request.GET.get('preview') == '1')
+        return _render_report_print(
+            request, f"CASES BY ANIMAL TYPE — {animal_labels[animal_type]}",
+            label, headers, rows, summary_lines)
 
     return render(request, 'reports/animal_type_detail_report.html', {
         'animal_type': animal_type,
@@ -2096,4 +2285,5 @@ def animal_type_detail_report(request, animal_type):
         'report_type': report_type,
         'q': request.GET.get('q', '').strip(),
         'search_field': 'all',
+        'pdf_title': f"Cases by Animal Type — {animal_labels[animal_type]}",
     })

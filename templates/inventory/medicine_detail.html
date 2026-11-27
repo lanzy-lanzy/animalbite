@@ -36,7 +36,7 @@
                         <tbody class="divide-y divide-sage-100">
                             {% for m in movements %}
                             <tr class="hover:bg-sage-50">
-                                <td class="table-cell">{{ m.created_at|date:'M d, Y h:i A' }}</td>
+                                <td class="table-cell">{% if m.movement_type == 'stock_in' and m.date_received %}{{ m.date_received|date:'M d, Y' }}{% if m.time_received %} {{ m.time_received|time:'h:i A' }}{% endif %}{% else %}{{ m.created_at|date:'M d, Y h:i A' }}{% endif %}</td>
                                 <td class="table-cell"><span class="status-badge {% if m.movement_type == 'stock_in' %}bg-green-100 text-green-800{% elif m.movement_type == 'dispense' %}bg-red-100 text-red-800{% else %}bg-sage-100 text-ink{% endif %}">{{ m.get_movement_type_display }}</span></td>
                                 <td class="table-cell font-medium">{{ m.quantity }}</td>
                                 <td class="table-cell text-muted">{{ m.reference|default:'-' }}</td>

@@ -63,7 +63,7 @@ def inventory_notifications(request):
 
 
 def missed_vaccination_notifications(request):
-    """Nurse Administer Vaccine badges: overdue and due-today dose counts."""
+    """Nurse Administer Vaccine badge: combined due-today and overdue dose count."""
     user = getattr(request, 'user', None)
     if not (user and user.is_authenticated and getattr(user, 'role', '') == 'nurse'):
         return {}
@@ -78,7 +78,9 @@ def missed_vaccination_notifications(request):
         schedule__bite_case__case_status__in=('new', 'under_treatment', 'missed'),
         schedule__bite_case__patient__is_archived=False,
     ).count()
+    missed_total = missed_dose_count()
     return {
-        'missed_dose_total': missed_dose_count(),
+        'missed_dose_total': missed_total,
         'vaccines_due_today_total': due_today,
+        'administer_vaccine_badge_total': due_today + missed_total,
     }

@@ -1811,15 +1811,50 @@ class ExpiredStockPullOutTests(InventoryTestCase):
         self.assertFalse(MedicineStockMovement.objects.filter(
             movement_type="expired_pull_out").exists())
 
-    def test_duplicate_submission_token_does_not_repeat_a_partial_pull_out(self):
+    def test_duplicate_submission_token_does_not_repeat_pull_out(self):
         self.client.force_login(self.nurse)
         token = uuid.uuid4()
-        self._pull_out("medicine", self.expired_medicine, 10, token=token)
-        self._pull_out("medicine", self.expired_medicine, 10, token=token)
+        self._pull_out("medicine", self.expired_medicine, 60, token=token)
+        self._pull_out("medicine", self.expired_medicine, 60, token=token)
         self.expired_medicine.refresh_from_db()
-        self.assertEqual(self.expired_medicine.quantity_available, 50)
+        self.assertEqual(self.expired_medicine.quantity_available, 0)
         self.assertEqual(MedicineStockMovement.objects.filter(
             submission_token=token).count(), 1)
+
+    def test_expired_alert_pull_out_input_is_prefilled_and_readonly(self):
+        self.client.force_login(self.nurse)
+        response = self.client.get(reverse("inventory:medicine_list"))
+        content = response.content.decode()
+        self.assertIn('data-expired-quantity="60"', content)
+        self.assertIn('readonly required>', content)
+        self.assertIn('Full expired batch quantity is pulled out automatically.', content)
+
+    def test_pull_out_automatically_pulls_full_expired_quantity_when_omitted_or_partial(self):
+        self.client.force_login(self.nurse)
+        # Omitting quantity on POST still automatically pulls full expired quantity.
+        token_med = uuid.uuid4()
+        response = self.client.post(
+            reverse("inventory:medicine_pull_out", args=[self.expired_medicine.pk]),
+            {
+                "reason": "Expired Stock",
+                "remarks": "Auto full pull-out",
+                "submission_token": str(token_med),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.expired_medicine.refresh_from_db()
+        self.assertEqual(self.expired_medicine.quantity_available, 0)
+        med_movement = MedicineStockMovement.objects.get(submission_token=token_med)
+        self.assertEqual(med_movement.quantity, 60)
+
+        # Even if a partial positive quantity is submitted, full expired stock is pulled out.
+        token_vac = uuid.uuid4()
+        response = self._pull_out("vaccine", self.expired_vaccine, 2, token=token_vac)
+        self.assertEqual(response.status_code, 302)
+        self.expired_vaccine.refresh_from_db()
+        self.assertEqual(self.expired_vaccine.quantity_available, 0)
+        vac_movement = VaccineStockMovement.objects.get(submission_token=token_vac)
+        self.assertEqual(vac_movement.quantity, 6)
 
     def test_vaccine_pull_out_records_a_batch_specific_transaction(self):
         self.client.force_login(self.admin)
@@ -2432,7 +2467,7 @@ class MedicineProductGroupingTests(InventoryTestCase):
         detail = self.client.get(self.detail_url())
         self.assertContains(detail, "MED-4")
         self.assertContains(detail, "09:30 AM")
-        self.assertContains(detail, "160")
+        self.assertEqual(detail.context["totals"]["received"], 160)
         self.assertContains(detail, "150")
 
     def detail_url(self):
@@ -2964,3 +2999,248 @@ class AdminNurseInventoryParityTests(InventoryTestCase):
         # Doctor keeps the simpler batch-level view, not the shared product UI.
         doctor_list = self._get(self.doctor, self.vaccine_list_url)
         self.assertNotIn('shared_inventory', doctor_list.context)
+
+
+class InventoryEnhancementTests(InventoryTestCase):
+    """Tests for Stock In time, Dispense supplier, invalid/expired stock blocking."""
+
+    def test_vaccine_create_includes_and_saves_time_received_and_displays_in_history(self):
+        self.client.force_login(self.nurse)
+        get_resp = self.client.get(reverse("inventory:vaccine_create"))
+        self.assertContains(get_resp, 'name="time_received"')
+        self.assertContains(get_resp, "Time Received")
+
+        future_date = (timezone.localdate() + datetime.timedelta(days=180)).isoformat()
+        post_resp = self.client.post(
+            reverse("inventory:vaccine_create"),
+            {
+                "vaccine_name": "Anti-Rabies Vaccine",
+                "brand": "Verorab",
+                "strength": "0.5 mL",
+                "dosage_form": "injectable",
+                "unit": "vial",
+                "batch_number": "TIME-VAC-1",
+                "expiration_date": future_date,
+                "quantity_received": "15",
+                "reorder_level": "5",
+                "source_supplier": "DOH Region IX",
+                "time_received": "14:25",
+                "remarks": "Afternoon delivery",
+            },
+            follow=True,
+        )
+        self.assertRedirects(post_resp, reverse("inventory:vaccine_list"))
+        item = VaccineInventory.objects.get(batch_number="TIME-VAC-1")
+        movement = VaccineStockMovement.objects.get(vaccine=item, movement_type="stock_in")
+        self.assertEqual(movement.time_received, datetime.time(14, 25))
+
+        detail = self.client.get(reverse("inventory:vaccine_detail", args=[item.pk]))
+        self.assertContains(detail, "02:25 PM")
+
+    def test_medicine_create_includes_and_saves_time_received_and_displays_in_history(self):
+        self.client.force_login(self.nurse)
+        get_resp = self.client.get(reverse("inventory:medicine_create"))
+        self.assertContains(get_resp, 'name="time_received"')
+        self.assertContains(get_resp, "Time Received")
+
+        future_date = (timezone.localdate() + datetime.timedelta(days=180)).isoformat()
+        post_resp = self.client.post(
+            reverse("inventory:medicine_create"),
+            {
+                "medicine_name": "Cefalexin",
+                "generic_name": "Cefalexin monohydrate",
+                "strength": "500 mg",
+                "dosage_form": "capsule",
+                "unit": "capsule",
+                "batch_number": "TIME-MED-1",
+                "expiration_date": future_date,
+                "quantity_received": "25",
+                "reorder_level": "5",
+                "source_supplier": "MedCore Distributors",
+                "time_received": "08:45",
+                "remarks": "Morning delivery",
+            },
+            follow=True,
+        )
+        self.assertRedirects(post_resp, reverse("inventory:medicine_list"))
+        item = MedicineInventory.objects.get(batch_number="TIME-MED-1")
+        movement = MedicineStockMovement.objects.get(medicine=item, movement_type="stock_in")
+        self.assertEqual(movement.time_received, datetime.time(8, 45))
+
+        detail = self.client.get(reverse("inventory:medicine_detail", args=[item.pk]))
+        self.assertContains(detail, "08:45 AM")
+
+    def test_dispensing_queue_displays_and_searches_medicine_supplier(self):
+        self.medicine.source_supplier = "Mercury Pharma Supply"
+        self.medicine.save(update_fields=["source_supplier"])
+        self._prescription(quantity=2)
+        self.client.force_login(self.nurse)
+
+        response = self.client.get(reverse("inventory:prescription_list"))
+        self.assertContains(response, "Supplier")
+        self.assertContains(response, "Mercury Pharma Supply")
+
+        filtered = self.client.get(
+            reverse("inventory:prescription_list"), {"q": "Mercury Pharma"})
+        self.assertContains(filtered, "Amoxicillin")
+        self.assertContains(filtered, "Mercury Pharma Supply")
+
+    def test_dispense_records_supplier_on_movement_and_audit_log_and_detail_history(self):
+        self.medicine.source_supplier = "Clinic Wholesale Co"
+        self.medicine.save(update_fields=["source_supplier"])
+        rx = self._prescription(quantity=2)
+        self.client.force_login(self.nurse)
+
+        response = self.client.post(
+            reverse("inventory:prescription_dispense", args=[rx.pk]), follow=True)
+        self.assertEqual(response.status_code, 200)
+
+        movement = MedicineStockMovement.objects.get(
+            medicine=self.medicine, movement_type="dispense")
+        self.assertEqual(movement.supplier, "Clinic Wholesale Co")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                action="DISPENSE_MEDICINE",
+                description__contains="Clinic Wholesale Co",
+            ).exists()
+        )
+
+        detail = self.client.get(
+            reverse("inventory:medicine_detail", args=[self.medicine.pk]))
+        content = detail.content.decode()
+        history = content[
+            content.index("4. Stock Transaction History"):
+            content.index("5. Dispensing History")
+        ]
+        self.assertIn("Clinic Wholesale Co", history)
+
+    def test_vaccine_create_blocks_expired_stock_including_today(self):
+        self.client.force_login(self.nurse)
+        today = timezone.localdate()
+        for delta in (-5, 0):
+            with self.subTest(delta=delta):
+                response = self.client.post(
+                    reverse("inventory:vaccine_create"),
+                    {
+                        "vaccine_name": "Anti-Rabies Vaccine",
+                        "brand": "Verorab",
+                        "strength": "0.5 mL",
+                        "dosage_form": "injectable",
+                        "unit": "vial",
+                        "batch_number": f"EXP-VAC-{delta}",
+                        "expiration_date": (today + datetime.timedelta(days=delta)).isoformat(),
+                        "quantity_received": "10",
+                        "reorder_level": "5",
+                        "source_supplier": "Supplier X",
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "Expired stock cannot be added")
+                self.assertFalse(
+                    VaccineInventory.objects.filter(batch_number=f"EXP-VAC-{delta}").exists())
+
+    def test_medicine_create_blocks_expired_zero_and_conflicting_batch_stock(self):
+        self.client.force_login(self.nurse)
+        today = timezone.localdate()
+
+        # Expired (yesterday and today)
+        for delta in (-1, 0):
+            with self.subTest(delta=delta):
+                resp = self.client.post(
+                    reverse("inventory:medicine_create"),
+                    {
+                        "medicine_name": "Ibuprofen",
+                        "generic_name": "Ibuprofen",
+                        "strength": "400 mg",
+                        "dosage_form": "tablet",
+                        "unit": "tablet",
+                        "batch_number": f"EXP-MED-{delta}",
+                        "expiration_date": (today + datetime.timedelta(days=delta)).isoformat(),
+                        "quantity_received": "10",
+                        "reorder_level": "5",
+                    },
+                )
+                self.assertEqual(resp.status_code, 200)
+                self.assertContains(resp, "Expired stock cannot be added")
+                self.assertFalse(
+                    MedicineInventory.objects.filter(batch_number=f"EXP-MED-{delta}").exists())
+
+        # Zero quantity must not save
+        zero_resp = self.client.post(
+            reverse("inventory:medicine_create"),
+            {
+                "medicine_name": "Ibuprofen",
+                "generic_name": "Ibuprofen",
+                "strength": "400 mg",
+                "dosage_form": "tablet",
+                "unit": "tablet",
+                "batch_number": "ZERO-MED-1",
+                "expiration_date": (today + datetime.timedelta(days=120)).isoformat(),
+                "quantity_received": "0",
+                "reorder_level": "5",
+            },
+        )
+        self.assertEqual(zero_resp.status_code, 200)
+        self.assertContains(zero_resp, "Ensure this value is greater than or equal to 1.")
+        self.assertFalse(MedicineInventory.objects.filter(batch_number="ZERO-MED-1").exists())
+
+        # Conflicting batch expiry must not save
+        conflict_resp = self.client.post(
+            reverse("inventory:medicine_create"),
+            {
+                "medicine_name": "Amoxicillin",
+                "generic_name": "Amoxicillin trihydrate",
+                "strength": "500 mg",
+                "dosage_form": "capsule",
+                "unit": "capsule",
+                "batch_number": "MED-1",
+                "expiration_date": (today + datetime.timedelta(days=300)).isoformat(),
+                "quantity_received": "10",
+                "reorder_level": "3",
+            },
+        )
+        self.assertEqual(conflict_resp.status_code, 200)
+        self.assertContains(conflict_resp, "different expiration date")
+        self.assertEqual(MedicineInventory.objects.filter(batch_number="MED-1").count(), 1)
+
+    def test_add_stock_blocks_batches_expiring_today(self):
+        today = timezone.localdate()
+        self.client.force_login(self.nurse)
+
+        vac = VaccineInventory.objects.create(
+            vaccine_name="Imovax", brand="Sanofi", strength="0.5 mL",
+            dosage_form="injectable", unit="vial", batch_number="VAC-LIVE",
+            expiration_date=today + datetime.timedelta(days=120),
+            quantity_received=10, quantity_available=10,
+        )
+        vac_resp = self.client.post(
+            reverse("inventory:vaccine_add_stock", args=[vac.pk]),
+            {
+                "batch_number": "VAC-TODAY",
+                "quantity_received": "5",
+                "source_supplier": "ABC Pharma",
+                "date_received": (today - datetime.timedelta(days=1)).isoformat(),
+                "time_received": "09:00",
+                "expiration_date": today.isoformat(),
+                "submission_token": str(uuid.uuid4()),
+            },
+        )
+        self.assertEqual(vac_resp.status_code, 200)
+        self.assertContains(vac_resp, "Expired stock cannot be added")
+        self.assertFalse(VaccineInventory.objects.filter(batch_number="VAC-TODAY").exists())
+
+        med_resp = self.client.post(
+            reverse("inventory:medicine_add_stock", args=[self.medicine.pk]),
+            {
+                "batch_number": "MED-TODAY",
+                "quantity_received": "5",
+                "source_supplier": "ABC Pharma",
+                "date_received": (today - datetime.timedelta(days=1)).isoformat(),
+                "time_received": "09:00",
+                "expiration_date": today.isoformat(),
+                "submission_token": str(uuid.uuid4()),
+            },
+        )
+        self.assertEqual(med_resp.status_code, 200)
+        self.assertContains(med_resp, "Expired stock cannot be added")
+        self.assertFalse(MedicineInventory.objects.filter(batch_number="MED-TODAY").exists())

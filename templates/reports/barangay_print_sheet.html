@@ -75,6 +75,7 @@
     </style>
 </head>
 <body class="abtc-print-body">
+    {% if not is_preview %}
     <div class="abtc-toolbar abtc-no-print">
         <span>Official report · A4 Portrait</span>
         <span>
@@ -82,6 +83,7 @@
             <button type="button" class="abtc-toolbar__ghost" onclick="window.close()">Close</button>
         </span>
     </div>
+    {% endif %}
 
     <main class="abtc-doc">
         {% include 'print/_official_head.html' with document_title="CASES BY BARANGAY REPORT" %}
@@ -128,9 +130,10 @@
         </section>
 
         <p class="barangay-grand-total">GRAND TOTAL: {{ grand_total }} {% if grand_total == 1 %}CASE{% else %}CASES{% endif %}</p>
-        {% include 'print/_official_footer.html' with confidential=True %}
+        {% include 'print/_official_footer.html' with confidential=True show_signatories=True %}
     </main>
 
+    {% if not is_preview %}
     <script>
         (function () {
             var printed = false;
@@ -145,5 +148,6 @@
             });
         })();
     </script>
+    {% endif %}
 </body>
 </html>

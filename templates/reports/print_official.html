@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="{% static 'css/reports.css' %}">
 </head>
 <body class="abtc-print-body abtc-report">
+    {% if not is_preview %}
     <div class="abtc-toolbar abtc-no-print">
         <span>Official document preview · A4 Portrait</span>
         <span>
@@ -15,6 +16,7 @@
             <button type="button" class="abtc-toolbar__ghost" onclick="window.close()">Close</button>
         </span>
     </div>
+    {% endif %}
 
     <main class="abtc-doc">
         {% include 'print/_official_head.html' %}
@@ -59,9 +61,10 @@
         </section>
         {% endif %}
 
-        {% include 'print/_official_footer.html' with confidential=True %}
+        {% include 'print/_official_footer.html' with confidential=True show_signatories=True %}
     </main>
 
+    {% if not is_preview %}
     <script>
         (function () {
             var printed = false;
@@ -76,5 +79,6 @@
             });
         })();
     </script>
+    {% endif %}
 </body>
 </html>

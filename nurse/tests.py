@@ -20,12 +20,47 @@ U = get_user_model()
 
 class NurseDashboardTests(TestCase):
 
-    def test_dashboard_loads_with_vaccine_inventory_product_fields(self):
-        nurse = U.objects.create_user(
-            username="nurse.dashboard",
+    def _create_nurse(self, username="nurse.dashboard"):
+        return U.objects.create_user(
+            username=username,
             password="test-password",
             role="nurse",
+            first_name="Nina",
+            last_name="Nurse",
         )
+
+    def _create_patient_and_case(self, suffix="1", created_by=None):
+        patient = Patient.objects.create(
+            patient_number=f"PAT-ND{suffix}",
+            first_name="Maria",
+            last_name=f"Santos{suffix}",
+            birthdate=datetime.date(1992, 5, 10),
+            sex="female",
+            contact_number="09171234567",
+            address="Purok 1",
+        )
+        case = AnimalBiteCase.objects.create(
+            case_number=f"ABC-ND{suffix}",
+            patient=patient,
+            created_by=created_by,
+            animal_type="dog",
+            exposure_type="bite",
+            date_time_bite=timezone.now(),
+            case_status="under_treatment",
+        )
+        return patient, case
+
+    def _administer_vaccine_link_html(self, html):
+        match = re.search(
+            r'<a\b[^>]*>.*?Administer Vaccine.*?</a>',
+            html,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match, "Administer Vaccine sidebar link not found")
+        return match.group(0)
+
+    def test_dashboard_loads_with_vaccine_inventory_product_fields(self):
+        nurse = self._create_nurse()
         VaccineInventory.objects.create(
             vaccine_name="Anti-Rabies Vaccine",
             brand="Verorab",
@@ -43,6 +78,190 @@ class NurseDashboardTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["low_stock"], 1)
+
+    def test_nurse_sidebar_administer_vaccine_shows_single_combined_badge(self):
+        nurse = self._create_nurse("nurse.badge.both")
+        today = timezone.localdate()
+        _, case = self._create_patient_and_case("B1", created_by=nurse)
+        schedule = VaccinationSchedule.objects.create(bite_case=case)
+        VaccineDose.objects.create(
+            schedule=schedule,
+            dose_label="1st Dose",
+            dose_status="scheduled",
+            scheduled_date=today,
+        )
+        VaccineDose.objects.create(
+            schedule=schedule,
+            dose_label="2nd Dose",
+            dose_status="missed",
+            scheduled_date=today - datetime.timedelta(days=2),
+        )
+        VaccineDose.objects.create(
+            schedule=schedule,
+            dose_label="3rd Dose",
+            dose_status="scheduled",
+            scheduled_date=today - datetime.timedelta(days=1),
+        )
+        self.client.force_login(nurse)
+
+        response = self.client.get(reverse("nurse:dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["vaccines_due_today_total"], 1)
+        self.assertEqual(response.context["missed_dose_total"], 2)
+        self.assertEqual(response.context["administer_vaccine_badge_total"], 3)
+
+        link_html = self._administer_vaccine_link_html(response.content.decode())
+        badges = re.findall(r'background:#DC3545[^>]*>(\d+)</span>', link_html)
+        self.assertEqual(badges, ["3"])
+
+    def test_nurse_sidebar_administer_vaccine_badge_handles_only_due_only_missed_and_zero(self):
+        nurse = self._create_nurse("nurse.badge.cases")
+        today = timezone.localdate()
+        _, case = self._create_patient_and_case("B2", created_by=nurse)
+        schedule = VaccinationSchedule.objects.create(bite_case=case)
+        self.client.force_login(nurse)
+
+        # Zero due & zero missed -> no badge
+        response = self.client.get(reverse("nurse:dashboard"))
+        self.assertEqual(response.context["administer_vaccine_badge_total"], 0)
+        link_html = self._administer_vaccine_link_html(response.content.decode())
+        self.assertEqual(re.findall(r'background:#DC3545', link_html), [])
+
+        # Only due today -> single badge "1"
+        due_dose = VaccineDose.objects.create(
+            schedule=schedule,
+            dose_label="1st Dose",
+            dose_status="scheduled",
+            scheduled_date=today,
+        )
+        response = self.client.get(reverse("nurse:dashboard"))
+        self.assertEqual(response.context["administer_vaccine_badge_total"], 1)
+        link_html = self._administer_vaccine_link_html(response.content.decode())
+        self.assertEqual(
+            re.findall(r'background:#DC3545[^>]*>(\d+)</span>', link_html),
+            ["1"],
+        )
+
+        # Complete due today, add missed -> single badge "1"
+        due_dose.dose_status = "completed"
+        due_dose.actual_date = today
+        due_dose.save(update_fields=["dose_status", "actual_date"])
+        VaccineDose.objects.create(
+            schedule=schedule,
+            dose_label="2nd Dose",
+            dose_status="missed",
+            scheduled_date=today - datetime.timedelta(days=3),
+        )
+        response = self.client.get(reverse("nurse:dashboard"))
+        self.assertEqual(response.context["vaccines_due_today_total"], 0)
+        self.assertEqual(response.context["missed_dose_total"], 1)
+        self.assertEqual(response.context["administer_vaccine_badge_total"], 1)
+        link_html = self._administer_vaccine_link_html(response.content.decode())
+        self.assertEqual(
+            re.findall(r'background:#DC3545[^>]*>(\d+)</span>', link_html),
+            ["1"],
+        )
+
+    def test_other_roles_sidebar_badges_remain_intact(self):
+        doctor = U.objects.create_user(
+            username="doctor.sidebar.check", password="test-password", role="doctor"
+        )
+        admin = U.objects.create_user(
+            username="admin.sidebar.check", password="test-password", role="admin"
+        )
+        _, case = self._create_patient_and_case("R1", created_by=admin)
+        case.case_status = "new"
+        case.save(update_fields=["case_status"])
+
+        self.client.force_login(doctor)
+        doc_resp = self.client.get(reverse("doctor:dashboard"))
+        self.assertEqual(doc_resp.status_code, 200)
+        self.assertEqual(doc_resp.context["doctor_new_case_count"], 1)
+        self.assertContains(doc_resp, 'aria-label="1 new bite case"')
+
+        self.client.force_login(admin)
+        admin_resp = self.client.get(reverse("dashboard:index"))
+        self.assertEqual(admin_resp.status_code, 200)
+        self.assertEqual(admin_resp.context["new_bite_case_count"], 1)
+        self.assertContains(admin_resp, 'aria-label="1 new bite case"')
+
+    def test_redesigned_nurse_dashboard_preserves_metrics_tables_and_links(self):
+        nurse = self._create_nurse("nurse.redesign")
+        today = datetime.date.today()
+        _, case_due = self._create_patient_and_case("D1", created_by=nurse)
+        schedule = VaccinationSchedule.objects.create(bite_case=case_due)
+        VaccineDose.objects.create(
+            schedule=schedule,
+            dose_label="1st Dose",
+            dose_status="scheduled",
+            scheduled_date=today,
+            vaccine_brand="Verorab",
+        )
+        VaccineDose.objects.create(
+            schedule=schedule,
+            dose_label="2nd Dose",
+            dose_status="pending",
+        )
+        VaccineDose.objects.create(
+            schedule=schedule,
+            dose_label="3rd Dose",
+            dose_status="scheduled",
+            scheduled_date=today + datetime.timedelta(days=3),
+        )
+        _, case_unscheduled = self._create_patient_and_case("D2", created_by=nurse)
+
+        self.client.force_login(nurse)
+        response = self.client.get(reverse("nurse:dashboard"))
+        self.assertEqual(response.status_code, 200)
+
+        # Doctor-dashboard-matched design structure
+        for marker in (
+            'class="nurse-dashboard"',
+            'class="dash-hero"',
+            'class="dash-stats"',
+            'class="dash-card"',
+            'class="dash-table"',
+            'class="dash-actions-grid"',
+            "Nurse Dashboard",
+        ):
+            self.assertContains(response, marker)
+
+        # All 6 KPI cards & counts
+        for label in (
+            "Due Today",
+            "Pending Scheduling",
+            "Missed Doses",
+            "SMS Pending",
+            "Awaiting Schedule",
+            "Upcoming / Low Stock",
+        ):
+            self.assertContains(response, label)
+        self.assertEqual(response.context["due_today_count"], 1)
+        self.assertEqual(response.context["pending_scheduling_count"], 1)
+        self.assertEqual(response.context["upcoming_count"], 1)
+        self.assertEqual(response.context["awaiting_schedule_count"], 1)
+
+        # Due today row + awaiting schedule row
+        self.assertContains(response, case_due.case_number)
+        self.assertContains(response, "Verorab")
+        self.assertContains(response, reverse("vaccination:schedule_detail", args=[schedule.pk]))
+        self.assertContains(response, case_unscheduled.case_number)
+        self.assertContains(
+            response, reverse("vaccination:schedule_trigger", args=[case_unscheduled.pk])
+        )
+
+        # All 8 quick-action links preserved
+        for url_name in (
+            "patients:patient_list",
+            "nurse:doctor_finding_list",
+            "vaccination:patient_schedule_list",
+            "vaccination:sms_log_list",
+            "vaccination:schedule_list",
+            "inventory:vaccine_list",
+            "reports:reports_index",
+            "bite_cases:case_list",
+        ):
+            self.assertContains(response, reverse(url_name))
 
 
 class DoctorFindingDetailTests(TestCase):

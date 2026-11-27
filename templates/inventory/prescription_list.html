@@ -10,7 +10,7 @@
 </div>
 <div class="card mb-6">
     <form method="GET" class="flex flex-wrap gap-3">
-        <input type="text" name="q" value="{{ query }}" placeholder="Search patient, case, medicine..." class="form-input flex-1 min-w-[200px]">
+        <input type="text" name="q" value="{{ query }}" placeholder="Search patient, case, medicine, supplier..." class="form-input flex-1 min-w-[200px]">
         <select name="status" class="form-input max-w-[180px]">
             <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pending dispensing{% if pending_count %} ({{ pending_count }}){% endif %}</option>
             <option value="dispensed" {% if status == 'dispensed' %}selected{% endif %}>Dispensed</option>
@@ -28,6 +28,7 @@
                     <th class="table-header">Prescribed</th>
                     <th class="table-header">Patient / Case</th>
                     <th class="table-header">Medicine</th>
+                    <th class="table-header">Supplier</th>
                     <th class="table-header">Dosage</th>
                     <th class="table-header">Qty</th>
                     <th class="table-header">Status</th>
@@ -49,6 +50,7 @@
                         <p class="font-medium">{{ rx.medicine.medicine_name }}{% if rx.medicine.strength %} <span class="text-muted">{{ rx.medicine.strength }}</span>{% endif %}</p>
                         <p class="text-xs text-muted">{{ rx.medicine.get_dosage_form_display }} · batch {{ rx.medicine.batch_number }}</p>
                     </td>
+                    <td class="table-cell text-muted">{{ rx.medicine.source_supplier|default:'—' }}</td>
                     <td class="table-cell">
                         {% if rx.dose %}{{ rx.dose }}
                         {% elif rx.assessment.dosage_instructions %}<span class="text-xs">{{ rx.assessment.dosage_instructions }}</span>
@@ -81,7 +83,7 @@
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="7" class="text-center py-8 text-muted">No prescriptions found.</td></tr>
+                <tr><td colspan="8" class="text-center py-8 text-muted">No prescriptions found.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

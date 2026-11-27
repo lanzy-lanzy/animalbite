@@ -6,6 +6,9 @@
             previewBlob: '',
             isLoading: false,
             previewError: '',
+            printPreviewOpen: false,
+            printPreviewSrc: '',
+            printLoading: false,
             async openPreview(url) {
                 this.previewSrc = url;
                 this.previewBlob = '';
@@ -33,6 +36,28 @@
                     });
                 }
             },
+            openPrintPreview(url) {
+                this.printPreviewSrc = url;
+                this.printLoading = true;
+                this.printPreviewOpen = true;
+                this.$nextTick(() => {
+                    const frame = this.$refs.printFrame;
+                    if (frame) frame.src = url;
+                });
+            },
+            printIframe() {
+                try {
+                    const frame = this.$refs.printFrame;
+                    if (frame && frame.contentWindow) {
+                        frame.contentWindow.focus();
+                        frame.contentWindow.print();
+                        return;
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+                this.printPreview();
+            },
             printPreview() {
                 const params = new URLSearchParams(window.location.search);
                 params.delete('preview');
@@ -43,7 +68,46 @@
     }
 </script>
 
-<div x-show="previewOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4">
+<!-- Print Preview Modal -->
+<div x-show="printPreviewOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 no-print"
+     @keydown.escape.window="printPreviewOpen = false">
+    <div @click="printPreviewOpen = false" class="absolute inset-0 bg-emerald-950/60 backdrop-blur-sm"></div>
+    <div class="relative w-full max-w-5xl h-[88vh] bg-white rounded-2xl shadow-2xl border border-line overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between px-5 py-3 border-b border-line bg-sage-50">
+            <div>
+                <h3 class="font-display text-sm font-bold text-ink">Print Preview — {{ pdf_title|default:"Report" }}</h3>
+                <p class="text-xs font-medium text-muted">Review official layout and signatories before printing.</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button" @click="printIframe()"
+                        class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-emerald-950 text-white text-xs font-bold hover:bg-emerald-900">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9V3h12v6M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v7H6z"/></svg>
+                    Print
+                </button>
+                <a :href="printPreviewSrc.replace('&preview=1', '').replace('preview=1&', '').replace('preview=1', '')"
+                   target="_blank" rel="noopener"
+                   class="px-3 py-1.5 rounded-full bg-white border border-line text-xs font-bold text-ink hover:bg-sage-50">
+                    Open in New Tab
+                </a>
+                <button type="button" @click="printPreviewOpen = false" aria-label="Close print preview"
+                        class="w-8 h-8 rounded-full bg-white border border-line flex items-center justify-center text-muted hover:text-ink">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+        </div>
+        <div class="flex-1 relative bg-sage-50 overflow-hidden">
+            <div x-show="printLoading" class="absolute inset-0 flex flex-col items-center justify-center bg-white z-10">
+                <svg class="w-8 h-8 animate-spin text-emerald-700" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                <p class="text-sm font-semibold text-ink mt-3">Loading print preview…</p>
+            </div>
+            <iframe x-ref="printFrame" @load="printLoading = false" class="w-full h-full border-0 bg-white" title="Print preview"></iframe>
+        </div>
+    </div>
+</div>
+
+<!-- PDF Preview Modal -->
+<div x-show="previewOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 no-print"
+     @keydown.escape.window="previewOpen = false">
     <div @click="previewOpen = false" class="absolute inset-0 bg-emerald-950/60 backdrop-blur-sm"></div>
     <div class="relative w-full max-w-5xl h-[85vh] bg-white rounded-2xl shadow-2xl border border-line overflow-hidden flex flex-col">
         <div class="flex items-center justify-between px-5 py-3 border-b border-line bg-sage-50">
@@ -52,8 +116,8 @@
                 <p class="text-xs font-medium text-muted">Review before download or print.</p>
             </div>
             <div class="flex items-center gap-2">
-                <a :href="previewSrc.replace('preview=1', '')" class="px-3 py-1.5 rounded-full bg-emerald-950 text-white text-xs font-bold">Download</a>
-                <button type="button" @click="previewOpen = false" class="w-8 h-8 rounded-full bg-white border border-line flex items-center justify-center text-muted hover:text-ink">
+                <a :href="previewSrc.replace('&preview=1', '').replace('preview=1&', '').replace('preview=1', '')" class="px-3 py-1.5 rounded-full bg-emerald-950 text-white text-xs font-bold">Download</a>
+                <button type="button" @click="previewOpen = false" aria-label="Close PDF preview" class="w-8 h-8 rounded-full bg-white border border-line flex items-center justify-center text-muted hover:text-ink">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
                 </button>
             </div>

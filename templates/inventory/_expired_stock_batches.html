@@ -42,7 +42,9 @@
                     <input class="vd-modal-input" id="pull-out-quantity-{{ batch.pk }}"
                            name="quantity" type="number" min="1"
                            max="{{ batch.quantity_available }}"
-                           value="{{ batch.quantity_available }}" required>
+                           value="{{ batch.quantity_available }}"
+                           data-expired-quantity="{{ batch.quantity_available }}" readonly required>
+                    <p class="text-xs text-muted mt-1">Full expired batch quantity is pulled out automatically.</p>
                     <label class="vd-modal-label" for="pull-out-reason-{{ batch.pk }}">Reason *</label>
                     <input class="vd-modal-input" id="pull-out-reason-{{ batch.pk }}"
                            name="reason" type="text" maxlength="100"

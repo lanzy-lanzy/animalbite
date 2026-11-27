@@ -48,17 +48,24 @@
                     {% for error in form.quantity_received.errors %}<p class="text-xs text-red-600">{{ error }}</p>{% endfor %}
                 </div>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                    <label class="form-label">Reorder Level</label>{{ form.reorder_level }}
+                    <label class="form-label" for="{{ form.reorder_level.id_for_label }}">Reorder Level</label>{{ form.reorder_level }}
+                    {% for error in form.reorder_level.errors %}<p class="text-xs text-red-600">{{ error }}</p>{% endfor %}
                     <p class="text-xs text-muted mt-1">Stock at or below this level is flagged Low Stock.</p>
                 </div>
                 <div>
-                    <label class="form-label">Source / Supplier</label>{{ form.source_supplier }}
+                    <label class="form-label" for="{{ form.source_supplier.id_for_label }}">Source / Supplier</label>{{ form.source_supplier }}
+                    {% for error in form.source_supplier.errors %}<p class="text-xs text-red-600">{{ error }}</p>{% endfor %}
+                </div>
+                <div>
+                    <label class="form-label" for="{{ form.time_received.id_for_label }}">Time Received</label>{{ form.time_received }}
+                    {% for error in form.time_received.errors %}<p class="text-xs text-red-600">{{ error }}</p>{% endfor %}
                 </div>
             </div>
             <div>
-                <label class="form-label">Remarks</label>{{ form.remarks }}
+                <label class="form-label" for="{{ form.remarks.id_for_label }}">Remarks</label>{{ form.remarks }}
+                {% for error in form.remarks.errors %}<p class="text-xs text-red-600">{{ error }}</p>{% endfor %}
             </div>
             <div class="flex gap-2 pt-4">
                 <button type="submit" class="btn-primary">Save</button>

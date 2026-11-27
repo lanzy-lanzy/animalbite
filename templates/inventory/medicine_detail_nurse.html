@@ -321,7 +321,7 @@
                     <tr class="hover:bg-sage-50{% if highlight_batch and m.batch_number|lower == highlight_batch %} vd-row-highlight{% endif %}">
                         <td class="table-cell vd-cell-date">{% if m.movement_type == 'stock_in' %}{{ m.date_received|default:m.medicine.date_received|date:'M d, Y' }}{% else %}{{ m.created_at|date:'M d, Y' }}{% endif %}</td>
                         <td class="table-cell vd-cell-time">{% if m.movement_type == 'stock_in' %}{% if m.time_received %}{{ m.time_received|time:'h:i A' }}{% else %}—{% endif %}{% else %}{{ m.created_at|time:'h:i A' }}{% endif %}</td>
-                        <td class="table-cell">{% if m.movement_type == 'stock_in' %}{{ m.supplier|default:m.medicine.source_supplier|default:'—' }}{% else %}—{% endif %}</td>
+                        <td class="table-cell">{% if m.movement_type == 'stock_in' or m.movement_type == 'dispense' %}{{ m.supplier|default:m.medicine.source_supplier|default:'—' }}{% else %}—{% endif %}</td>
                         <td class="table-cell font-mono text-xs">{{ m.batch_number|default:m.medicine.batch_number|default:'—' }}</td>
                         <td class="table-cell vd-cell-date">{{ m.expiration_date|default:m.medicine.expiration_date|date:'M d, Y' }}</td>
                         <td class="table-cell vd-cell-qty font-medium">{% if m.movement_type == 'stock_in' %}+{% elif m.movement_type == 'dispense' or m.movement_type == 'expired_pull_out' %}-{% endif %}{{ m.quantity }}</td>

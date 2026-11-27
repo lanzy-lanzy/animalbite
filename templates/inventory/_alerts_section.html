@@ -148,6 +148,8 @@
         .inv-alert-dialog dd { margin: 0; text-align: right; font-weight: 700; }
         .inv-alert-dialog label { display: block; margin: 10px 0 4px; color: #0D382C; font-size: 12px; font-weight: 700; }
         .inv-alert-dialog input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #D9DED9; border-radius: 8px; background: #FFFFFF; }
+        .inv-alert-dialog input[readonly] { background: #F4F6F5; color: #374151; cursor: not-allowed; }
+        .inv-alert-dialog__hint { margin: 4px 0 0; font-size: 11px; color: #6B7280; }
         .inv-alert-dialog__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
         .inv-alert-dialog__actions button { min-height: 40px; padding: 8px 14px; border: 0; border-radius: 999px; font-weight: 700; cursor: pointer; }
         .inv-alert-dialog__cancel { background: #F4EBD7; color: #0D382C; }
@@ -224,7 +226,9 @@
                             <label for="alert-pull-out-quantity-{{ alert.key }}">Pull-Out Quantity</label>
                             <input id="alert-pull-out-quantity-{{ alert.key }}" name="quantity"
                                    type="number" min="1" max="{{ alert.quantity }}"
-                                   value="{{ alert.quantity }}" required>
+                                   value="{{ alert.quantity }}"
+                                   data-expired-quantity="{{ alert.quantity }}" readonly required>
+                            <p class="inv-alert-dialog__hint">Full expired batch quantity is pulled out automatically.</p>
                             <label for="alert-pull-out-reason-{{ alert.key }}">Reason</label>
                             <input id="alert-pull-out-reason-{{ alert.key }}" name="reason"
                                    type="text" maxlength="100" value="Expired Stock" required>
@@ -253,7 +257,11 @@
         document.querySelectorAll('[data-alert-pull-out-open]').forEach(function (button) {
             button.addEventListener('click', function () {
                 var dialog = document.getElementById(button.dataset.alertPullOutOpen);
-                if (dialog) dialog.showModal();
+                if (dialog) {
+                    var qtyInput = dialog.querySelector('input[name="quantity"][data-expired-quantity]');
+                    if (qtyInput) qtyInput.value = qtyInput.dataset.expiredQuantity;
+                    dialog.showModal();
+                }
             });
         });
         document.querySelectorAll('[data-alert-pull-out-close]').forEach(function (button) {

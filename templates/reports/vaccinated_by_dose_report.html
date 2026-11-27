@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}Vaccinated Patients by Dose — ABTC{% endblock %}
 {% block content %}
-<div class="space-y-5">
+<div x-data="reportPreview()" class="space-y-5">
     <header class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
             <a href="{% url 'reports:reports_index' %}" class="inline-flex items-center gap-1.5 text-xs font-bold text-muted hover:text-ink no-print">
@@ -12,13 +12,27 @@
             <p class="text-sm font-medium text-muted">Administered vaccine doses grouped by dose number (1st to 5th dose).</p>
             <p class="text-sm font-medium text-muted mt-1">{{ label }} · Total administered doses: <strong class="text-ink">{{ total }}</strong> · Unique vaccinated patients: <strong class="text-ink">{{ unique_patients }}</strong></p>
         </div>
-        <a href="?type={{ report_type }}&amp;dose={{ selected_dose }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}&amp;export=print"
-           target="_blank" rel="noopener"
-           class="no-print inline-flex items-center justify-center gap-2 rounded-full bg-emerald-950 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-900">
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9V3h12v6M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v7H6z"/></svg>
-            Print Sheet
-        </a>
+        {% include 'reports/_report_toolbar.html' with print_label="Print Sheet" %}
     </header>
+
+    <!-- Search bar on top -->
+    <section class="card no-print">
+        <form method="get" class="flex flex-col sm:flex-row gap-2" role="search">
+            <input type="hidden" name="type" value="{{ report_type }}">
+            <input type="hidden" name="dose" value="{{ selected_dose }}">
+            <label class="sr-only" for="vaccinated-dose-search">Search vaccinated patients</label>
+            <input id="vaccinated-dose-search" type="search" name="q" value="{{ q }}"
+                   placeholder="Search patient ID, name, case number, vaccine brand, or date..."
+                   class="form-input min-w-0 flex-1">
+            <button type="submit" class="btn-primary shrink-0">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                Search
+            </button>
+            {% if q %}
+            <a href="?type={{ report_type }}&amp;dose={{ selected_dose }}" class="btn-secondary shrink-0 text-center">Clear</a>
+            {% endif %}
+        </form>
+    </section>
 
     <!-- Dose summary cards -->
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -33,7 +47,7 @@
     </div>
 
     <section class="card no-print">
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
                 <h2 class="font-display text-sm font-bold text-ink mb-2">Reporting Period</h2>
                 <nav class="flex flex-wrap gap-2" aria-label="Vaccinated by dose reporting period">
@@ -55,18 +69,6 @@
                 </nav>
             </div>
         </div>
-        <form method="get" class="flex flex-col sm:flex-row gap-2">
-            <input type="hidden" name="type" value="{{ report_type }}">
-            <input type="hidden" name="dose" value="{{ selected_dose }}">
-            <label class="sr-only" for="vaccinated-dose-search">Search vaccinated patients</label>
-            <input id="vaccinated-dose-search" type="search" name="q" value="{{ q }}"
-                   placeholder="Search patient ID, name, case number, vaccine brand, or date..."
-                   class="form-input min-w-0 flex-1">
-            <button type="submit" class="btn-primary shrink-0">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                Search
-            </button>
-        </form>
         <p class="text-xs font-medium text-muted mt-3">Administration date period: {{ label }}</p>
     </section>
 
@@ -125,5 +127,7 @@
         </nav>
         {% endif %}
     </section>
+
+    {% include 'reports/_pdf_modal.html' %}
 </div>
 {% endblock %}

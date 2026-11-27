@@ -1057,13 +1057,12 @@ class DistributionTests(TestCase):
         self.assertContains(barangay, 'color: #FFFFFF !important')
         self.assertContains(barangay, 'padding: 10px 22px')
         self.assertContains(barangay, 'gap: 8px')
-        header_actions = barangay.content.decode().split(
-            '<div class="flex flex-wrap justify-end gap-2 no-print">', 1)[1].split(
-                '</div>', 1)[0]
-        self.assertEqual(header_actions.count('<a '), 1)
-        self.assertIn('export=print-sheet', header_actions)
-        for hidden_action in ('Preview PDF', 'Download PDF', 'Export CSV'):
-            self.assertNotIn(hidden_action, header_actions)
+        self.assertContains(barangay, 'Print Preview')
+        self.assertContains(barangay, 'Download PDF')
+        self.assertContains(barangay, 'Export CSV')
+        self.assertContains(barangay, 'Excel')
+        self.assertContains(barangay, 'export=xlsx')
+        self.assertContains(barangay, 'export=print-sheet')
         self.assertNotContains(barangay, 'Percentage')
         self.assertNotContains(barangay, 'Distribution — horizontal bars')
         self.assertNotContains(barangay, 'ABC-D0001')
@@ -1072,7 +1071,6 @@ class DistributionTests(TestCase):
             [row['name'] for row in rows],
             ['Poblacion', 'San Isidro', 'Unspecified'])
         self.assertEqual(barangay.context['total'], 4)
-        self.assertContains(barangay, 'export=print-sheet')
 
         animal = self.client.get(reverse('reports:animal_type_report'))
         self.assertEqual(animal.status_code, 200)
@@ -1080,9 +1078,11 @@ class DistributionTests(TestCase):
         self.assertContains(animal, 'Animal Type Case Summary')
         self.assertContains(animal, 'Action')
         self.assertContains(animal, 'Print Sheet')
-        self.assertNotContains(animal, 'Preview PDF')
-        self.assertNotContains(animal, 'Download PDF')
-        self.assertNotContains(animal, 'Export CSV')
+        self.assertContains(animal, 'Print Preview')
+        self.assertContains(animal, 'Download PDF')
+        self.assertContains(animal, 'Export CSV')
+        self.assertContains(animal, 'Excel')
+        self.assertContains(animal, 'export=xlsx')
         self.assertNotContains(animal, 'Percentage')
         self.assertNotContains(animal, 'Distribution — horizontal bars')
 
@@ -1731,3 +1731,151 @@ class OfficialPrintTests(TestCase):
         self.client.logout()
         self.assertEqual(
             self.client.get(url, {'export': 'print'}).status_code, 302)
+
+
+class ReportToolbarExcelAndSignatoryTests(TestCase):
+    """Verify top search bar on vaccinated-by-dose, Print Preview/Export/Excel, and signatories."""
+
+    def setUp(self):
+        self.nurse = make_user('report.staff', 'nurse')
+        self.nurse.first_name = 'Elena'
+        self.nurse.last_name = 'Reyes'
+        self.nurse.save(update_fields=['first_name', 'last_name'])
+        self.patient = make_patient('PAT-R9001', 'Carlos', 'Mendoza')
+        self.case = make_case(
+            'ABC-R9001', self.patient, timezone.now(),
+            barangay='Poblacion', animal='dog',
+        )
+        self.client.force_login(self.nurse)
+
+    def _all_report_page_urls(self):
+        names = list(ALL_REPORT_URLS[1:]) + ['vaccinated_by_dose_report']
+        urls = [reverse(f'reports:{name}') for name in names]
+        urls.append(reverse(
+            'reports:barangay_detail_report', kwargs={'barangay': 'Poblacion'}))
+        urls.append(reverse(
+            'reports:animal_type_detail_report', kwargs={'animal_type': 'dog'}))
+        return urls
+
+    def test_vaccinated_by_dose_search_bar_is_on_top(self):
+        response = self.client.get(
+            reverse('reports:vaccinated_by_dose_report'), {'type': 'all'})
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertEqual(html.count('type="search"'), 1)
+        search_pos = html.index('id="vaccinated-dose-search"')
+        cards_pos = html.index('<!-- Dose summary cards -->')
+        period_pos = html.index('Reporting Period')
+        dose_filter_pos = html.index('Filter by Dose')
+        self.assertLess(search_pos, cards_pos)
+        self.assertLess(search_pos, period_pos)
+        self.assertLess(search_pos, dose_filter_pos)
+
+    def test_every_report_has_print_preview_export_and_excel_toolbar(self):
+        for url in self._all_report_page_urls():
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                content = response.content.decode()
+                for marker in (
+                    'Print Preview', 'openPrintPreview', 'Download PDF',
+                    'Export CSV', 'Excel', 'export=xlsx',
+                ):
+                    self.assertIn(marker, content)
+
+    def test_every_report_exports_valid_xlsx_with_signatories(self):
+        import io
+        from openpyxl import load_workbook
+
+        for url in self._all_report_page_urls():
+            with self.subTest(url=url):
+                response = self.client.get(url, {'export': 'xlsx'})
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(
+                    'application/vnd.openxmlformats-officedocument.'
+                    'spreadsheetml.sheet',
+                    response['Content-Type'],
+                )
+                self.assertIn('.xlsx', response['Content-Disposition'])
+                wb = load_workbook(io.BytesIO(response.content))
+                ws = wb.active
+                values = [
+                    str(cell.value)
+                    for row in ws.iter_rows()
+                    for cell in row
+                    if cell.value is not None
+                ]
+                joined = '\n'.join(values)
+                self.assertIn('ANIMAL BITE TREATMENT CENTER', joined)
+                self.assertIn('Prepared by:', joined)
+                self.assertIn('Approved by:', joined)
+                self.assertIn('Elena Reyes', joined)
+                self.assertIn('Municipal Health Officer', joined)
+
+    def test_every_report_csv_export_succeeds(self):
+        for url in self._all_report_page_urls():
+            with self.subTest(url=url):
+                response = self.client.get(url, {'export': 'csv'})
+                self.assertEqual(response.status_code, 200)
+                self.assertIn('text/csv', response['Content-Type'])
+
+    def test_print_preview_and_print_sheets_include_signatories(self):
+        # Standard official print preview
+        preview = self.client.get(
+            reverse('reports:patients_report'),
+            {'export': 'print', 'preview': '1'},
+        )
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview['X-Frame-Options'], 'SAMEORIGIN')
+        html = preview.content.decode()
+        self.assertNotIn('openPrintDialog', html)
+        self.assertIn('Prepared by:', html)
+        self.assertIn('Approved by:', html)
+        self.assertIn('Elena Reyes', html)
+        self.assertIn('Municipal Health Officer', html)
+
+        # Barangay & Animal Type print sheets
+        for name in ('barangay_report', 'animal_type_report'):
+            sheet = self.client.get(
+                reverse(f'reports:{name}'),
+                {'export': 'print-sheet', 'preview': '1'},
+            )
+            self.assertEqual(sheet.status_code, 200)
+            self.assertEqual(sheet['X-Frame-Options'], 'SAMEORIGIN')
+            sheet_html = sheet.content.decode()
+            self.assertNotIn('openPrintDialog', sheet_html)
+            self.assertIn('Prepared by:', sheet_html)
+            self.assertIn('Approved by:', sheet_html)
+            self.assertIn('Elena Reyes', sheet_html)
+            self.assertIn('Municipal Health Officer', sheet_html)
+
+    def test_pdf_export_includes_signatories_block(self):
+        import base64
+        import zlib
+
+        response = self.client.get(
+            reverse('reports:patients_report'), {'export': 'pdf'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.content.startswith(b'%PDF'))
+        # Decompress PDF content streams (ReportLab uses ASCII85 + FlateDecode)
+        extracted = []
+        for raw in re.findall(rb'stream\s+(.*?)\s*endstream', response.content, re.S):
+            data = raw.strip()
+            if data.endswith(b'~>'):
+                try:
+                    decoded = base64.a85decode(data[:-2])
+                    extracted.append(
+                        zlib.decompress(decoded).decode('latin-1', errors='ignore'))
+                    continue
+                except Exception:
+                    pass
+            try:
+                extracted.append(
+                    zlib.decompress(data).decode('latin-1', errors='ignore'))
+            except zlib.error:
+                extracted.append(data.decode('latin-1', errors='ignore'))
+        full_text = '\n'.join(extracted)
+        self.assertIn('Prepared by:', full_text)
+        self.assertIn('Approved by:', full_text)
+        self.assertIn('Elena Reyes', full_text)
+        self.assertIn('Municipal Health Officer', full_text)

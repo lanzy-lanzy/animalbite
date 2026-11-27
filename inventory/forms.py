@@ -15,6 +15,11 @@ class VaccineInventoryForm(forms.ModelForm):
             'class': 'form-input', 'min': 1, 'placeholder': 'e.g., 25',
         }),
     )
+    time_received = forms.TimeField(
+        required=False,
+        widget=forms.TimeInput(
+            attrs={'type': 'time', 'class': 'form-input'}, format='%H:%M'),
+    )
 
     class Meta:
         model = VaccineInventory
@@ -45,6 +50,25 @@ class VaccineInventoryForm(forms.ModelForm):
             'source_supplier': forms.TextInput(attrs={'class': 'form-input'}),
             'remarks': forms.Textarea(attrs={'rows': 3, 'class': 'form-input'}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            self.initial.setdefault(
+                'time_received',
+                timezone.localtime().time().replace(second=0, microsecond=0),
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        expiration_date = cleaned.get('expiration_date')
+        if expiration_date and expiration_date <= timezone.localdate():
+            self.add_error(
+                'expiration_date',
+                'Expired stock cannot be added. Check the expiration date '
+                'before saving.',
+            )
+        return cleaned
 
 
 class VaccineAddStockForm(forms.Form):
@@ -117,7 +141,7 @@ class VaccineAddStockForm(forms.Form):
                 self.add_error(
                     'expiration_date',
                     'Expiration date cannot be before the date received.')
-            elif expiration_date < timezone.localdate():
+            elif expiration_date <= timezone.localdate():
                 self.add_error(
                     'expiration_date',
                     'Expired stock cannot be added. Check the expiration date '
@@ -204,20 +228,39 @@ class VaccineAddStockForm(forms.Form):
         return batch, created, False
 
 class SupplyInventoryForm(forms.ModelForm):
+    quantity = forms.IntegerField(
+        min_value=0,
+        widget=forms.NumberInput(attrs={'class': 'form-input', 'min': 0}),
+    )
+    reorder_level = forms.IntegerField(
+        min_value=0,
+        widget=forms.NumberInput(attrs={'class': 'form-input', 'min': 0}),
+    )
+
     class Meta:
         model = SupplyInventory
         fields = '__all__'
         widgets = {
             'supply_name': forms.TextInput(attrs={'class': 'form-input'}),
             'supply_type': forms.Select(attrs={'class': 'form-select'}),
-            'quantity': forms.NumberInput(attrs={'class': 'form-input'}),
             'unit': forms.TextInput(attrs={'class': 'form-input'}),
-            'reorder_level': forms.NumberInput(attrs={'class': 'form-input'}),
             'source_supplier': forms.TextInput(attrs={'class': 'form-input'}),
             'remarks': forms.Textarea(attrs={'rows': 3, 'class': 'form-textarea'}),
         }
 
 class MedicineInventoryForm(forms.ModelForm):
+    quantity_received = forms.IntegerField(
+        min_value=1,
+        widget=forms.NumberInput(attrs={
+            'class': 'form-input', 'min': 1, 'placeholder': 'e.g., 50',
+        }),
+    )
+    time_received = forms.TimeField(
+        required=False,
+        widget=forms.TimeInput(
+            attrs={'type': 'time', 'class': 'form-input'}, format='%H:%M'),
+    )
+
     class Meta:
         model = MedicineInventory
         exclude = ['quantity_available', 'quantity_dispensed', 'date_received', 'created_by']
@@ -229,11 +272,29 @@ class MedicineInventoryForm(forms.ModelForm):
             'unit': forms.TextInput(attrs={'class': 'form-input', 'placeholder': 'tablet / capsule / mL / vial'}),
             'batch_number': forms.TextInput(attrs={'class': 'form-input', 'placeholder': 'e.g., LOT-2026-01'}),
             'expiration_date': forms.DateInput(attrs={'type': 'date', 'class': 'form-input'}),
-            'quantity_received': forms.NumberInput(attrs={'class': 'form-input', 'min': 0}),
             'reorder_level': forms.NumberInput(attrs={'class': 'form-input', 'min': 0}),
             'source_supplier': forms.TextInput(attrs={'class': 'form-input'}),
             'remarks': forms.Textarea(attrs={'rows': 3, 'class': 'form-input'}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            self.initial.setdefault(
+                'time_received',
+                timezone.localtime().time().replace(second=0, microsecond=0),
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        expiration_date = cleaned.get('expiration_date')
+        if expiration_date and expiration_date <= timezone.localdate():
+            self.add_error(
+                'expiration_date',
+                'Expired stock cannot be added. Check the expiration date '
+                'before saving.',
+            )
+        return cleaned
 
 
 class MedicineAddStockForm(forms.Form):
@@ -317,7 +378,7 @@ class MedicineAddStockForm(forms.Form):
                 self.add_error(
                     'expiration_date',
                     'Expiration date cannot be before the date received.')
-            elif expiration_date < timezone.localdate():
+            elif expiration_date <= timezone.localdate():
                 self.add_error(
                     'expiration_date',
                     'Expired stock cannot be added. Check the expiration date '

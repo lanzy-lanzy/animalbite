@@ -10,7 +10,7 @@
     .followup-search-button:focus-visible{outline:2px solid #0D382C;outline-offset:2px;}
 </style>
 {% endif %}
-<div class="space-y-5">
+<div x-data="reportPreview()" class="space-y-5">
     <header class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
             <a href="{% url 'reports:reports_index' %}" class="inline-flex items-center gap-1.5 text-xs font-bold text-muted hover:text-ink">
@@ -21,12 +21,7 @@
             <p class="text-sm font-medium text-muted">{{ description }}</p>
             <p class="text-sm font-medium text-muted mt-1">{{ label }} · Total matching records: <strong class="text-ink">{{ total }}</strong></p>
         </div>
-        <a href="?type={{ report_type }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}&amp;export=print"
-           target="_blank" rel="noopener"
-           class="no-print inline-flex items-center justify-center gap-2 rounded-full bg-emerald-950 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-900">
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9V3h12v6M6 18H4a2 2 0 01-2-2v-5a2 2 0 012 2v5a2 2 0 01-2 2h2m12 0h2a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v7H6z"/></svg>
-            Print Sheet
-        </a>
+        {% include 'reports/_report_toolbar.html' with print_label="Print Sheet" %}
     </header>
 
     <section class="card">
@@ -99,5 +94,6 @@
         </nav>
         {% endif %}
     </section>
+    {% include 'reports/_pdf_modal.html' %}
 </div>
 {% endblock %}

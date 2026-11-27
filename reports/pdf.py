@@ -81,6 +81,72 @@ def printed_at_label():
     return timezone.localtime().strftime('%B %d, %Y · %I:%M %p')
 
 
+def get_signatories(user=None):
+    """Return official Prepared by / Approved by signatory metadata for reports."""
+    prepared_name = ''
+    prepared_role = 'ABTC Staff / Health Worker'
+    if user and getattr(user, 'is_authenticated', False):
+        prepared_name = (user.get_full_name() or user.username or '').strip()
+        if hasattr(user, 'get_role_display'):
+            role_label = user.get_role_display()
+            if role_label:
+                prepared_role = role_label
+        elif getattr(user, 'role', ''):
+            prepared_role = str(user.role).replace('_', ' ').title()
+    return {
+        'prepared_by_label': 'Prepared by:',
+        'prepared_by_name': prepared_name or 'ABTC Staff',
+        'prepared_by_role': prepared_role,
+        'approved_by_label': 'Approved by:',
+        'approved_by_name': 'Municipal Health Officer',
+        'approved_by_role': 'Municipal Health Officer / Head of Office',
+    }
+
+
+def _signatory_block(signatories=None):
+    """Render a two-column Prepared by / Approved by signatory block."""
+    sig = signatories or get_signatories()
+    sig_label_style = ParagraphStyle(
+        'abtc_sig_label', parent=LABEL_STYLE, fontName='Helvetica-Bold',
+        fontSize=8, leading=10, textColor=SUBTITLE,
+    )
+    sig_name_style = ParagraphStyle(
+        'abtc_sig_name', parent=VALUE_STYLE, fontName='Helvetica-Bold',
+        fontSize=9, leading=11, textColor=INK, alignment=TA_CENTER,
+    )
+    sig_role_style = ParagraphStyle(
+        'abtc_sig_role', parent=LABEL_STYLE, fontName='Helvetica',
+        fontSize=7.5, leading=9.5, textColor=SUBTITLE, alignment=TA_CENTER,
+    )
+    col_w = (CONTENT_WIDTH - 14 * mm) / 2
+    data = [
+        [Paragraph(escape(sig['prepared_by_label']), sig_label_style), '',
+         Paragraph(escape(sig['approved_by_label']), sig_label_style)],
+        ['', '', ''],
+        [Paragraph(escape(sig['prepared_by_name']), sig_name_style), '',
+         Paragraph(escape(sig['approved_by_name']), sig_name_style)],
+        [Paragraph(escape(sig['prepared_by_role']), sig_role_style), '',
+         Paragraph(escape(sig['approved_by_role']), sig_role_style)],
+    ]
+    table = Table(
+        data,
+        colWidths=[col_w, 14 * mm, col_w],
+        rowHeights=[None, 11 * mm, None, None],
+        hAlign='LEFT',
+    )
+    table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'BOTTOM'),
+        ('LINEABOVE', (0, 2), (0, 2), 0.75, INK),
+        ('LINEABOVE', (2, 2), (2, 2), 0.75, INK),
+        ('LEFTPADDING', (0, 0), (-1, -1), 2),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('TOPPADDING', (0, 2), (2, 2), 4),
+    ]))
+    return KeepTogether([Spacer(1, 14), table])
+
+
 def _p(text, style):
     return Paragraph(escape(str(text if text not in (None, '') else '—')), style)
 
@@ -248,7 +314,8 @@ class _NumberedCanvas(pdfcanvas.Canvas):
         self.restoreState()
 
 
-def build_official_pdf(title, meta, headers, rows, summary_lines=None):
+def build_official_pdf(
+        title, meta, headers, rows, summary_lines=None, signatories=None):
     """Build an A4 portrait official ABTC document (always portrait)."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -278,6 +345,7 @@ def build_official_pdf(title, meta, headers, rows, summary_lines=None):
     story.append(_section_heading('Report Details'))
     story.append(Spacer(1, 3))
     story.append(_records_table(headers, rows))
+    story.append(_signatory_block(signatories))
     story.append(Spacer(1, 6))
 
     doc.build(story, canvasmaker=_NumberedCanvas)

@@ -1,3 +1,59 @@
+{% if show_signatories or signatories %}
+<style>
+    .abtc-signatories {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 32px;
+        margin: 26px 0 18px;
+        padding-top: 8px;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    .abtc-signatory {
+        min-width: 0;
+    }
+    .abtc-signatory__label {
+        margin: 0 0 28px;
+        font-size: 9pt;
+        font-weight: 700;
+        color: #496458;
+        text-align: left;
+    }
+    .abtc-signatory__line {
+        border-top: 1px solid #08291F;
+        padding-top: 5px;
+        text-align: center;
+    }
+    .abtc-signatory__name {
+        margin: 0;
+        font-size: 10pt;
+        font-weight: 800;
+        color: #08291F;
+    }
+    .abtc-signatory__role {
+        margin: 2px 0 0;
+        font-size: 8.5pt;
+        font-weight: 600;
+        color: #496458;
+    }
+</style>
+<section class="abtc-signatories" aria-label="Report Signatories">
+    <div class="abtc-signatory">
+        <p class="abtc-signatory__label">{{ signatories.prepared_by_label|default:"Prepared by:" }}</p>
+        <div class="abtc-signatory__line">
+            <p class="abtc-signatory__name">{{ signatories.prepared_by_name|default:"ABTC Staff" }}</p>
+            <p class="abtc-signatory__role">{{ signatories.prepared_by_role|default:"ABTC Staff / Health Worker" }}</p>
+        </div>
+    </div>
+    <div class="abtc-signatory">
+        <p class="abtc-signatory__label">{{ signatories.approved_by_label|default:"Approved by:" }}</p>
+        <div class="abtc-signatory__line">
+            <p class="abtc-signatory__name">{{ signatories.approved_by_name|default:"Municipal Health Officer" }}</p>
+            <p class="abtc-signatory__role">{{ signatories.approved_by_role|default:"Municipal Health Officer / Head of Office" }}</p>
+        </div>
+    </div>
+</section>
+{% endif %}
 <footer class="abtc-footer">
     <p class="abtc-footer__org">Animal Bite Treatment Center · Municipal Health Office · Dumingag</p>
     <p class="abtc-footer__meta">System-Generated {% if document_label %}{{ document_label }}{% else %}Document{% endif %}{% if confidential %} · Confidential — for clinical use only{% endif %}</p>
