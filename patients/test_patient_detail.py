@@ -471,6 +471,24 @@ class PatientDetailRecordTests(TestCase):
         ]:
             self.assertIn(value, content)
 
+    def test_print_sheet_shows_separate_vaccine_fields_without_linked_stock(self):
+        self.client.force_login(self.admin)
+        response = self.client.get(reverse("patients:patient_print", args=[self.patient.pk]))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        for label, value in (
+            ("Brand", "Verorab"),
+            ("Vaccine Name", "—"),
+            ("Lot / Batch", "LOT-42"),
+            ("Volume per Dose (mL)", "0.5"),
+            ("Quantity (Vials / Doses)", "5"),
+            ("First Dose Date", "Oct 02, 2026"),
+        ):
+            self.assertInHTML(
+                f'<div class="cs-field"><span class="cs-label">{label}</span>'
+                f'<div class="cs-value">{value}</div></div>', content,
+            )
+
     def test_print_sheet_empty_assessment_message(self):
         empty_patient = Patient.objects.create(
             patient_number="PAT-D2003",

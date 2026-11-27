@@ -17,17 +17,12 @@
             break-after: avoid; page-break-after: avoid;
         }
         .stock-print-count { font-size: 8.5pt; font-weight: 600; color: #475569; text-transform: none; letter-spacing: 0; }
-        .stock-print-empty {
-            margin: 0; padding: 8px 10px;
-            border: 1px solid #CBD5E1; background: #F8FAFC;
-            color: #64748B; font-size: 8.5pt; font-style: italic;
-        }
     </style>
 </head>
 <body class="abtc-print-body abtc-report{% if is_preview %} abtc-is-preview{% endif %}">
     {% if not is_preview %}
     <div class="abtc-toolbar abtc-no-print">
-        <span>Official report · A4 Portrait</span>
+        <span>Stock Alerts Report</span>
         <span>
             <button type="button" onclick="window.print()">Print</button>
             <button type="button" class="abtc-toolbar__ghost" onclick="window.close()">Close</button>
@@ -41,20 +36,11 @@
             {{ label }} &nbsp;·&nbsp; Date Printed: {{ printed_at|date:"F d, Y · g:i A" }}
         </p>
 
-        <section class="abtc-section">
-            <h2 class="abtc-section-title">Report Summary</h2>
-            <div class="abtc-panel abtc-summary">
-                {% for s_label, s_value in summary_lines %}
-                <div class="abtc-summary__row"><span>{{ s_label }}</span><strong>{{ s_value }}</strong></div>
-                {% endfor %}
-            </div>
-        </section>
-
         {% for section in sections %}
         <section class="stock-print-group">
             <h2 class="stock-print-heading">
                 <span>{{ section.title }}</span>
-                <span class="stock-print-count">{{ section.rows|length }} item{{ section.rows|length|pluralize }}</span>
+                <span class="stock-print-count">{{ section.rows|length }}</span>
             </h2>
             {% if section.rows %}
             {% if section.key == 'pulled_out' %}
@@ -79,7 +65,7 @@
                         <td>{{ row.batch_summary|default:row.batch|default:"—" }}</td>
                         <td>{{ row.available }} {{ row.unit }}</td>
                         <td>{% if row.pull_out_date %}{{ row.pull_out_date|date:"M d, Y" }}{% else %}—{% endif %}</td>
-                        <td>{{ row.reason|default:"—" }}{% if row.responsible %}<div class="abtc-cell-note">{{ row.responsible }}</div>{% endif %}</td>
+                        <td>{{ row.reason|default:"—" }}{% if row.responsible %}<div class="abtc-cell-note">{{ row.responsible }}</div>{% endif %}{% if row.reference %}<div class="abtc-cell-note">Transaction Reference: {{ row.reference }}</div>{% endif %}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -112,8 +98,6 @@
                 </tbody>
             </table>
             {% endif %}
-            {% else %}
-            <p class="stock-print-empty">No items in {{ section.title|lower }}.</p>
             {% endif %}
         </section>
         {% endfor %}

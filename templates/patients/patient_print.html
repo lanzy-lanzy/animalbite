@@ -304,34 +304,34 @@
       </div>
       {% endif %}
 
-      {% if latest_assessment.vaccine_inventory or latest_assessment.vaccine_brand_plan or latest_assessment.vaccine_dose_ml or latest_assessment.vaccine_quantity is not None %}
+      {% if latest_assessment %}
       <div class="cs-block">
         <div class="cs-head"><span class="cs-letter">D.</span><h3 class="cs-title">Vaccine Brand</h3></div>
         <div class="cs-body">
-          {% if latest_assessment.vaccine_inventory or latest_assessment.vaccine_brand_plan %}
           <div class="cs-field">
-            <span class="cs-label" style="padding:8px 11px;">Vaccine Brand</span>
-            <div class="cs-value" style="padding:8px 11px;">
-              {% if latest_assessment.vaccine_inventory %}
-                {{ latest_assessment.vaccine_inventory.brand }}{% if latest_assessment.vaccine_inventory.vaccine_name %} · {{ latest_assessment.vaccine_inventory.vaccine_name }}{% endif %}
-              {% else %}
-                {{ latest_assessment.vaccine_brand_plan }}
-              {% endif %}
-            </div>
+            <span class="cs-label">Brand</span>
+            <div class="cs-value">{% firstof latest_assessment.vaccine_inventory.brand latest_assessment.vaccine_brand_plan "—" %}</div>
           </div>
-          {% endif %}
-          {% if latest_assessment.vaccine_dose_ml %}
           <div class="cs-field">
-            <span class="cs-label" style="padding:8px 11px;">Volume per Dose (mL)</span>
-            <div class="cs-value" style="padding:8px 11px;">{{ latest_assessment.vaccine_dose_ml }} mL</div>
+            <span class="cs-label">Vaccine Name</span>
+            <div class="cs-value">{{ latest_assessment.vaccine_inventory.vaccine_name|default:"—" }}</div>
           </div>
-          {% endif %}
-          {% if latest_assessment.vaccine_quantity is not None %}
           <div class="cs-field">
-            <span class="cs-label" style="padding:8px 11px;">Quantity (Vials / Doses)</span>
-            <div class="cs-value" style="padding:8px 11px;">{{ latest_assessment.vaccine_quantity }}</div>
+            <span class="cs-label">Lot / Batch</span>
+            <div class="cs-value">{% firstof latest_assessment.vaccine_lot_number latest_assessment.vaccine_inventory.batch_number "—" %}</div>
           </div>
-          {% endif %}
+          <div class="cs-field">
+            <span class="cs-label">Volume per Dose (mL)</span>
+            <div class="cs-value">{{ latest_assessment.vaccine_dose_ml|default_if_none:"—" }}</div>
+          </div>
+          <div class="cs-field">
+            <span class="cs-label">Quantity (Vials / Doses)</span>
+            <div class="cs-value">{{ latest_assessment.vaccine_quantity|default_if_none:"—" }}</div>
+          </div>
+          <div class="cs-field">
+            <span class="cs-label">First Dose Date</span>
+            <div class="cs-value">{{ latest_assessment.first_dose_date|date:"M d, Y"|default:"—" }}</div>
+          </div>
         </div>
       </div>
       {% endif %}

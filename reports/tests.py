@@ -1561,7 +1561,8 @@ class InventoryReportTests(TestCase):
                 'Medicine / Vaccine', 'Form', 'Unit', 'Batches',
                 'Available', 'Expiry'):
             self.assertIn(heading, content)
-            self.assertEqual(content.count(f'>{heading}</th>'), 5)
+            self.assertEqual(content.count(f'>{heading}</th>'),
+                             sum(bool(section['rows']) for section in sections.values()))
         self.assertIn('pending pull-out', content)
 
     def test_batch_expiring_today_is_expired_not_expiring_soon(self):
@@ -1609,8 +1610,8 @@ class InventoryReportTests(TestCase):
         self.client.force_login(self.nurse)
         response = self.client.get(reverse('reports:stock_alerts_report'))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, '5. Pulled Out Stocks')
-        self.assertContains(response, 'Completed medicine and vaccine stock pull-out records.')
+        self.assertContains(response, 'Pulled Out Stocks')
+        self.assertNotContains(response, 'Completed medicine and vaccine stock pull-out records.')
         sections = {section['key']: section for section in response.context['sections']}
         pulled_out = sections['pulled_out']['rows']
         self.assertEqual(len(pulled_out), 2)
@@ -1656,7 +1657,7 @@ class InventoryReportTests(TestCase):
         self.assertEqual(print_response.status_code, 200)
         self.assertContains(print_response, 'Amoxicillin')
         self.assertContains(print_response, 'M-1')
-        self.assertContains(print_response, 'Pull-out date:')
+        self.assertContains(print_response, 'Pull-out Date')
         self.assertContains(print_response, 'Transaction Reference')
         pdf_response = self.client.get(url, {'export': 'pdf'})
         self.assertEqual(pdf_response.status_code, 200)

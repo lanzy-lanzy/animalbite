@@ -1251,22 +1251,16 @@ def patient_print_pdf(request, pk):
             brand_main = latest_assessment.vaccine_brand_plan
             brand_sub = ''
             brand_lot = latest_assessment.vaccine_lot_number
-        brand_html = ''
-        if brand_main:
-            brand_html = f'<font size="9"><b>{_html.escape(brand_main)}</b></font>'
-        if brand_sub:
-            brand_html += f'<br/>{_html.escape(brand_sub)}'
-        if brand_lot:
-            brand_html += f'<br/><font color="#496458" size="6">Lot / batch: {_html.escape(brand_lot)}</font>'
-        if not brand_html:
-            brand_html = cs_text(None)
         cs_add('E', 'Vaccine Brand', [
-            cs_grid([cs_cell('Vaccine Brand (from Stock)', value_html=brand_html)],
-                    cols=1, widths=[170 * mm]),
+            cs_grid([
+                cs_cell('Brand', brand_main),
+                cs_cell('Vaccine Name', brand_sub),
+                cs_cell('Lot / Batch', brand_lot),
+            ], cols=3),
             cs_grid([
                 cs_cell('Volume per Dose (mL)', latest_assessment.vaccine_dose_ml),
-                cs_cell('Quantity (Vials/Doses)', latest_assessment.vaccine_quantity),
-                cs_cell('1st Dose Date',
+                cs_cell('Quantity (Vials / Doses)', latest_assessment.vaccine_quantity),
+                cs_cell('First Dose Date',
                         latest_assessment.first_dose_date.strftime('%b %d, %Y')
                         if latest_assessment.first_dose_date else None),
             ], cols=3),
