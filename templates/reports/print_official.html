@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="{% static 'css/print_official.css' %}">
     <link rel="stylesheet" href="{% static 'css/reports.css' %}">
 </head>
-<body class="abtc-print-body abtc-report">
+<body class="abtc-print-body abtc-report{% if is_preview %} abtc-is-preview{% endif %}">
     {% if not is_preview %}
     <div class="abtc-toolbar abtc-no-print">
         <span>Official document preview · A4 Portrait</span>

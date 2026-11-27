@@ -1,8 +1,212 @@
 {% extends 'base.html' %}
 {% block title %}Vaccinated Patients by Dose — ABTC{% endblock %}
 {% block content %}
+<style>
+    .vbd-header { position: relative; z-index: 40; }
+    .vbd-search-card {
+        position: relative;
+        z-index: 10;
+        background: #FFFFFF;
+        border: 1px solid #D5DDD8;
+        border-radius: 14px;
+        padding: 16px 18px;
+        box-shadow: 0 2px 8px -4px rgba(8, 41, 31, .08);
+    }
+    .vbd-search-form {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+    }
+    .vbd-search-field {
+        position: relative;
+        flex: 1 1 280px;
+        min-width: 0;
+    }
+    .vbd-search-icon {
+        position: absolute;
+        left: 14px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 17px;
+        height: 17px;
+        color: #64746D;
+        pointer-events: none;
+    }
+    .vbd-search-input {
+        width: 100%;
+        height: 44px;
+        padding: 0 14px 0 42px;
+        border: 1px solid #CBD5D0;
+        border-radius: 10px;
+        background: #FAFBF9;
+        color: #0F1F1A;
+        font-size: 14px;
+        font-weight: 500;
+        transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+    }
+    .vbd-search-input:focus {
+        outline: none;
+        background: #FFFFFF;
+        border-color: #0F3D2E;
+        box-shadow: 0 0 0 3px rgba(15, 61, 46, .12);
+    }
+    .vbd-search-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        height: 44px;
+        padding: 0 20px;
+        border: 1px solid #0F3D2E;
+        border-radius: 10px;
+        background: #0F3D2E;
+        color: #FFFFFF;
+        font-size: 13.5px;
+        font-weight: 700;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background-color .15s ease;
+    }
+    .vbd-search-btn:hover { background: #0A2E22; }
+    .vbd-clear-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 44px;
+        padding: 0 16px;
+        border: 1px solid #CBD5D0;
+        border-radius: 10px;
+        background: #FFFFFF;
+        color: #374151;
+        font-size: 13px;
+        font-weight: 600;
+        text-decoration: none;
+        white-space: nowrap;
+    }
+    .vbd-clear-btn:hover { background: #F3F6F4; color: #0F1F1A; }
+
+    .vbd-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+    }
+    @media (min-width: 640px) { .vbd-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (min-width: 1024px) { .vbd-kpi-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+    .vbd-kpi {
+        display: flex;
+        flex-direction: column;
+        padding: 15px 16px;
+        border-radius: 12px;
+        border: 1px solid #D5DDD8;
+        border-left: 3px solid #D5DDD8;
+        background: #FFFFFF;
+        text-decoration: none;
+        transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
+    }
+    .vbd-kpi:hover {
+        border-color: #9FB0A7;
+        border-left-color: #0F3D2E;
+        background: #FAFBF9;
+        box-shadow: 0 4px 14px -8px rgba(8, 41, 31, .16);
+    }
+    .vbd-kpi--active {
+        border-color: #0F3D2E;
+        border-left: 4px solid #0F3D2E;
+        background: #F1F8F5;
+    }
+    .vbd-kpi__label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        color: #53645D;
+    }
+    .vbd-kpi__num {
+        margin-top: 6px;
+        font-size: 26px;
+        font-weight: 800;
+        line-height: 1.1;
+        color: #08291F;
+    }
+    .vbd-kpi__meta {
+        margin-top: 6px;
+        font-size: 12px;
+        font-weight: 500;
+        color: #53645D;
+    }
+
+    .vbd-filters-card {
+        background: #FFFFFF;
+        border: 1px solid #D5DDD8;
+        border-radius: 14px;
+        padding: 16px 18px;
+    }
+    .vbd-filters-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+    @media (min-width: 1024px) {
+        .vbd-filters-grid {
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+            gap: 24px;
+        }
+        .vbd-filter-col--divided {
+            padding-left: 24px;
+            border-left: 1px solid #E5EAE7;
+        }
+    }
+    .vbd-filter-title {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        color: #53645D;
+        margin: 0 0 10px;
+    }
+    .vbd-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+    }
+    .vbd-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 6px 13px;
+        border-radius: 8px;
+        border: 1px solid #D1D8D4;
+        background: #FFFFFF;
+        color: #1F2F29;
+        font-size: 12.5px;
+        font-weight: 600;
+        text-decoration: none;
+        transition: background-color .15s ease, border-color .15s ease;
+    }
+    .vbd-pill:hover { background: #F3F6F4; border-color: #9FB0A7; }
+    .vbd-pill--active {
+        background: #0F3D2E;
+        border-color: #0F3D2E;
+        color: #FFFFFF;
+        font-weight: 700;
+    }
+    .vbd-pill--active:hover { background: #0A2E22; border-color: #0A2E22; color: #FFFFFF; }
+    .vbd-pill__count {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: rgba(15, 61, 46, .09);
+        color: #0F3D2E;
+    }
+    .vbd-pill--active .vbd-pill__count {
+        background: rgba(255, 255, 255, .2);
+        color: #FFFFFF;
+    }
+</style>
 <div x-data="reportPreview()" class="space-y-5">
-    <header class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+    <header class="vbd-header flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
             <a href="{% url 'reports:reports_index' %}" class="inline-flex items-center gap-1.5 text-xs font-bold text-muted hover:text-ink no-print">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
@@ -16,60 +220,67 @@
     </header>
 
     <!-- Search bar on top -->
-    <section class="card no-print">
-        <form method="get" class="flex flex-col sm:flex-row gap-2" role="search">
+    <section class="vbd-search-card no-print">
+        <form method="get" class="vbd-search-form" role="search">
             <input type="hidden" name="type" value="{{ report_type }}">
             <input type="hidden" name="dose" value="{{ selected_dose }}">
             <label class="sr-only" for="vaccinated-dose-search">Search vaccinated patients</label>
-            <input id="vaccinated-dose-search" type="search" name="q" value="{{ q }}"
-                   placeholder="Search patient ID, name, case number, vaccine brand, or date..."
-                   class="form-input min-w-0 flex-1">
-            <button type="submit" class="btn-primary shrink-0">
+            <div class="vbd-search-field">
+                <svg class="vbd-search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-5.2-5.2M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"/></svg>
+                <input id="vaccinated-dose-search" type="search" name="q" value="{{ q }}"
+                       placeholder="Search patient ID, name, case number, vaccine brand, or administration date..."
+                       class="vbd-search-input">
+            </div>
+            <button type="submit" class="vbd-search-btn">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
                 Search
             </button>
             {% if q %}
-            <a href="?type={{ report_type }}&amp;dose={{ selected_dose }}" class="btn-secondary shrink-0 text-center">Clear</a>
+            <a href="?type={{ report_type }}&amp;dose={{ selected_dose }}" class="vbd-clear-btn">Clear</a>
             {% endif %}
         </form>
     </section>
 
     <!-- Dose summary cards -->
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+    <div class="vbd-kpi-grid">
         {% for item in dose_breakdown %}
         <a href="?type={{ report_type }}&amp;dose={{ item.number }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
-           class="card p-4 transition-colors {% if selected_dose == item.number %}border-emerald-900 bg-emerald-50/60{% else %}hover:bg-sage-50{% endif %}">
-            <p class="text-[11px] font-bold tracking-widest uppercase text-muted">{{ item.label }}</p>
-            <p class="font-display text-2xl font-bold text-emerald-950 mt-1">{{ item.patients }}</p>
-            <p class="text-xs font-medium text-muted mt-1">{{ item.patients }} patient{{ item.patients|pluralize }} · {{ item.count }} dose{{ item.count|pluralize }}</p>
+           class="vbd-kpi {% if selected_dose == item.number %}vbd-kpi--active{% endif %}">
+            <span class="vbd-kpi__label">{{ item.label }}</span>
+            <span class="vbd-kpi__num font-display">{{ item.patients }}</span>
+            <span class="vbd-kpi__meta">{{ item.patients }} patient{{ item.patients|pluralize }} · {{ item.count }} dose{{ item.count|pluralize }}</span>
         </a>
         {% endfor %}
     </div>
 
-    <section class="card no-print">
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+    <!-- Formal Reporting Period & Filter by Dose -->
+    <section class="vbd-filters-card no-print">
+        <div class="vbd-filters-grid">
             <div>
-                <h2 class="font-display text-sm font-bold text-ink mb-2">Reporting Period</h2>
-                <nav class="flex flex-wrap gap-2" aria-label="Vaccinated by dose reporting period">
+                <h2 class="vbd-filter-title">Reporting Period</h2>
+                <nav class="vbd-pills" aria-label="Vaccinated by dose reporting period">
                     {% for value, text in period_options %}
                     <a href="?type={{ value }}&amp;dose={{ selected_dose }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
-                       class="px-3 py-1.5 rounded-full text-xs font-bold border {% if report_type == value %}bg-emerald-950 text-white border-emerald-950{% else %}bg-white text-ink border-line hover:bg-sage-50{% endif %}">{{ text }}</a>
+                       class="vbd-pill {% if report_type == value %}vbd-pill--active{% endif %}">{{ text }}</a>
                     {% endfor %}
                 </nav>
             </div>
-            <div>
-                <h2 class="font-display text-sm font-bold text-ink mb-2">Filter by Dose</h2>
-                <nav class="flex flex-wrap gap-2" aria-label="Filter by dose number">
+            <div class="vbd-filter-col--divided">
+                <h2 class="vbd-filter-title">Filter by Dose</h2>
+                <nav class="vbd-pills" aria-label="Filter by dose number">
                     <a href="?type={{ report_type }}&amp;dose=all{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
-                       class="px-3 py-1.5 rounded-full text-xs font-bold border {% if selected_dose == 'all' %}bg-emerald-950 text-white border-emerald-950{% else %}bg-white text-ink border-line hover:bg-sage-50{% endif %}">All Doses</a>
+                       class="vbd-pill {% if selected_dose == 'all' %}vbd-pill--active{% endif %}">All Doses</a>
                     {% for item in dose_breakdown %}
                     <a href="?type={{ report_type }}&amp;dose={{ item.number }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}"
-                       class="px-3 py-1.5 rounded-full text-xs font-bold border {% if selected_dose == item.number %}bg-emerald-950 text-white border-emerald-950{% else %}bg-white text-ink border-line hover:bg-sage-50{% endif %}">{{ item.label }} ({{ item.count }})</a>
+                       class="vbd-pill {% if selected_dose == item.number %}vbd-pill--active{% endif %}">
+                        {{ item.label }}
+                        <span class="vbd-pill__count">{{ item.count }}</span>
+                    </a>
                     {% endfor %}
                 </nav>
             </div>
         </div>
-        <p class="text-xs font-medium text-muted mt-3">Administration date period: {{ label }}</p>
+        <p class="text-xs font-medium text-muted mt-3 pt-3 border-t border-line">Administration date period: <strong class="text-ink">{{ label }}</strong></p>
     </section>
 
     <section class="card p-0 overflow-hidden">

@@ -1,49 +1,130 @@
-<div class="flex flex-wrap items-center justify-end gap-2 no-print">
+<style>
+    header:has(.rep-toolbar),
+    div:has(> .rep-toolbar) {
+        position: relative;
+        z-index: 40;
+    }
+    .rep-toolbar {
+        position: relative;
+        z-index: 60;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+    }
+    .rep-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px 15px;
+        border-radius: 10px;
+        border: 1px solid #CBD5D0;
+        background: #FFFFFF;
+        color: #162620;
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.2;
+        text-decoration: none;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease;
+    }
+    .rep-btn:hover { background: #F3F6F4; border-color: #9FB0A7; }
+    .rep-btn:focus-visible { outline: 2px solid #0F3D2E; outline-offset: 2px; }
+    .rep-btn--primary {
+        background: #0F3D2E;
+        border-color: #0F3D2E;
+        color: #FFFFFF;
+        box-shadow: 0 1px 2px rgba(8, 41, 31, .16);
+    }
+    .rep-btn--primary:hover { background: #0A2E22; border-color: #0A2E22; color: #FFFFFF; }
+    .rep-btn--excel {
+        background: #FFFFFF;
+        border-color: #1F6F54;
+        color: #14533D;
+    }
+    .rep-btn--excel:hover { background: #EDF7F2; border-color: #14533D; }
+    .rep-export-wrap {
+        position: relative;
+        z-index: 80;
+    }
+    .rep-export-menu {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 6px);
+        min-width: 196px;
+        background: #FFFFFF;
+        border: 1px solid #CBD5D0;
+        border-radius: 12px;
+        box-shadow: 0 16px 36px -10px rgba(8, 41, 31, .28), 0 4px 10px rgba(8, 41, 31, .08);
+        padding: 6px;
+        z-index: 200;
+    }
+    .rep-export-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        padding: 9px 12px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: #162620;
+        font-size: 13px;
+        font-weight: 600;
+        text-align: left;
+        text-decoration: none;
+        cursor: pointer;
+    }
+    .rep-export-item:hover { background: #F1F5F3; color: #08291F; }
+</style>
+<div class="rep-toolbar no-print">
     <button type="button"
             @click="openPrintPreview('{{ request.path }}?{% for k,v in request.GET.items %}{% if k != 'export' and k != 'preview' %}{{ k }}={{ v|urlencode }}&{% endif %}{% endfor %}export={{ print_export|default:'print' }}&preview=1')"
-            class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-emerald-950 text-white text-sm font-bold hover:bg-emerald-900 shadow-sm">
+            class="rep-btn rep-btn--primary">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
         Print Preview
     </button>
 
-    <div class="relative" x-data="{ exportOpen: false }" @click.outside="exportOpen = false" @keydown.escape.window="exportOpen = false">
+    <div class="rep-export-wrap" x-data="{ exportOpen: false }" @click.outside="exportOpen = false" @keydown.escape.window="exportOpen = false">
         <button type="button" @click="exportOpen = !exportOpen"
                 :aria-expanded="exportOpen.toString()"
-                class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white border border-line text-ink text-sm font-bold hover:bg-sage-50">
+                class="rep-btn">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v12m0 0l-4-4m4 4l4-4M4 18h16"/></svg>
             Export
-            <svg class="w-3.5 h-3.5 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            <svg class="w-3.5 h-3.5" style="color:#53645D;" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
         </button>
-        <div x-show="exportOpen" x-cloak
-             class="absolute right-0 mt-1.5 w-44 rounded-xl bg-white border border-line shadow-lg py-1.5 z-30">
+        <div x-show="exportOpen" x-cloak class="rep-export-menu" role="menu">
             <a href="?{% for k,v in request.GET.items %}{% if k != 'export' and k != 'preview' %}{{ k }}={{ v|urlencode }}&amp;{% endif %}{% endfor %}export=pdf"
-               class="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-ink hover:bg-sage-50">
-                <svg class="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+               class="rep-export-item" role="menuitem">
+                <svg class="w-4 h-4 shrink-0" style="color:#B91C1C;" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
                 Download PDF
             </a>
             <button type="button"
                     @click="exportOpen = false; openPreview('{{ request.path }}?{% for k,v in request.GET.items %}{% if k != 'export' and k != 'preview' %}{{ k }}={{ v|urlencode }}&{% endif %}{% endfor %}export=pdf&preview=1')"
-                    class="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-ink hover:bg-sage-50 text-left">
-                <svg class="w-4 h-4 text-emerald-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                    class="rep-export-item" role="menuitem">
+                <svg class="w-4 h-4 shrink-0" style="color:#0F6B4E;" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                 Preview PDF
             </button>
             <a href="?{% for k,v in request.GET.items %}{% if k != 'export' and k != 'preview' %}{{ k }}={{ v|urlencode }}&amp;{% endif %}{% endfor %}export=csv"
-               class="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-ink hover:bg-sage-50">
-                <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/></svg>
+               class="rep-export-item" role="menuitem">
+                <svg class="w-4 h-4 shrink-0" style="color:#475569;" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"/></svg>
                 Export CSV
             </a>
         </div>
     </div>
 
     <a href="?{% for k,v in request.GET.items %}{% if k != 'export' and k != 'preview' %}{{ k }}={{ v|urlencode }}&amp;{% endif %}{% endfor %}export=xlsx"
-       class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white border border-emerald-700/40 text-emerald-900 text-sm font-bold hover:bg-emerald-50">
-        <svg class="w-4 h-4 text-emerald-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+       class="rep-btn rep-btn--excel">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
         Excel
     </a>
 
     <a href="?{% for k,v in request.GET.items %}{% if k != 'export' and k != 'preview' %}{{ k }}={{ v|urlencode }}&amp;{% endif %}{% endfor %}export={{ print_export|default:'print' }}"
        target="_blank" rel="noopener"
-       class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white border border-line text-ink text-sm font-bold hover:bg-sage-50">
+       class="rep-btn">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 9V3h12v6M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v7H6z"/></svg>
         {{ print_label|default:"Print" }}
     </a>

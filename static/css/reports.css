@@ -14,8 +14,280 @@
 .app-canvas select,
 .app-canvas button { font-size: 1rem; }
 
-/* Report print previews share these rules with browser print output. */
-.abtc-report .abtc-table th,
-.abtc-report .abtc-table td { font-size: 10.5pt; line-height: 1.4; overflow-wrap: anywhere; }
-.abtc-report .abtc-note,
-.abtc-report .abtc-summary { font-size: 11pt; line-height: 1.5; }
+/* ==========================================================================
+   FORMAL REPORT PRINT DESIGN (clean, understated, zero decorative clutter)
+   Applies only to official reports (body.abtc-report) so clinical forms stay
+   untouched.
+   ========================================================================== */
+body.abtc-report {
+    background: #FFFFFF;
+    color: #111827;
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    font-size: 9pt;
+    line-height: 1.4;
+}
+
+body.abtc-report .abtc-doc {
+    width: 100%;
+    max-width: 194mm;
+    margin: 0 auto;
+    border: 0;
+    background: #FFFFFF;
+}
+
+@media screen {
+    body.abtc-report {
+        background: #E9ECEA;
+        padding: 18px 16px 28px;
+    }
+    body.abtc-report.abtc-is-preview {
+        padding: 14px 16px 24px;
+    }
+    body.abtc-report .abtc-doc {
+        width: 100%;
+        max-width: 900px;
+        padding: 28px 32px;
+        border: 1px solid #D1D8D4;
+        border-radius: 4px;
+        box-shadow: 0 6px 22px -12px rgba(15, 23, 42, .25);
+    }
+}
+
+/* Formal letterhead — no dark banners, no skewed stripes */
+body.abtc-report .abtc-letterhead {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 10px;
+}
+body.abtc-report .abtc-logo {
+    width: 64px;
+    height: 64px;
+    flex: 0 0 64px;
+    object-fit: contain;
+}
+body.abtc-report .abtc-letterhead__divider {
+    width: 1px;
+    height: 58px;
+    flex: 0 0 1px;
+    margin: 0;
+    background: #CBD5E1;
+}
+body.abtc-report .abtc-letterhead__text {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    text-align: left;
+}
+body.abtc-report .abtc-org {
+    margin: 0;
+    font-size: 13pt;
+    font-weight: 700;
+    letter-spacing: .04em;
+    color: #0F172A;
+    text-transform: uppercase;
+    white-space: normal;
+}
+body.abtc-report .abtc-office {
+    margin: 2px 0 0;
+    font-size: 9.5pt;
+    font-weight: 500;
+    color: #475569;
+}
+body.abtc-report .abtc-doc-title {
+    position: static;
+    overflow: visible;
+    margin: 6px 0 0;
+    padding: 0;
+    background: transparent;
+    color: #0F3D2E;
+    font-size: 13.5pt;
+    font-weight: 800;
+    letter-spacing: .04em;
+    line-height: 1.2;
+    text-align: left;
+    text-transform: uppercase;
+}
+body.abtc-report .abtc-doc-title::before,
+body.abtc-report .abtc-doc-title::after {
+    display: none;
+    content: none;
+}
+body.abtc-report .abtc-rule {
+    height: 0;
+    margin: 2px 0 12px;
+    border: 0;
+    border-top: 2px solid #0F3D2E;
+    border-bottom: 1px solid #CBD5E1;
+    padding-top: 2px;
+    background: transparent;
+}
+body.abtc-report .abtc-note {
+    margin: 0 0 14px;
+    font-size: 8.8pt;
+    font-weight: 500;
+    color: #475569;
+}
+
+/* Formal section headings — crisp rule, no heavy dark bar or + icon */
+body.abtc-report .abtc-section {
+    margin: 0 0 14px;
+}
+body.abtc-report .abtc-section-title {
+    position: static;
+    margin: 0 0 8px;
+    padding: 0 0 4px;
+    background: transparent;
+    border: 0;
+    border-bottom: 1.5px solid #334155;
+    color: #0F172A;
+    font-size: 9.5pt;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+body.abtc-report .abtc-section-title::before {
+    display: none;
+    content: none;
+}
+
+/* Formal summary grid */
+body.abtc-report .abtc-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-top: 1px solid #CBD5E1;
+    border-left: 1px solid #CBD5E1;
+    font-size: 8.8pt;
+}
+body.abtc-report .abtc-summary__row {
+    border-right: 1px solid #CBD5E1;
+    border-bottom: 1px solid #CBD5E1;
+}
+body.abtc-report .abtc-summary__row span {
+    background: #F8FAFC;
+    border-right: 1px solid #CBD5E1;
+    color: #334155;
+    font-size: 8.4pt;
+    font-weight: 600;
+    padding: 5px 8px;
+}
+body.abtc-report .abtc-summary__row strong {
+    background: #FFFFFF;
+    color: #0F172A;
+    font-size: 8.8pt;
+    font-weight: 700;
+    padding: 5px 8px;
+}
+
+/* Formal data tables — fit cleanly without clipping */
+body.abtc-report .abtc-table,
+body.abtc-report .barangay-print-group table,
+body.abtc-report .animal-print-group table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+    font-size: 8.5pt;
+    line-height: 1.35;
+}
+body.abtc-report .abtc-table th,
+body.abtc-report .barangay-print-group th,
+body.abtc-report .animal-print-group th {
+    background: #F1F5F9;
+    color: #0F172A;
+    border: 1px solid #CBD5E1;
+    padding: 6px 7px;
+    font-size: 8pt;
+    font-weight: 700;
+    letter-spacing: .03em;
+    text-transform: uppercase;
+    text-align: left;
+}
+body.abtc-report .abtc-table td,
+body.abtc-report .barangay-print-group td,
+body.abtc-report .animal-print-group td {
+    background: #FFFFFF;
+    color: #1E293B;
+    border: 1px solid #CBD5E1;
+    padding: 5px 7px;
+    font-size: 8.5pt;
+    font-weight: 400;
+    overflow-wrap: break-word;
+    word-break: normal;
+}
+body.abtc-report .abtc-table tbody tr:nth-child(even) td,
+body.abtc-report .barangay-print-group tbody tr:nth-child(even) td,
+body.abtc-report .animal-print-group tbody tr:nth-child(even) td {
+    background: #FAFBFD;
+}
+
+/* Formal group headings & totals (barangay / animal type print sheets) */
+body.abtc-report .barangay-print-heading,
+body.abtc-report .animal-print-heading {
+    margin: 0 0 3px;
+    padding: 0 0 4px;
+    border-bottom: 1px solid #CBD5E1;
+    color: #0F172A;
+    font-size: 10.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+body.abtc-report .barangay-print-total,
+body.abtc-report .animal-print-total {
+    margin: 0 0 6px;
+    color: #475569;
+    font-size: 8.8pt;
+    font-weight: 600;
+}
+body.abtc-report .barangay-grand-total,
+body.abtc-report .animal-grand-total {
+    margin-top: 14px;
+    padding: 8px 12px;
+    border: 1px solid #CBD5E1;
+    border-radius: 0;
+    background: #F8FAFC;
+    color: #0F172A;
+    font-size: 10pt;
+    font-weight: 700;
+    text-align: right;
+}
+
+/* Formal footer — clean horizontal line, no corner triangles */
+body.abtc-report .abtc-footer {
+    position: static;
+    overflow: visible;
+    margin: 18px 0 0;
+    padding: 8px 0 0;
+    border: 0;
+    border-top: 1px solid #CBD5E1;
+    background: transparent;
+    color: #475569;
+    font-size: 8.2pt;
+    text-align: center;
+}
+body.abtc-report .abtc-footer::before,
+body.abtc-report .abtc-footer::after {
+    display: none;
+    content: none;
+}
+body.abtc-report .abtc-footer__org {
+    color: #1E293B;
+    font-size: 8.8pt;
+    font-weight: 700;
+}
+body.abtc-report .abtc-footer__meta {
+    color: #64748B;
+    font-size: 8pt;
+    font-style: normal;
+    font-weight: 500;
+}
+
+@media print {
+    @page { size: A4 portrait; margin: 10mm; }
+    body.abtc-report { padding: 0 !important; background: #FFFFFF !important; }
+    body.abtc-report .abtc-doc {
+        max-width: none;
+        padding: 0;
+        border: 0;
+        box-shadow: none;
+    }
+}

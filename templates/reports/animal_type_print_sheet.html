@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ document_title }} — ABTC</title>
     <link rel="stylesheet" href="{% static 'css/print_official.css' %}">
+    <link rel="stylesheet" href="{% static 'css/reports.css' %}">
     <style>
         .animal-print-group { margin: 0 0 18px; }
         .animal-print-heading {
@@ -73,7 +74,7 @@
         }
     </style>
 </head>
-<body class="abtc-print-body">
+<body class="abtc-print-body abtc-report{% if is_preview %} abtc-is-preview{% endif %}">
     {% if not is_preview %}
     <div class="abtc-toolbar abtc-no-print">
         <span>Official report · A4 Portrait</span>
