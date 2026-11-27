@@ -889,10 +889,10 @@
     <div class="ad-page">
     <div class="ad-toolbar">
       <div class="ad-toolbar-left">
-        <a href="{% url 'doctor:assessment_list' %}" class="ad-back" aria-label="Back to My Assessments">←</a>
+        <a href="{% if back_url %}{{ back_url }}{% else %}{% url 'doctor:assessment_list' %}{% endif %}" class="ad-back" aria-label="{{ back_label|default:'Back to My Assessments' }}">←</a>
         <div class="min-w-0">
-          <p class="ad-toolbar-eyebrow">Doctor Portal</p>
-          <h1 class="ad-toolbar-title">Assessment Details</h1>
+          <p class="ad-toolbar-eyebrow">{{ portal_label|default:"Doctor Portal" }}</p>
+          <h1 class="ad-toolbar-title">{% if nurse_view %}Doctor Findings{% else %}Assessment Details{% endif %}</h1>
         </div>
       </div>
       <div class="ad-toolbar-right">

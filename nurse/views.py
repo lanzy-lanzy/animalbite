@@ -168,12 +168,16 @@ def doctor_finding_list(request):
 def doctor_finding_detail(request, case_pk):
     """Nurse Portal: one finalized Doctor assessment, strictly read-only.
 
-    The page is case-scoped so records from another bite case of the same
-    patient are never mixed in. It renders exactly what is stored and never
-    writes patient, assessment, dose, prescription, or inventory data.
+    Uses the same Assessment Details design as Doctor Portal's My Assessments.
     """
+    from django.urls import reverse
+    from doctor.models import ClinicalAssessment
+
     assessment = get_object_or_404(
-        _finalized_doctor_assessments(),
+        _finalized_doctor_assessments().select_related(
+            'patient__barangay', 'patient__created_by', 'bite_case',
+            'assessed_by', 'vaccine_inventory',
+        ),
         bite_case_id=case_pk,
     )
     bite_case = assessment.bite_case
@@ -184,13 +188,38 @@ def doctor_finding_detail(request, case_pk):
         )
         return redirect('nurse:doctor_finding_list')
 
-    from vaccination.views import build_record_context
+    patient = assessment.patient
+    schedule = getattr(bite_case, 'vaccination_schedule', None)
+    doses = list(schedule.doses.all()) if schedule else []
 
-    context = build_record_context(bite_case)
-    context.update({
+    first_dose_date = doses[0].scheduled_date if doses else None
+    if first_dose_date is None and doses:
+        first_dose_date = doses[0].actual_date
+    if first_dose_date is None:
+        first_dose_date = assessment.first_dose_date
+
+    dose_count = len(doses)
+    if not dose_count and assessment.dose_protocol:
+        dose_count = len(ClinicalAssessment.protocol_days(assessment.dose_protocol))
+    if dose_count:
+        dose_schedule_label = f'{dose_count} Dose{"" if dose_count == 1 else "s"}'
+    elif assessment.dose_schedule_plan:
+        dose_schedule_label = assessment.dose_schedule_plan
+    else:
+        dose_schedule_label = ''
+
+    return render(request, 'doctor/assessment_detail.html', {
         'assessment': assessment,
-        'assessment_only': True,
+        'patient': patient,
+        'bite_case': bite_case,
+        'latest_vitals': patient.get_latest_vitals(),
+        'schedule': schedule,
+        'doses': doses,
+        'first_dose_date': first_dose_date,
+        'dose_schedule_label': dose_schedule_label,
+        'prescriptions': assessment.prescriptions.prefetch_related('medicine').order_by('id'),
         'nurse_view': True,
-        'cases': [bite_case],
+        'portal_label': 'Nurse Portal',
+        'back_url': reverse('nurse:doctor_finding_list'),
+        'back_label': 'Back to Doctor Findings',
     })
-    return render(request, 'vaccination/record_detail.html', context)
