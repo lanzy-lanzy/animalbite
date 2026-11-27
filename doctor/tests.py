@@ -170,7 +170,7 @@ class EncounterLayoutTests(EncounterTestCase):
 
     def test_section_c_shows_only_the_who_category_dropdown(self):
         self.assertContains(self.response, "Bite Category")
-        self.assertContains(self.response, "WHO bite category *")
+        self.assertContains(self.response, "What category *")
         self.assertContains(self.response, 'name="assess-category_confirmed"')
         for text in ("Licks intact skin", "Minor scratches, no bleeding", "Transdermal / bat",
                      "Saved to the case record's exposure classification.",
@@ -1081,9 +1081,9 @@ class AssessmentDetailReadOnlyTests(EncounterTestCase):
     def test_print_bite_category_hides_category_description(self):
         self.assessment.category_confirmed = "category_i"
         self.assessment.save()
-        section = self._print_clinical_block("C. WHO Bite Category")
+        section = self._print_clinical_block("C. What Category")
         self.assertIn(
-            '<span>WHO Bite Category</span><strong>Category I</strong>',
+            '<span>What Category</span><strong>Category I</strong>',
             section)
         self.assertNotIn("Category Description", section)
         self.assertNotIn("Touching/feeding animal", section)
@@ -1401,7 +1401,7 @@ class DoctorDashboardTests(TestCase):
         self.assertContains(response, "Waiting in queue")
         for label in ("My Assessments", "My Drafts", "My Finals Today", "Waiting in Queue"):
             self.assertContains(response, label)
-        self.assertContains(response, "WHO Category Breakdown")
+        self.assertContains(response, "What Category Breakdown")
 
     def test_stats_are_scoped_to_the_logged_in_doctor(self):
         response = self.client.get(reverse("doctor:dashboard"))

@@ -5,460 +5,359 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ patient.patient_number }} — {{ patient.full_name }} — Patient Sheet</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{% static 'css/print_official.css' %}">
+<link rel="stylesheet" href="{% static 'css/reports.css' %}">
 <style>
-  :root{
-    --emerald-950:#08291F; --emerald-800:#0D382C; --line:#5E7A6D; --pale:#EAF3EC; --muted:#496458; --muted2:#3C4A43; --accent:#8BB86A;
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: #ECEFED; color: #111827;
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  *{box-sizing:border-box}
-  html,body{margin:0; padding:0; background:#EEF1ED; color:#1F2A25; font-family:"Segoe UI",Arial,Helvetica,sans-serif; -webkit-print-color-adjust:exact; print-color-adjust:exact;}
-  body{font-size:12px; line-height:1.4;}
-  h1,h2,h3{font-family:"Segoe UI",Arial,Helvetica,sans-serif}
-  .page{max-width:210mm; margin:18px auto; background:white; border:1.5px solid var(--emerald-950); box-shadow:0 10px 30px rgba(8,41,31,.12);}
-  .toolbar{display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; padding:10px 14px; background:white; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:10;}
-  .toolbar-left{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-  .btn{appearance:none; border:1.5px solid var(--line); background:white; color:var(--emerald-950); font-weight:700; font-size:13px; padding:7px 13px; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:7px; text-decoration:none; transition:.18s}
-  .btn:hover{border-color:var(--emerald-950)}
-  .btn-primary{background:var(--emerald-950); color:white; border-color:var(--emerald-950)}
-  .btn-primary:hover{background:#0D382C}
-  .btn-ghost{background:var(--pale)}
-  .sheet{padding:7mm 8mm 6mm}
-  @media (max-width:640px){ .page{margin:0; border-left:0; border-right:0} .sheet{padding:14px} }
-  .pill{background:var(--pale); border:1px solid var(--line); border-radius:2px; padding:5px 9px; font-size:11px; font-weight:700; color:#111; display:flex; align-items:center; gap:6px; justify-content:center; text-align:center}
-  .pill b{color:var(--emerald-950)}
-
-  /* Official info grids */
-  .panel-note{margin:4px 0 0; padding:5px 9px; border:1px solid var(--line); border-top:0; font-size:8.6px; font-weight:600; color:#111;}
-  .panel-flag{display:inline-block; margin:6px 8px; padding:3px 8px; border:1px solid var(--line); background:var(--pale); font-size:9px; font-weight:800; color:var(--emerald-950);}
-  .muted-value{color:var(--muted) !important; font-weight:500 !important;}
-  .cell-note{font-size:8px; color:var(--muted); font-weight:600; margin-top:1px;}
-  .status-pill{display:inline-flex; padding:2px 7px; border:1px solid var(--line); background:var(--pale); font-size:9px; font-weight:800; color:#111;}
-  .status-completed{background:#E3F4EA; border-color:var(--accent); color:var(--emerald-800)}
-  .status-missed{background:#FBEDED; border-color:#C98B8B; color:#6B1F1F}
-
-  /* Clinical assessment A–F */
-  .cs-block{border:1px solid var(--line); background:#fff; margin:0 0 8px; overflow:hidden; break-inside:auto}
-  .cs-head{display:flex; align-items:center; gap:8px; padding:5px 10px; background:var(--emerald-800); border-bottom:0}
-  .cs-letter{width:15px; height:15px; flex:0 0 15px; display:inline-flex; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.7); border-radius:2px; background:transparent; color:#fff; font-size:9px; font-weight:800}
-  .cs-title{margin:0; font-size:9.4px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:#fff}
-  .cs-body{padding:0}
-  .cs-field{display:grid; grid-template-columns:30% minmax(0,1fr); align-items:stretch; padding:0; border:0; border-bottom:1px solid var(--line); border-radius:0; background:#fff; min-width:0}
-  .cs-field:last-child{border-bottom:0}
-  .cs-label{grid-row:1 / -1; display:block; background:var(--pale); margin:0; padding:5px 8px; border-right:1px solid var(--line); font-size:7.8px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; color:#111}
-  .cs-value{padding:5px 8px; font-size:9px; font-weight:600; line-height:1.35; color:#111; white-space:pre-line; overflow-wrap:anywhere}
-  .cs-value.muted{color:var(--muted); font-weight:500}
-  .cs-category{grid-column:2; margin:0; padding:5px 8px 2px; font-size:12px; font-weight:800; color:#111}
-  .cs-desc{grid-column:2; padding:0 8px 5px; font-size:8.6px; font-weight:600; color:var(--muted); line-height:1.35}
-  .cs-grid-2{display:grid; grid-template-columns:1fr 1fr; gap:0; border-top:1px solid var(--line)}
-  .cs-grid-3{display:grid; grid-template-columns:repeat(3,1fr); gap:0; border-top:1px solid var(--line)}
-  .cs-grid-2 .cs-field, .cs-grid-3 .cs-field{grid-template-columns:minmax(0,1fr); border-right:1px solid var(--line); border-bottom:1px solid var(--line)}
-  .cs-grid-2 .cs-field:last-child, .cs-grid-3 .cs-field:last-child{border-right:0}
-  .cs-grid-2 .cs-label, .cs-grid-3 .cs-label{grid-row:auto; border-right:0; border-bottom:1px solid var(--line)}
-  .cs-sub{margin-top:0; padding-top:0; border-top:1px solid var(--line)}
-  .cs-table{width:100%; border-collapse:collapse; font-size:9px; margin:0}
-  .cs-table th{background:var(--pale); color:#111; font-size:8.2px; font-weight:800; letter-spacing:.03em; text-transform:uppercase; padding:5px 8px; text-align:left; border:1px solid var(--line)}
-  .cs-table td{padding:5px 8px; border:1px solid var(--line); font-weight:600; color:#111; background:#fff}
-  .cs-table thead{display:table-header-group}
-  .cs-table tr{break-inside:avoid}
-  .cs-flags{display:flex; flex-wrap:wrap; gap:0; margin:0; border-bottom:1px solid var(--line)}
-  .cs-flags .status-pill{margin:5px 6px 5px 8px}
-  .cs-empty{margin:0; padding:12px; text-align:center; border:1px solid var(--line); background:#fff}
-  .cs-empty-title{margin:0; font-size:12px; font-weight:800; letter-spacing:.06em; color:var(--emerald-950)}
-  .cs-empty-text{margin:4px 0 0; font-size:10px; color:var(--muted)}
-  .section--clinical{break-inside:auto}
-  .cs-block--long, .cs-block--table{break-inside:auto}
-
-  /* Signatures + QR */
-  .sign-grid{display:grid; grid-template-columns:1fr 1fr 1fr; gap:0; margin:16px 0 0; text-align:center; break-inside:avoid}
-  .sign-grid > div{padding:0 8mm}
-  .sign-grid > div + div{border-left:1px solid #C9D3CC}
-  .sign-line{height:0; border-top:1.5px solid var(--emerald-950); background:none; margin:30px 0 5px}
-  .sign-label{font-size:9px; font-weight:800; letter-spacing:.05em; text-transform:uppercase; color:#111}
-  .sign-sub{font-size:8.2px; color:#111; font-weight:600; margin-top:1px}
-  .qr-panel{display:flex; align-items:center; gap:14px; margin:0; padding:8px 10px; border:1px solid var(--line); background:#fff}
-  .qr-panel img{width:24mm; height:24mm; object-fit:contain}
-  .qr-panel .panel-note{border:0; padding:0; margin:0}
-
-  @media (max-width:640px){
-    .sign-grid{grid-template-columns:1fr; gap:14px}
-    .sign-grid > div + div{border-left:0}
-    .sign-grid > div{padding:0 4mm}
-    .cs-grid-2, .cs-grid-3{grid-template-columns:1fr}
-    .abtc-summary, .abtc-summary-split{grid-template-columns:1fr}
+  .page {
+    max-width: 210mm;
+    margin: 18px auto;
+    background: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    box-shadow: 0 8px 26px -14px rgba(15, 23, 42, .22);
   }
-  @media print{
-    @page{size:A4 portrait; margin:8mm}
-    html,body{background:white !important}
-    .page{margin:0; max-width:none; border:1.5px solid var(--emerald-950); box-shadow:none}
-    .toolbar,.no-print{display:none !important}
-    .sheet{padding:5mm 6mm}
-    .abtc-section-title{break-after:avoid; page-break-after:avoid}
-    .abtc-panel,.abtc-summary,.abtc-summary__row,.cs-block,.cs-table tr,.sign-grid,.qr-panel,.abtc-footer{break-inside:avoid; page-break-inside:avoid}
-    .cs-block--long,.cs-block--table{break-inside:auto; page-break-inside:auto}
-    thead{display:table-header-group}
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between;
+    padding: 10px 16px; background: #F8FAFC; border-bottom: 1px solid #CBD5E1;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .toolbar-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn {
+    appearance: none; border: 1px solid #CBD5E1; background: #FFFFFF; color: #0F172A;
+    font-weight: 600; font-size: 12.5px; padding: 7px 13px; border-radius: 7px;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
+  }
+  .btn:hover { background: #F1F5F9; border-color: #94A3B8; }
+  .btn-primary { background: #0F3D2E; color: #FFFFFF; border-color: #0F3D2E; font-weight: 700; }
+  .btn-primary:hover { background: #0A2E22; color: #FFFFFF; }
+  .pill {
+    background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px;
+    padding: 5px 10px; font-size: 11.5px; font-weight: 600; color: #334155;
+  }
+  .sheet { padding: 12mm 14mm 10mm; }
+  @media (max-width: 640px) { .page { margin: 0; border: 0; } .sheet { padding: 16px; } }
+
+  .panel-note { margin: 6px 0 0; font-size: 8.3pt; color: #475569; line-height: 1.4; }
+  .muted-value { color: #64748B !important; font-weight: 400 !important; }
+  .cell-note { font-size: 7.8pt; color: #64748B; margin-top: 2px; }
+  .status-pill {
+    display: inline-block; padding: 2px 7px; border-radius: 3px;
+    border: 1px solid #CBD5E1; background: #F8FAFC; color: #0F172A;
+    font-size: 8pt; font-weight: 600;
+  }
+  .status-completed { background: #ECFDF5; border-color: #A7F3D0; color: #065F46; }
+  .status-missed { background: #FEF2F2; border-color: #FECACA; color: #991B1B; }
+
+  /* Minimalist Clinical Assessment blocks */
+  .cs-block {
+    border: 1px solid #CBD5E1; background: #FFFFFF;
+    margin: 0 0 10px; break-inside: avoid; page-break-inside: avoid;
+  }
+  .cs-block--long, .cs-block--table { break-inside: auto; page-break-inside: auto; }
+  .cs-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; background: #F1F5F9; border-bottom: 1px solid #CBD5E1;
+  }
+  .cs-letter {
+    font-size: 8.5pt; font-weight: 800; color: #0F3D2E;
+  }
+  .cs-title {
+    margin: 0; font-size: 8.5pt; font-weight: 700; letter-spacing: .04em;
+    text-transform: uppercase; color: #0F172A;
+  }
+  .cs-body { padding: 0; }
+  .cs-field {
+    display: grid; grid-template-columns: 30% minmax(0, 1fr);
+    border-bottom: 1px solid #E2E8F0; min-width: 0;
+  }
+  .cs-field:last-child { border-bottom: 0; }
+  .cs-label {
+    background: #F8FAFC; padding: 6px 9px; border-right: 1px solid #E2E8F0;
+    font-size: 8pt; font-weight: 600; color: #334155;
+  }
+  .cs-value {
+    padding: 6px 9px; font-size: 8.8pt; font-weight: 500; line-height: 1.4;
+    color: #0F172A; white-space: pre-line; overflow-wrap: break-word;
+  }
+  .cs-value.muted { color: #64748B; font-weight: 400; }
+  .cs-grid-2 { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #E2E8F0; }
+  .cs-grid-2:last-child { border-bottom: 0; }
+  .cs-grid-2 .cs-field { grid-template-columns: minmax(0, 1fr); border-bottom: 0; border-right: 1px solid #E2E8F0; }
+  .cs-grid-2 .cs-field:last-child { border-right: 0; }
+  .cs-grid-2 .cs-label { border-right: 0; border-bottom: 1px solid #E2E8F0; }
+  .cs-sub { border-top: 1px solid #E2E8F0; }
+  .cs-sub > .cs-label { display: block; border-right: 0; border-bottom: 1px solid #E2E8F0; }
+  .cs-table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+  .cs-table th {
+    background: #F8FAFC; color: #0F172A; font-size: 8pt; font-weight: 700;
+    text-transform: uppercase; padding: 5px 8px; text-align: left; border-bottom: 1px solid #CBD5E1;
+  }
+  .cs-table td { padding: 5px 8px; border-bottom: 1px solid #E2E8F0; color: #1E293B; }
+  .cs-table tbody tr:last-child td { border-bottom: 0; }
+  .cs-meta {
+    padding: 6px 9px; font-size: 8pt; color: #475569;
+    background: #F8FAFC; border-top: 1px solid #E2E8F0;
+  }
+
+  /* QR + Signatures */
+  .qr-panel {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 12px; border: 1px solid #CBD5E1; background: #FFFFFF;
+  }
+  .qr-panel img { width: 22mm; height: 22mm; object-fit: contain; }
+  .sign-grid {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px;
+    margin: 22px 0 6px; text-align: center; break-inside: avoid; page-break-inside: avoid;
+  }
+  .sign-line { border-top: 1px solid #1E293B; margin: 28px 0 5px; }
+  .sign-label { font-size: 8.5pt; font-weight: 700; text-transform: uppercase; color: #0F172A; }
+  .sign-sub { font-size: 7.8pt; color: #475569; margin-top: 2px; }
+  .sign-date { margin-top: 6px; font-size: 8pt; color: #64748B; }
+
+  @media (max-width: 640px) {
+    .sign-grid, .cs-grid-2 { grid-template-columns: 1fr; }
+    .cs-field { grid-template-columns: 1fr; }
+    .cs-label { border-right: 0; border-bottom: 1px solid #E2E8F0; }
+  }
+  @media print {
+    @page { size: A4 portrait; margin: 10mm; }
+    html, body { background: #FFFFFF !important; }
+    .page { margin: 0; max-width: none; border: 0; box-shadow: none; }
+    .toolbar, .no-print { display: none !important; }
+    .sheet { padding: 0; }
+    .abtc-section-title { break-after: avoid; page-break-after: avoid; }
+    .abtc-summary, .abtc-summary__row, .cs-block, .sign-grid, .qr-panel, .abtc-footer {
+      break-inside: avoid; page-break-inside: avoid;
+    }
+    .cs-block--long, .cs-block--table { break-inside: auto; page-break-inside: auto; }
+    thead { display: table-header-group; }
   }
 </style>
 </head>
-<body>
+<body class="abtc-print-body abtc-report">
 
 <div class="page" id="printRoot">
   {% if not request.GET.embed %}
   <div class="toolbar no-print">
     <div class="toolbar-left">
-      <a href="{% url 'patients:patient_list' %}" class="btn btn-ghost" title="Back to list">← Back</a>
-      <span class="pill" style="background:white; border-color:var(--emerald-950); color:var(--emerald-950);">Preview before print</span>
+      <a href="{% url 'patients:patient_list' %}" class="btn" title="Back to list">&larr; Back</a>
       <span class="pill">{{ patient.patient_number }} · {{ patient.full_name }}</span>
     </div>
     <div class="toolbar-left">
       {% if request.user.is_authenticated and request.user.role != 'patient' %}
-      <a href="{% url 'patients:patient_edit' patient.pk %}" class="btn" title="Edit this patient — same layout">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        Edit
-      </a>
+      <a href="{% url 'patients:patient_edit' patient.pk %}" class="btn">Edit</a>
       {% endif %}
-      <a href="{% url 'patients:patient_print_pdf' patient.pk %}" class="btn" target="_blank" rel="noopener">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        Export PDF
-      </a>
-      <button onclick="window.print()" class="btn btn-primary">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-        Print
-      </button>
+      <a href="{% url 'patients:patient_print_pdf' patient.pk %}" class="btn" target="_blank" rel="noopener">Export PDF</a>
+      <button type="button" onclick="window.print()" class="btn btn-primary">Print</button>
     </div>
   </div>
   {% endif %}
 
   <div class="sheet">
-    <!-- A. Official letterhead -->
     {% include 'print/_official_head.html' with document_title="Patient Information Sheet" show_printed_at=1 %}
     <p class="abtc-note">For clinical use — present this sheet at every visit. Verify patient identity before treatment.</p>
 
-    <!-- B. Patient Information -->
+    <!-- 1. Patient Information (only recorded/visible fields) -->
     <section class="abtc-section">
       <h2 class="abtc-section-title">Patient Information</h2>
-      <div class="abtc-panel abtc-summary">
+      <div class="abtc-summary">
         <div class="abtc-summary__row"><span>Patient Full Name</span><strong>{{ patient.full_name }}</strong></div>
         <div class="abtc-summary__row"><span>Patient ID</span><strong>{{ patient.patient_number }}</strong></div>
-        <div class="abtc-summary__row"><span>Birthdate</span><strong>{{ patient.birthdate|date:"F j, Y"|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row"><span>Age</span><strong>{{ patient.age|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row"><span>Sex</span><strong>{{ patient.get_sex_display|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row"><span>Civil Status</span><strong>{{ patient.get_civil_status_display|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row"><span>Contact Number</span><strong>{{ patient.contact_display|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row"><span>Barangay</span><strong>{{ patient.barangay|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row abtc-summary__row--full"><span>Complete Address</span><strong>{{ patient.address|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row"><span>Parent / Guardian</span><strong>{{ patient.parent_guardian|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row"><span>Emergency Contact</span><strong>{% if patient.emergency_contact_name %}{{ patient.emergency_contact_name }}{% if patient.emergency_contact_number %} · {{ patient.emergency_contact_display }}{% endif %}{% else %}Not Recorded{% endif %}</strong></div>
+        {% if patient.birthdate %}<div class="abtc-summary__row"><span>Birthdate</span><strong>{{ patient.birthdate|date:"F j, Y" }}</strong></div>{% endif %}
+        {% if patient.age %}<div class="abtc-summary__row"><span>Age</span><strong>{{ patient.age }}</strong></div>{% endif %}
+        {% if patient.sex %}<div class="abtc-summary__row"><span>Sex</span><strong>{{ patient.get_sex_display }}</strong></div>{% endif %}
+        {% if patient.civil_status %}<div class="abtc-summary__row"><span>Civil Status</span><strong>{{ patient.get_civil_status_display }}</strong></div>{% endif %}
+        {% if patient.contact_display %}<div class="abtc-summary__row"><span>Contact Number</span><strong>{{ patient.contact_display }}</strong></div>{% endif %}
+        {% if patient.barangay %}<div class="abtc-summary__row"><span>Barangay</span><strong>{{ patient.barangay }}</strong></div>{% endif %}
+        {% if patient.address %}<div class="abtc-summary__row abtc-summary__row--full"><span>Complete Address</span><strong>{{ patient.address }}</strong></div>{% endif %}
+        {% if patient.parent_guardian %}<div class="abtc-summary__row"><span>Parent / Guardian</span><strong>{{ patient.parent_guardian }}</strong></div>{% endif %}
+        {% if patient.emergency_contact_name %}<div class="abtc-summary__row"><span>Emergency Contact</span><strong>{{ patient.emergency_contact_name }}{% if patient.emergency_contact_number %} · {{ patient.emergency_contact_display }}{% endif %}</strong></div>{% endif %}
       </div>
     </section>
 
-    <!-- C. Medical Information -->
+    <!-- 2. Medical Information -->
+    {% if patient.medical_history or patient.allergy_info or patient.previous_rabies_vax or patient.remarks %}
     <section class="abtc-section">
       <h2 class="abtc-section-title">Medical Information</h2>
-      <div class="abtc-panel abtc-summary">
-        <div class="abtc-summary__row abtc-summary__row--full"><span>Medical History</span><strong class="{% if not patient.medical_history %}muted-value{% endif %}">{{ patient.medical_history|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row abtc-summary__row--full"><span>Allergies</span><strong class="{% if not patient.allergy_info %}muted-value{% endif %}">{{ patient.allergy_info|default:"Not Recorded" }}</strong></div>
-        <div class="abtc-summary__row abtc-summary__row--full"><span>Previous Rabies Vaccination</span><strong class="{% if not patient.previous_rabies_vax %}muted-value{% endif %}">{{ patient.previous_rabies_vax|default:"Not Recorded" }}</strong></div>
-        {% if patient.remarks %}
-        <div class="abtc-summary__row abtc-summary__row--full"><span>Remarks</span><strong>{{ patient.remarks }}</strong></div>
-        {% endif %}
+      <div class="abtc-summary">
+        {% if patient.medical_history %}<div class="abtc-summary__row abtc-summary__row--full"><span>Medical History</span><strong>{{ patient.medical_history }}</strong></div>{% endif %}
+        {% if patient.allergy_info %}<div class="abtc-summary__row abtc-summary__row--full"><span>Allergies</span><strong>{{ patient.allergy_info }}</strong></div>{% endif %}
+        {% if patient.previous_rabies_vax %}<div class="abtc-summary__row abtc-summary__row--full"><span>Previous Rabies Vaccination</span><strong>{{ patient.previous_rabies_vax }}</strong></div>{% endif %}
+        {% if patient.remarks %}<div class="abtc-summary__row abtc-summary__row--full"><span>Remarks</span><strong>{{ patient.remarks }}</strong></div>{% endif %}
       </div>
     </section>
+    {% endif %}
 
-    <!-- D. Animal Bite Information -->
+    <!-- 3. Animal Bite Information -->
+    {% if latest_case %}
     <section class="abtc-section">
       <h2 class="abtc-section-title">Animal Bite Information</h2>
-      {% if latest_case %}
-      <div class="abtc-panel">
-        <div class="abtc-summary">
-          <div class="abtc-summary__row"><span>Case Number</span><strong>{{ latest_case.case_number }}</strong></div>
-          <div class="abtc-summary__row"><span>Date of Bite</span><strong>{{ latest_case.date_time_bite|date:"F j, Y · g:i A" }}</strong></div>
-          <div class="abtc-summary__row"><span>Animal Type</span><strong>{{ latest_case.get_animal_type_display }}{% if latest_case.animal_other %} · {{ latest_case.animal_other }}{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>Exposure Type</span><strong>{{ latest_case.get_exposure_type_display }}</strong></div>
-          <div class="abtc-summary__row"><span>Bite Location / Body Part</span><strong>{{ latest_case.body_part_affected|default:"Not Recorded" }}</strong></div>
-          <div class="abtc-summary__row"><span>WHO Bite Category</span><strong>{% if latest_case.exposure %}{{ latest_case.exposure.get_category_display }}{% elif latest_assessment and latest_assessment.bite_case_id == latest_case.pk and latest_assessment.category_confirmed %}{{ latest_assessment.category_label }}{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>Case Status</span><strong>{{ latest_case.get_case_status_display }}</strong></div>
-          <div class="abtc-summary__row"><span>Place of Incident</span><strong>{{ latest_case.place_of_incident|default:"Not Recorded" }}</strong></div>
-        </div>
-        <p class="panel-note">This sheet refers to bite case <strong>{{ latest_case.case_number }}</strong>. Details from other bite incidents are listed separately under Recent Bite Cases.</p>
-      </div>
-      {% else %}
-      <div class="abtc-panel">
-        <p class="panel-note" style="margin:0">No bite case has been recorded for this patient. This sheet serves as the baseline intake form.</p>
-      </div>
-      {% endif %}
-    </section>
-
-    <!-- E. Vaccination Information -->
-    <section class="abtc-section">
-      <h2 class="abtc-section-title">Vaccination Information</h2>
-      <div class="abtc-panel">
-        <div class="abtc-summary">
-          <div class="abtc-summary__row abtc-summary__row--full">
-            <span>Recorded Vaccine / Biological Product</span>
-            <strong class="{% if not latest_assessment.vaccine_inventory and not latest_assessment.vaccine_brand_plan %}muted-value{% endif %}">
-              {% if latest_assessment.vaccine_inventory %}
-                {% if latest_assessment.vaccine_inventory.vaccine_name %}{{ latest_assessment.vaccine_inventory.vaccine_name }}{% if latest_assessment.vaccine_inventory.brand %} · {{ latest_assessment.vaccine_inventory.brand }}{% endif %}{% else %}{{ latest_assessment.vaccine_inventory.brand }}{% endif %}
-              {% elif latest_assessment.vaccine_brand_plan %}
-                {{ latest_assessment.vaccine_brand_plan }}
-              {% else %}
-                Not Recorded
-              {% endif %}
-            </strong>
-          </div>
-          <div class="abtc-summary__row">
-            <span>Rabies Immunoglobulin (RIG)</span>
-            <strong>{% if display_schedule %}{% if display_schedule.rig_given %}Given{% else %}Not Given{% endif %}{% else %}Not Recorded{% endif %}</strong>
-          </div>
-          <div class="abtc-summary__row">
-            <span>Total Required Doses</span>
-            <strong>{% if display_schedule %}{{ display_schedule.doses.count }} Dose{{ display_schedule.doses.count|pluralize }}{% else %}Not Recorded{% endif %}</strong>
-          </div>
-          <div class="abtc-summary__row">
-            <span>First Dose Date</span>
-            <strong>{% if latest_assessment.first_dose_date %}{{ latest_assessment.first_dose_date|date:"F j, Y" }}{% elif display_schedule %}{% with first_dose=display_schedule.doses.all|first %}{% if first_dose.clinical_date %}{{ first_dose.clinical_date|date:"F j, Y" }}{% else %}Not Recorded{% endif %}{% endwith %}{% else %}Not Recorded{% endif %}</strong>
-          </div>
-          <div class="abtc-summary__row">
-            <span>Current Treatment Status</span>
-            <strong>{% if latest_case %}{{ latest_case.get_case_status_display }}{% elif latest_assessment %}{{ latest_assessment.get_status_display }}{% else %}Not Recorded{% endif %}</strong>
-          </div>
-        </div>
-        {% if display_schedule.tetanus_toxoid_given %}
-        <span class="panel-flag">Tetanus Toxoid Given</span>
-        {% endif %}
+      <div class="abtc-summary">
+        <div class="abtc-summary__row"><span>Case Number</span><strong>{{ latest_case.case_number }}</strong></div>
+        <div class="abtc-summary__row"><span>Date of Bite</span><strong>{{ latest_case.date_time_bite|date:"F j, Y · g:i A" }}</strong></div>
+        <div class="abtc-summary__row"><span>Animal Type</span><strong>{{ latest_case.get_animal_type_display }}{% if latest_case.animal_other %} · {{ latest_case.animal_other }}{% endif %}</strong></div>
+        <div class="abtc-summary__row"><span>Exposure Type</span><strong>{{ latest_case.get_exposure_type_display }}</strong></div>
+        {% if latest_case.body_part_affected %}<div class="abtc-summary__row"><span>Bite Location / Body Part</span><strong>{{ latest_case.body_part_affected }}</strong></div>{% endif %}
+        <div class="abtc-summary__row"><span>What Category</span><strong>{% if latest_case.exposure %}{{ latest_case.exposure.get_category_display }}{% elif latest_assessment and latest_assessment.bite_case_id == latest_case.pk and latest_assessment.category_confirmed %}{{ latest_assessment.category_label }}{% else %}Not Recorded{% endif %}</strong></div>
+        <div class="abtc-summary__row"><span>Case Status</span><strong>{{ latest_case.get_case_status_display }}</strong></div>
+        {% if latest_case.place_of_incident %}<div class="abtc-summary__row"><span>Place of Incident</span><strong>{{ latest_case.place_of_incident }}</strong></div>{% endif %}
       </div>
     </section>
+    {% endif %}
 
-    <!-- F. Vaccination Schedule -->
+    <!-- 4. Vaccination Schedule -->
+    {% if display_schedule and display_schedule.doses.count %}
     <section class="abtc-section">
       <h2 class="abtc-section-title">Vaccination Schedule</h2>
-      {% if display_schedule %}
-        {% if display_schedule.doses.count %}
-        <table class="abtc-table">
-          <thead>
-            <tr>
-              <th style="width:32%">Dose</th>
-              <th style="width:38%">Scheduled Date</th>
-              <th style="width:30%">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for dose in display_schedule.doses.all %}
-            <tr>
-              <td><strong>{{ dose.number_label }}</strong><div class="cell-note">{{ dose.dose_label }}{% if dose.protocol_day is not None %} · Day {{ dose.protocol_day }}{% endif %}</div></td>
-              <td>{% if dose.scheduled_date %}{{ dose.scheduled_date|date:"F j, Y" }}{% else %}<span class="muted-value">Pending Scheduling</span>{% endif %}</td>
-              <td>
-                <span class="status-pill {% if dose.dose_status == 'completed' %}status-completed{% elif dose.dose_status == 'missed' or dose.dose_status == 'cancelled' %}status-missed{% endif %}">{{ dose.clinical_status }}</span>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <div class="abtc-panel"><p class="panel-note" style="margin:0">No doses have been created for this schedule — <strong>Pending Scheduling</strong>.</p></div>
-        {% endif %}
-        {% if display_schedule.doctor_notes %}
-        <p class="panel-note"><strong>Notes:</strong> {{ display_schedule.doctor_notes }}</p>
-        {% endif %}
-      {% else %}
-      <div class="abtc-panel">
-        <div class="abtc-summary">
-          <div class="abtc-summary__row"><span>Schedule Status</span><strong>Pending Scheduling</strong></div>
-          <div class="abtc-summary__row"><span>Instruction</span><strong>No vaccination schedule has been assigned for this patient.</strong></div>
-        </div>
-      </div>
+      <table class="abtc-table">
+        <thead>
+          <tr>
+            <th style="width:32%">Dose</th>
+            <th style="width:38%">Scheduled Date</th>
+            <th style="width:30%">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for dose in display_schedule.doses.all %}
+          <tr>
+            <td><strong>{{ dose.number_label }}</strong><div class="cell-note">{{ dose.dose_label }}{% if dose.protocol_day is not None %} · Day {{ dose.protocol_day }}{% endif %}</div></td>
+            <td>{% if dose.scheduled_date %}{{ dose.scheduled_date|date:"F j, Y" }}{% else %}<span class="muted-value">Pending Scheduling</span>{% endif %}</td>
+            <td><span class="status-pill {% if dose.dose_status == 'completed' %}status-completed{% elif dose.dose_status == 'missed' or dose.dose_status == 'cancelled' %}status-missed{% endif %}">{{ dose.clinical_status }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if display_schedule.doctor_notes %}
+      <p class="panel-note"><strong>Notes:</strong> {{ display_schedule.doctor_notes }}</p>
       {% endif %}
-      <p class="panel-note">A dose is marked Completed only when its administration has been recorded. Scheduled dates do not imply the dose was given.</p>
     </section>
+    {% endif %}
 
-    <!-- Vital Signs -->
+    <!-- 5. Vital Signs (only when recorded, showing only populated values) -->
+    {% if latest_vitals %}
     <section class="abtc-section">
       <h2 class="abtc-section-title">Vital Signs</h2>
-      <div class="abtc-panel">
-        <div class="abtc-summary">
-          <div class="abtc-summary__row"><span>Date and Time Taken</span><strong>{{ latest_vitals.taken_at|date:"F j, Y · g:i A"|default:"Not Recorded" }}</strong></div>
-          <div class="abtc-summary__row"><span>Recorded By</span><strong>{{ latest_vitals.taken_by|default:"Not Recorded" }}</strong></div>
-          <div class="abtc-summary__row"><span>Blood Pressure</span><strong class="{% if not latest_vitals %}muted-value{% endif %}">{{ latest_vitals.bp_display|default:"Not Recorded" }}</strong></div>
-          <div class="abtc-summary__row"><span>Temperature</span><strong class="{% if not latest_vitals.temperature %}muted-value{% endif %}">{% if latest_vitals.temperature %}{{ latest_vitals.temperature }} °C{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>Pulse Rate</span><strong class="{% if not latest_vitals.pulse_rate %}muted-value{% endif %}">{% if latest_vitals.pulse_rate %}{{ latest_vitals.pulse_rate }} bpm{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>Respiratory Rate</span><strong class="{% if not latest_vitals.respiratory_rate %}muted-value{% endif %}">{% if latest_vitals.respiratory_rate %}{{ latest_vitals.respiratory_rate }} /min{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>SpO₂</span><strong class="{% if not latest_vitals.spo2 %}muted-value{% endif %}">{% if latest_vitals.spo2 %}{{ latest_vitals.spo2 }} %{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>Weight</span><strong class="{% if not latest_vitals.weight %}muted-value{% endif %}">{% if latest_vitals.weight %}{{ latest_vitals.weight }} kg{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>Height</span><strong class="{% if not latest_vitals.height %}muted-value{% endif %}">{% if latest_vitals.height %}{{ latest_vitals.height }} cm{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>BMI</span><strong class="{% if not latest_vitals.bmi %}muted-value{% endif %}">{{ latest_vitals.bmi|default:"Not Recorded" }}</strong></div>
-          <div class="abtc-summary__row"><span>Pain Scale</span><strong class="{% if latest_vitals.pain_score is None %}muted-value{% endif %}">{% if latest_vitals.pain_score is not None %}{{ latest_vitals.pain_score }} /10{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>Blood Glucose</span><strong class="{% if not latest_vitals.blood_glucose %}muted-value{% endif %}">{% if latest_vitals.blood_glucose %}{{ latest_vitals.blood_glucose }} mg/dL{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>Glucose Type</span><strong>{% if latest_vitals.glucose_type %}{{ latest_vitals.get_glucose_type_display }}{% else %}Not Recorded{% endif %}</strong></div>
-          <div class="abtc-summary__row"><span>General Appearance</span><strong>{% if latest_vitals.general_appearance %}{{ latest_vitals.get_general_appearance_display }}{% else %}Not Recorded{% endif %}</strong></div>
-        </div>
-        {% if latest_vitals.notes %}
-        <p class="panel-note"><strong>Notes / Allergy Re-check:</strong> {{ latest_vitals.notes }}</p>
-        {% else %}
-        <p class="panel-note">No additional notes recorded. Staff may record on-site observations on the printed copy.</p>
-        {% endif %}
-        {% if request.user.is_authenticated and request.user.role != 'patient' and request.user.role != 'nurse' %}
-        <div class="no-print" style="margin-top:8px">
-          {% if latest_vitals %}
-          <a href="{% url 'patients:patient_vital_edit' latest_vitals.pk %}?next={{ request.path|urlencode }}" class="btn btn-ghost" style="font-size:11px; padding:5px 10px">✎ Edit Vitals</a>
-          {% else %}
-          <a href="{% url 'patients:patient_vital_create' patient.pk %}?next={{ request.path|urlencode }}" class="btn btn-ghost" style="font-size:11px; padding:5px 10px">+ Add Vitals</a>
-          {% endif %}
-        </div>
-        {% endif %}
+      <div class="abtc-summary">
+        <div class="abtc-summary__row"><span>Date &amp; Time Taken</span><strong>{{ latest_vitals.taken_at|date:"F j, Y · g:i A" }}</strong></div>
+        {% if latest_vitals.taken_by %}<div class="abtc-summary__row"><span>Recorded By</span><strong>{{ latest_vitals.taken_by }}</strong></div>{% endif %}
+        {% if latest_vitals.bp_display %}<div class="abtc-summary__row"><span>Blood Pressure</span><strong>{{ latest_vitals.bp_display }}</strong></div>{% endif %}
+        {% if latest_vitals.temperature %}<div class="abtc-summary__row"><span>Temperature</span><strong>{{ latest_vitals.temperature }} °C</strong></div>{% endif %}
+        {% if latest_vitals.pulse_rate %}<div class="abtc-summary__row"><span>Pulse Rate</span><strong>{{ latest_vitals.pulse_rate }} bpm</strong></div>{% endif %}
+        {% if latest_vitals.respiratory_rate %}<div class="abtc-summary__row"><span>Respiratory Rate</span><strong>{{ latest_vitals.respiratory_rate }} /min</strong></div>{% endif %}
+        {% if latest_vitals.spo2 %}<div class="abtc-summary__row"><span>SpO₂</span><strong>{{ latest_vitals.spo2 }} %</strong></div>{% endif %}
+        {% if latest_vitals.weight %}<div class="abtc-summary__row"><span>Weight</span><strong>{{ latest_vitals.weight }} kg</strong></div>{% endif %}
+        {% if latest_vitals.height %}<div class="abtc-summary__row"><span>Height</span><strong>{{ latest_vitals.height }} cm</strong></div>{% endif %}
+        {% if latest_vitals.bmi %}<div class="abtc-summary__row"><span>BMI</span><strong>{{ latest_vitals.bmi }}</strong></div>{% endif %}
+        {% if latest_vitals.pain_score is not None %}<div class="abtc-summary__row"><span>Pain Scale</span><strong>{{ latest_vitals.pain_score }} /10</strong></div>{% endif %}
+        {% if latest_vitals.blood_glucose %}<div class="abtc-summary__row"><span>Blood Glucose</span><strong>{{ latest_vitals.blood_glucose }} mg/dL{% if latest_vitals.glucose_type %} ({{ latest_vitals.get_glucose_type_display }}){% endif %}</strong></div>{% endif %}
+        {% if latest_vitals.general_appearance %}<div class="abtc-summary__row"><span>General Appearance</span><strong>{{ latest_vitals.get_general_appearance_display }}</strong></div>{% endif %}
       </div>
+      {% if latest_vitals.notes %}<p class="panel-note"><strong>Notes:</strong> {{ latest_vitals.notes }}</p>{% endif %}
     </section>
+    {% endif %}
 
-    <!-- Clinical Assessment — A–F sequence -->
-    <section class="abtc-section section--clinical">
+    <!-- 6. Clinical Assessment (only visible fields — excludes all hidden fields) -->
+    {% if latest_assessment %}
+    <section class="abtc-section">
       <h2 class="abtc-section-title">Clinical Assessment</h2>
-      {% if latest_assessment %}
-      <p class="panel-note" style="margin-bottom:8px">Attending physician: <strong>Dr. {{ latest_assessment.assessed_by|default:"—" }}</strong> · {{ latest_assessment.encounter_date|date:"F j, Y · g:i A" }} · {{ latest_assessment.get_category_confirmed_display|default:"Unclassified" }} · {{ latest_assessment.get_status_display }}</p>
+      <p class="abtc-note">Attending physician: <strong>Dr. {{ latest_assessment.assessed_by|default:"—" }}</strong> · {{ latest_assessment.encounter_date|date:"F j, Y · g:i A" }} · {{ latest_assessment.get_status_display }}</p>
+
+      {% if latest_assessment.chief_complaint %}
       <div class="cs-block cs-block--long">
-        <div class="cs-head"><span class="cs-letter">A</span><h3 class="cs-title">Chief Complaint</h3></div>
+        <div class="cs-head"><span class="cs-letter">A.</span><h3 class="cs-title">Chief Complaint</h3></div>
         <div class="cs-body">
           <div class="cs-field">
             <span class="cs-label">Chief Complaint</span>
-            <div class="cs-value {% if not latest_assessment.chief_complaint %}muted{% endif %}">{{ latest_assessment.chief_complaint|default:"Not recorded" }}</div>
-          </div>
-          <div class="cs-sub">
-            <span class="cs-label">History of Present Illness</span>
-            <div class="cs-value {% if not latest_assessment.history_present_illness %}muted{% endif %}">{{ latest_assessment.history_present_illness|default:"Not recorded" }}</div>
+            <div class="cs-value">{{ latest_assessment.chief_complaint }}</div>
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if latest_assessment.exposure_narrative %}
       <div class="cs-block cs-block--long">
-        <div class="cs-head"><span class="cs-letter">B</span><h3 class="cs-title">Exposure Narrative (Verified)</h3></div>
+        <div class="cs-head"><span class="cs-letter">B.</span><h3 class="cs-title">Exposure Narrative (Verified)</h3></div>
         <div class="cs-body">
           <div class="cs-field">
-            <span class="cs-label">Narrative as Verified by the Doctor</span>
-            <div class="cs-value {% if not latest_assessment.exposure_narrative %}muted{% endif %}">{{ latest_assessment.exposure_narrative|default:"Not recorded" }}</div>
-          </div>
-          <div class="cs-sub">
-            <span class="cs-label">Verified Incident Details</span>
-            <div class="cs-grid-3" style="margin-top:6px">
-              <div class="cs-field"><span class="cs-label">Verified Animal Type</span><div class="cs-value {% if not latest_assessment.animal_type_verified %}muted{% endif %}">{{ latest_assessment.animal_type_verified|default:"Not recorded" }}</div></div>
-              <div class="cs-field"><span class="cs-label">Ownership (Verified)</span><div class="cs-value {% if not latest_assessment.animal_owned_verified %}muted{% endif %}">{{ latest_assessment.get_animal_owned_verified_display|default:"Not recorded" }}</div></div>
-              <div class="cs-field"><span class="cs-label">Animal Vaccination (Verified)</span><div class="cs-value {% if not latest_assessment.animal_vax_verified %}muted{% endif %}">{{ latest_assessment.get_animal_vax_verified_display|default:"Not recorded" }}</div></div>
-              <div class="cs-field"><span class="cs-label">Wound Washed Immediately</span><div class="cs-value {% if latest_assessment.wound_washed_verified is None %}muted{% endif %}">{% if latest_assessment.wound_washed_verified %}Yes{% elif latest_assessment.wound_washed_verified is False %}No{% else %}Not recorded{% endif %}</div></div>
-              <div class="cs-field"><span class="cs-label">Body Part</span><div class="cs-value {% if not latest_assessment.body_part_verified %}muted{% endif %}">{{ latest_assessment.body_part_verified|default:"Not recorded" }}</div></div>
-              <div class="cs-field"><span class="cs-label">Number of Wounds</span><div class="cs-value {% if latest_assessment.number_of_wounds_verified is None %}muted{% endif %}">{{ latest_assessment.number_of_wounds_verified|default_if_none:"Not recorded" }}</div></div>
-            </div>
-            <div class="cs-field" style="margin-top:8px"><span class="cs-label">Date &amp; Time of Bite</span><div class="cs-value {% if not latest_assessment.date_time_bite_verified %}muted{% endif %}">{{ latest_assessment.date_time_bite_verified|date:"F j, Y · g:i A"|default:"Not recorded" }}</div></div>
-          </div>
-          <div class="cs-sub">
-            <span class="cs-label">Examination Findings</span>
-            <div class="cs-grid-3" style="margin-top:6px">
-              <div class="cs-field"><span class="cs-label">HEENT</span><div class="cs-value {% if not latest_assessment.exam_heent %}muted{% endif %}">{{ latest_assessment.exam_heent|default:"Not recorded" }}</div></div>
-              <div class="cs-field"><span class="cs-label">Chest / Lungs</span><div class="cs-value {% if not latest_assessment.exam_chest_lungs %}muted{% endif %}">{{ latest_assessment.exam_chest_lungs|default:"Not recorded" }}</div></div>
-              <div class="cs-field"><span class="cs-label">Cardiac</span><div class="cs-value {% if not latest_assessment.exam_cardiac %}muted{% endif %}">{{ latest_assessment.exam_cardiac|default:"Not recorded" }}</div></div>
-              <div class="cs-field"><span class="cs-label">Abdomen</span><div class="cs-value {% if not latest_assessment.exam_abdomen %}muted{% endif %}">{{ latest_assessment.exam_abdomen|default:"Not recorded" }}</div></div>
-              <div class="cs-field"><span class="cs-label">Skin / Wound Description</span><div class="cs-value {% if not latest_assessment.skin_wound_description %}muted{% endif %}">{{ latest_assessment.skin_wound_description|default:"Not recorded" }}</div></div>
-              <div class="cs-field"><span class="cs-label">Systemic Review</span><div class="cs-value {% if not latest_assessment.systemic_review %}muted{% endif %}">{{ latest_assessment.systemic_review|default:"Not recorded" }}</div></div>
-            </div>
+            <span class="cs-label">Narrative</span>
+            <div class="cs-value">{{ latest_assessment.exposure_narrative }}</div>
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if latest_assessment.category_confirmed %}
       <div class="cs-block">
-        <div class="cs-head"><span class="cs-letter">C</span><h3 class="cs-title">Bite Category</h3></div>
+        <div class="cs-head"><span class="cs-letter">C.</span><h3 class="cs-title">What Category</h3></div>
         <div class="cs-body">
           <div class="cs-field">
-            <span class="cs-label">WHO Bite Category</span>
-            <div class="cs-category {% if not latest_assessment.category_confirmed %}muted{% endif %}">{{ latest_assessment.category_label|default:"Not recorded" }}</div>
-            {% if latest_assessment.category_confirmed %}
-            <div class="cs-desc">{{ latest_assessment.category_description|default:"No category description recorded." }}</div>
-            {% else %}
-            <div class="cs-desc muted">No WHO category has been confirmed for this assessment.</div>
-            {% endif %}
+            <span class="cs-label">Category</span>
+            <div class="cs-value"><strong>{{ latest_assessment.category_label }}</strong>{% if latest_assessment.category_description %}<div class="cell-note">{{ latest_assessment.category_description }}</div>{% endif %}</div>
           </div>
         </div>
       </div>
+      {% endif %}
 
-      <div class="cs-block cs-block--table">
-        <div class="cs-head"><span class="cs-letter">D</span><h3 class="cs-title">Dose Schedule &amp; Vaccine</h3></div>
+      {% if latest_assessment.dose_schedule_plan or latest_assessment.dose_protocol or latest_assessment.first_dose_date %}
+      <div class="cs-block">
+        <div class="cs-head"><span class="cs-letter">D.</span><h3 class="cs-title">Dose Schedule</h3></div>
         <div class="cs-body">
           <div class="cs-grid-2">
             <div class="cs-field">
               <span class="cs-label">Dose Schedule</span>
-              <div class="cs-value {% if not latest_assessment.dose_schedule_plan and not latest_assessment.dose_protocol %}muted{% endif %}">
-                {% if latest_assessment.dose_protocol %}{{ latest_assessment.get_dose_protocol_display }}{% endif %}
-                {% if latest_assessment.dose_schedule_plan %}{% if latest_assessment.dose_protocol %}<br>{% endif %}{{ latest_assessment.dose_schedule_plan }}{% endif %}
-                {% if not latest_assessment.dose_schedule_plan and not latest_assessment.dose_protocol %}Not recorded{% endif %}
-              </div>
+              <div class="cs-value">{{ latest_assessment.dose_schedule_plan|default:latest_assessment.get_dose_protocol_display|default:"—" }}</div>
             </div>
             <div class="cs-field">
               <span class="cs-label">Date (1st Dose)</span>
-              <div class="cs-value {% if not latest_assessment.first_dose_date %}muted{% endif %}">{{ latest_assessment.first_dose_date|date:"F j, Y"|default:"Not recorded" }}</div>
+              <div class="cs-value">{{ latest_assessment.first_dose_date|date:"F j, Y"|default:"—" }}</div>
             </div>
-          </div>
-          <div class="cs-sub">
-            <span class="cs-label">Dose Schedule Records</span>
-            {% if display_schedule %}
-            <div class="cell-note" style="margin:2px 0 6px">{{ display_schedule.doses.count }} dose{{ display_schedule.doses.count|pluralize }} on this schedule.</div>
-            <table class="cs-table">
-              <thead><tr><th style="width:30%">Dose</th><th style="width:35%">Date</th><th>Status</th></tr></thead>
-              <tbody>
-                {% for dose in display_schedule.doses.all %}
-                <tr>
-                  <td><strong>{{ dose.dose_label }}</strong>{% if dose.protocol_day is not None %} · Day {{ dose.protocol_day }}{% endif %}</td>
-                  <td>{% if dose.clinical_date %}{{ dose.clinical_date|date:"F j, Y" }}{% else %}<span style="color:var(--muted2)">Not yet set</span>{% endif %}</td>
-                  <td>{{ dose.clinical_status }}</td>
-                </tr>
-                {% empty %}
-                <tr><td colspan="3" style="text-align:center; color:var(--muted2)">No doses recorded for this schedule.</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-            {% else %}
-            <div class="cs-value muted" style="margin-top:4px">No vaccination schedule has been generated for this case.</div>
-            {% endif %}
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if latest_assessment.vaccine_inventory or latest_assessment.vaccine_brand_plan or latest_assessment.vaccine_dose_ml or latest_assessment.vaccine_quantity is not None %}
       <div class="cs-block">
-        <div class="cs-head"><span class="cs-letter">E</span><h3 class="cs-title">Vaccine Brand</h3></div>
+        <div class="cs-head"><span class="cs-letter">E.</span><h3 class="cs-title">Vaccine Brand</h3></div>
         <div class="cs-body">
+          {% if latest_assessment.vaccine_inventory or latest_assessment.vaccine_brand_plan %}
           <div class="cs-field">
-            <span class="cs-label">Vaccine Brand (from Stock)</span>
-            <div class="cs-value {% if not latest_assessment.vaccine_inventory and not latest_assessment.vaccine_brand_plan and not latest_assessment.vaccine_lot_number %}muted{% endif %}">
+            <span class="cs-label">Vaccine Brand</span>
+            <div class="cs-value">
               {% if latest_assessment.vaccine_inventory %}
-                {{ latest_assessment.vaccine_inventory.brand }}
-                {% if latest_assessment.vaccine_inventory.vaccine_name %}<br>{{ latest_assessment.vaccine_inventory.vaccine_name }}{% endif %}
-                {% if latest_assessment.vaccine_lot_number %} · Lot / batch: {{ latest_assessment.vaccine_lot_number }}
-                {% elif latest_assessment.vaccine_inventory.batch_number %} · Batch: {{ latest_assessment.vaccine_inventory.batch_number }}{% endif %}
-              {% elif latest_assessment.vaccine_brand_plan %}
-                {{ latest_assessment.vaccine_brand_plan }}
-                {% if latest_assessment.vaccine_lot_number %}<br>Lot / batch: {{ latest_assessment.vaccine_lot_number }}{% endif %}
+                {{ latest_assessment.vaccine_inventory.brand }}{% if latest_assessment.vaccine_inventory.vaccine_name %} · {{ latest_assessment.vaccine_inventory.vaccine_name }}{% endif %}
               {% else %}
-                Not recorded
+                {{ latest_assessment.vaccine_brand_plan }}
               {% endif %}
             </div>
           </div>
-          <div class="cs-grid-3" style="margin-top:8px">
-            <div class="cs-field"><span class="cs-label">Volume per Dose (mL)</span><div class="cs-value {% if not latest_assessment.vaccine_dose_ml %}muted{% endif %}">{{ latest_assessment.vaccine_dose_ml|default:"Not recorded" }}</div></div>
-            <div class="cs-field"><span class="cs-label">Quantity (Vials/Doses)</span><div class="cs-value {% if latest_assessment.vaccine_quantity is None %}muted{% endif %}">{% if latest_assessment.vaccine_quantity is not None %}{{ latest_assessment.vaccine_quantity }}{% else %}Not recorded{% endif %}</div></div>
-            <div class="cs-field"><span class="cs-label">1st Dose Date</span><div class="cs-value {% if not latest_assessment.first_dose_date %}muted{% endif %}">{{ latest_assessment.first_dose_date|date:"F j, Y"|default:"Not recorded" }}</div></div>
+          {% endif %}
+          {% if latest_assessment.vaccine_dose_ml or latest_assessment.vaccine_quantity is not None %}
+          <div class="cs-grid-2">
+            <div class="cs-field"><span class="cs-label">Volume per Dose (mL)</span><div class="cs-value">{{ latest_assessment.vaccine_dose_ml|default:"—" }}</div></div>
+            <div class="cs-field"><span class="cs-label">Quantity (Vials/Doses)</span><div class="cs-value">{% if latest_assessment.vaccine_quantity is not None %}{{ latest_assessment.vaccine_quantity }}{% else %}—{% endif %}</div></div>
           </div>
+          {% endif %}
         </div>
       </div>
+      {% endif %}
 
+      {% if latest_assessment.treatment_plan or prescription_rows or latest_assessment.prescription or latest_assessment.dosage_instructions or latest_assessment.follow_up_instructions or latest_assessment.additional_notes %}
       <div class="cs-block cs-block--long">
-        <div class="cs-head"><span class="cs-letter">F</span><h3 class="cs-title">Treatment &amp; Prescription</h3></div>
+        <div class="cs-head"><span class="cs-letter">F.</span><h3 class="cs-title">Treatment &amp; Prescription</h3></div>
         <div class="cs-body">
-          <div class="cs-flags">
-            <span class="status-pill">PEP Indicated: {% if latest_assessment.pep_indicated %}Yes{% else %}No{% endif %}</span>
-            <span class="status-pill">RIG Indicated: {% if latest_assessment.rig_indicated %}Yes{% else %}No{% endif %}</span>
-            <span class="status-pill">Tetanus Toxoid Indicated: {% if latest_assessment.tt_indicated %}Yes{% else %}No{% endif %}</span>
-          </div>
-          <div class="cs-field">
-            <span class="cs-label">Treatment Plan</span>
-            <div class="cs-value {% if not latest_assessment.treatment_plan %}muted{% endif %}">{{ latest_assessment.treatment_plan|default:"Not recorded" }}</div>
-          </div>
+          {% if latest_assessment.treatment_plan %}
+          <div class="cs-field"><span class="cs-label">Treatment Plan</span><div class="cs-value">{{ latest_assessment.treatment_plan }}</div></div>
+          {% endif %}
+          {% if prescription_rows %}
           <div class="cs-sub">
             <span class="cs-label">Prescription</span>
-            {% if prescription_rows %}
             <table class="cs-table">
               <thead><tr><th style="width:65%">Medicine</th><th>Quantity</th></tr></thead>
               <tbody>
@@ -470,42 +369,34 @@
                 {% endfor %}
               </tbody>
             </table>
-            {% if latest_assessment.prescription %}<div class="cs-value muted" style="margin-top:6px">Prescription note: {{ latest_assessment.prescription }}</div>{% endif %}
-            {% elif latest_assessment.prescription %}
-            <div class="cs-value" style="margin-top:4px">{{ latest_assessment.prescription }}</div>
-            {% else %}
-            <div class="cs-value muted" style="margin-top:4px">Not recorded</div>
-            {% endif %}
           </div>
-          <div class="cs-sub">
-            <span class="cs-label">Dosage Instructions — Frequency &amp; Duration</span>
-            <div class="cs-value {% if not latest_assessment.dosage_instructions %}muted{% endif %}">{{ latest_assessment.dosage_instructions|default:"Not recorded" }}</div>
-          </div>
-          <div class="cs-sub">
-            <span class="cs-label">Follow-up Instructions</span>
-            <div class="cs-value {% if not latest_assessment.follow_up_instructions %}muted{% endif %}">{{ latest_assessment.follow_up_instructions|default:"Not recorded" }}</div>
-          </div>
-          <div class="cs-sub">
-            <span class="cs-label">Additional Notes / Allergy Re-check</span>
-            <div class="cs-value {% if not latest_assessment.additional_notes %}muted{% endif %}">{{ latest_assessment.additional_notes|default:"Not recorded" }}</div>
-          </div>
-          <div style="margin-top:8px; font-size:9px; color:var(--muted2); border-top:1px solid var(--cream-border); padding-top:6px;">
-            Assessed by <b>{{ latest_assessment.assessed_by.get_full_name|default:latest_assessment.assessed_by.username|default:"—" }}</b> {% if latest_assessment.prc_number %}· PRC {{ latest_assessment.prc_number }}{% endif %} · {{ latest_assessment.encounter_date|date:"M d, Y h:i A" }} · {{ latest_assessment.get_status_display }}
+          {% elif latest_assessment.prescription %}
+          <div class="cs-field"><span class="cs-label">Prescription</span><div class="cs-value">{{ latest_assessment.prescription }}</div></div>
+          {% endif %}
+          {% if latest_assessment.dosage_instructions %}
+          <div class="cs-field"><span class="cs-label">Dosage Instructions</span><div class="cs-value">{{ latest_assessment.dosage_instructions }}</div></div>
+          {% endif %}
+          {% if latest_assessment.follow_up_instructions %}
+          <div class="cs-field"><span class="cs-label">Follow-up Instructions</span><div class="cs-value">{{ latest_assessment.follow_up_instructions }}</div></div>
+          {% endif %}
+          {% if latest_assessment.additional_notes %}
+          <div class="cs-field"><span class="cs-label">Additional Notes</span><div class="cs-value">{{ latest_assessment.additional_notes }}</div></div>
+          {% endif %}
+          <div class="cs-meta">
+            Assessed by <strong>{{ latest_assessment.assessed_by.get_full_name|default:latest_assessment.assessed_by.username|default:"—" }}</strong>
+            {% if latest_assessment.prc_number %} · PRC {{ latest_assessment.prc_number }}{% endif %}
+            · {{ latest_assessment.encounter_date|date:"M d, Y h:i A" }} · {{ latest_assessment.get_status_display }}
           </div>
         </div>
       </div>
-      {% else %}
-      <div class="cs-empty">
-        <p class="cs-empty-title">NO ASSESSMENT YET</p>
-        <p class="cs-empty-text">No doctor assessment has been recorded for this case.</p>
-      </div>
       {% endif %}
     </section>
+    {% endif %}
 
-    <!-- Recent Bite Cases -->
+    <!-- 7. Recent Bite Cases -->
+    {% if bite_cases %}
     <section class="abtc-section">
       <h2 class="abtc-section-title">Recent Bite Cases</h2>
-      {% if bite_cases %}
       <table class="abtc-table">
         <thead><tr><th style="width:20%">Case #</th><th style="width:18%">Date</th><th style="width:18%">Animal</th><th style="width:22%">Exposure</th><th>Status</th></tr></thead>
         <tbody>
@@ -520,15 +411,12 @@
           {% endfor %}
         </tbody>
       </table>
-      <p class="panel-note">Each case above is a separate bite incident. Clinical and vaccination details on this sheet refer only to <strong>{{ latest_case.case_number }}</strong>.</p>
-      {% else %}
-      <div class="abtc-panel"><p class="panel-note" style="margin:0">No bite cases recorded yet — this sheet will serve as the baseline intake form.</p></div>
-      {% endif %}
     </section>
+    {% endif %}
 
     {% if patient_qr_data_uri %}
     <section class="abtc-section">
-      <div class="abtc-panel abtc-panel--plain qr-panel">
+      <div class="qr-panel">
         <img src="{{ patient_qr_data_uri }}" alt="Verification QR {{ patient.patient_number }}">
         <p class="panel-note" style="margin:0;">Patient verification QR — scan at triage to open this record in the ABTC system.</p>
       </div>
@@ -537,18 +425,16 @@
 
     <!-- Signatures -->
     <div class="sign-grid">
-      <div><div class="sign-line"></div><div class="sign-label">Patient / Guardian</div><div class="sign-sub">Signature over printed name & date</div><div style="margin-top:8px; font-size:10px; color:var(--muted2);">Date: ____ / ____ / ________</div></div>
-      <div><div class="sign-line"></div><div class="sign-label">Triage Nurse</div><div class="sign-sub">Signature & date/time</div><div style="margin-top:8px; font-size:10px; color:var(--muted2);">Time: ______ : ______</div></div>
-      <div><div class="sign-line"></div><div class="sign-label">Physician / ABTC Doctor</div><div class="sign-sub">Signature & PRC no.</div><div style="margin-top:8px; font-size:10px; color:var(--muted2);">Date: ____ / ____ / ________</div></div>
+      <div><div class="sign-line"></div><div class="sign-label">Patient / Guardian</div><div class="sign-sub">Signature over printed name</div><div class="sign-date">Date: ____ / ____ / ________</div></div>
+      <div><div class="sign-line"></div><div class="sign-label">Triage Nurse</div><div class="sign-sub">Signature over printed name</div><div class="sign-date">Date: ____ / ____ / ________</div></div>
+      <div><div class="sign-line"></div><div class="sign-label">Physician / ABTC Doctor</div><div class="sign-sub">Signature &amp; PRC No.</div><div class="sign-date">Date: ____ / ____ / ________</div></div>
     </div>
 
     {% include 'print/_official_footer.html' with confidential=True %}
-
   </div>
 </div>
 
 <script>
-  // Auto-focus print if ?autoprint=1
   (function(){
     const params = new URLSearchParams(window.location.search);
     if(params.get('autoprint') === '1'){ setTimeout(()=>window.print(), 400); }

@@ -202,10 +202,10 @@
             <!-- Logo -->
             {% if request.user.role == 'patient' %}
             <div class="pp-side-head flex items-center gap-3 px-5 border-b shrink-0">
-                <div class="pp-side-avatar">{{ request.user.first_name|first|default:request.user.username|first|upper }}</div>
+                <img src="{% static 'images/lgu_dumingag_logo.png' %}" alt="ABTC Logo" class="w-10 h-10 rounded-xl object-contain bg-white/95 p-1 shrink-0 shadow-sm">
                 <div class="min-w-0">
                     <h1 class="pp-side-name">{{ request.user.get_full_name|default:request.user.username }}</h1>
-                    <p class="pp-side-role">Patient</p>
+                    <p class="pp-side-role">Patient · ABTC</p>
                 </div>
                 <button type="button" @click="mobileMenuOpen = false" aria-label="Close menu" class="pp-side-close ml-auto lg:hidden p-2 rounded-xl transition-colors shrink-0">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -213,7 +213,9 @@
             </div>
             {% else %}
             <div class="h-16 flex items-center gap-3 px-5 border-b shrink-0" style="border-color:rgba(201,162,39,.22)">
-                <div class="sidebar-logo neu-sm w-10 h-10 rounded-xl flex items-center justify-center text-[13px] font-bold tracking-wide shrink-0" style="color:var(--emerald-900)">{% if request.user.role == 'doctor' %}Dr{% elif request.user.role == 'nurse' %}Nr{% else %}AB{% endif %}</div>
+                <div class="sidebar-logo neu-sm w-10 h-10 rounded-xl flex items-center justify-center p-1 shrink-0 bg-white/95">
+                    <img src="{% static 'images/lgu_dumingag_logo.png' %}" alt="ABTC Logo" class="w-full h-full object-contain">
+                </div>
                 <div class="min-w-0">
                     <h1 class="sidebar-brand-title text-sm font-bold text-emerald-950 leading-tight truncate tracking-tight">{% if request.user.role == 'doctor' %}Doctor Portal{% elif request.user.role == 'nurse' %}Nurse Portal{% else %}ABTC System{% endif %}</h1>
                     <p class="sidebar-brand-sub text-xs {% if request.user.role != 'doctor' %}text-muted{% endif %} font-medium truncate">{% if request.user.role == 'doctor' %}Animal Bite Treatment Center{% elif request.user.role == 'nurse' %}Vaccination Care · ABTC{% else %}Municipal Health Office{% endif %}</p>

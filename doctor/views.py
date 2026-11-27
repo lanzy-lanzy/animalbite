@@ -149,7 +149,7 @@ def finalization_blockers(cleaned, bite_case=None):
     if not text('exposure_narrative'):
         blockers.append('Verified exposure narrative is required.')
     if not cleaned.get('category_confirmed'):
-        blockers.append('WHO bite category must be confirmed.')
+        blockers.append('What category must be confirmed.')
     if not text('treatment_plan'):
         blockers.append('Treatment plan is required.')
     # A bite case with a dose schedule is a PEP order even though the PEP flag

@@ -214,17 +214,21 @@ class NurseDashboardTests(TestCase):
         response = self.client.get(reverse("nurse:dashboard"))
         self.assertEqual(response.status_code, 200)
 
-        # Doctor-dashboard-matched design structure
+        # Doctor-dashboard-matched design structure with charts and no Quick Actions
         for marker in (
             'class="nurse-dashboard"',
             'class="dash-hero"',
             'class="dash-stats"',
+            'class="dash-charts-grid"',
+            'id="nurse-dose-status-chart"',
+            'id="nurse-daily-administered-chart"',
             'class="dash-card"',
             'class="dash-table"',
-            'class="dash-actions-grid"',
             "Nurse Dashboard",
         ):
             self.assertContains(response, marker)
+        self.assertNotContains(response, "Quick Actions")
+        self.assertNotContains(response, 'class="dash-actions-grid"')
 
         # All 6 KPI cards & counts
         for label in (
@@ -712,7 +716,7 @@ class DoctorFindingListTableTests(TestCase):
         response = self.client.get(reverse("nurse:doctor_finding_list"))
         content = response.content.decode()
 
-        headers = ["#", "PATIENT", "AGE/SEX", "APPROVED DATE", "ACTION"]
+        headers = ["Date", "Patient", "Case", "Category", "Status", "Action"]
         positions = [content.index(f">{label}</th>") for label in headers]
         self.assertEqual(positions, sorted(positions))
 
@@ -734,12 +738,10 @@ class DoctorFindingListTableTests(TestCase):
         )
         self.client.force_login(self.nurse)
         response = self.client.get(reverse("nurse:doctor_finding_list"))
-        content = response.content.decode()
         self.assertContains(response, finalized.patient.full_name())
         self.assertContains(response, finalized.patient.patient_number)
-        self.assertContains(response, finalized.patient.contact_display)
-        self.assertContains(response, "Dumingag")
-        self.assertContains(response, f"{finalized.patient.age} / Male")
+        self.assertContains(response, finalized.bite_case.case_number)
+        self.assertContains(response, "Category II")
         self.assertContains(response, "Oct 12, 2026")
         for assessment in (draft, unfinished, non_doctor):
             self.assertNotContains(response, assessment.bite_case.case_number)
@@ -750,32 +752,20 @@ class DoctorFindingListTableTests(TestCase):
             self._make_assessment(self._make_case(f"ABC-P{index:04d}"))
         self.client.force_login(self.nurse)
 
-        page_one = self.client.get(
-            reverse("nurse:doctor_finding_list")
-        ).content.decode()
-        page_two = self.client.get(
-            reverse("nurse:doctor_finding_list"), {"page": 2}
-        ).content.decode()
+        page_one = self.client.get(reverse("nurse:doctor_finding_list"))
+        page_two = self.client.get(reverse("nurse:doctor_finding_list"), {"page": 2})
 
-        page_one_numbers = re.findall(
-            r'class="[^"]*findings-row-number[^"]*">\s*(\d+)\s*</td>',
-            page_one,
-        )
-        page_two_numbers = re.findall(
-            r'class="[^"]*findings-row-number[^"]*">\s*(\d+)\s*</td>',
-            page_two,
-        )
-        self.assertEqual(page_one_numbers, [str(value) for value in range(1, 21)])
-        self.assertEqual(page_two_numbers, ["21", "22", "23", "24", "25"])
+        self.assertEqual(len(page_one.context["assessments"]), 20)
+        self.assertEqual(len(page_two.context["assessments"]), 5)
+        self.assertContains(page_one, "Page 1 of 2")
+        self.assertContains(page_two, "Page 2 of 2")
 
     def test_nurse_view_button_is_dark_green_with_eye_icon(self):
         case = self._make_case("ABC-TBL01")
         self._make_assessment(case)
         self.client.force_login(self.nurse)
         response = self.client.get(reverse("nurse:doctor_finding_list"))
-        self.assertContains(response, "findings-view-btn")
-        self.assertContains(response, "#0D382C")
-        self.assertContains(response, "#0E6349")
+        self.assertContains(response, "btn-view")
         self.assertContains(
             response,
             reverse("nurse:doctor_finding_detail", args=[case.pk]),

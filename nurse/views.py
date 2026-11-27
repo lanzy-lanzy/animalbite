@@ -1,8 +1,9 @@
-from datetime import date
+from datetime import date, timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db.models import Count
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET
 
@@ -65,18 +66,50 @@ def dashboard(request):
         vaccination_schedule__isnull=True
     ).count()
 
+    # Chart 1: Dose status breakdown
+    administered_count = VaccineDose.objects.filter(dose_status='completed').count()
+    dose_status_chart = {
+        'labels': ['Administered', 'Due Today', 'Upcoming', 'Pending Scheduling', 'Missed'],
+        'counts': [
+            administered_count,
+            due_today_count,
+            upcoming_count,
+            pending_scheduling_count,
+            missed_count,
+        ],
+    }
+
+    # Chart 2: Doses administered over the last 7 days
+    last_7_days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+    admin_by_day = {
+        row['actual_date']: row['total']
+        for row in (
+            VaccineDose.objects
+            .filter(dose_status='completed', actual_date__range=(last_7_days[0], today))
+            .values('actual_date')
+            .annotate(total=Count('id'))
+        )
+    }
+    daily_administered_chart = {
+        'labels': [d.strftime('%b %d') for d in last_7_days],
+        'counts': [admin_by_day.get(d, 0) for d in last_7_days],
+    }
+
     context = {
         'due_today': due_today,
         'due_today_count': due_today_count,
         'missed_count': missed_count,
         'pending_scheduling_count': pending_scheduling_count,
         'upcoming_count': upcoming_count,
+        'administered_count': administered_count,
         'sms_pending': sms_pending,
         'sms_failed': sms_failed,
         'low_stock': low_stock,
         'today': today,
         'awaiting_schedule': awaiting_schedule,
         'awaiting_schedule_count': awaiting_schedule_count,
+        'dose_status_chart': dose_status_chart,
+        'daily_administered_chart': daily_administered_chart,
     }
     return render(request, 'nurse/dashboard.html', context)
 
@@ -109,11 +142,23 @@ def _finalized_doctor_assessments():
 @nurse_required
 @require_GET
 def doctor_finding_list(request):
+    from django.db.models import Q
+
     assessments = _finalized_doctor_assessments()
+    q = request.GET.get('q', '').strip()
+    if q:
+        assessments = assessments.filter(
+            Q(patient__first_name__icontains=q)
+            | Q(patient__last_name__icontains=q)
+            | Q(patient__patient_number__icontains=q)
+            | Q(bite_case__case_number__icontains=q)
+            | Q(category_confirmed__icontains=q)
+        )
     page_obj = Paginator(assessments, 20).get_page(request.GET.get('page'))
     return render(request, 'nurse/doctor_findings.html', {
         'assessments': page_obj,
         'page_obj': page_obj,
+        'q': q,
     })
 
 

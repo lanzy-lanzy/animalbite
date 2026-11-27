@@ -1,98 +1,82 @@
 {% extends 'base.html' %}
-{% block title %}View Doctor Findings — ABTC System{% endblock %}
+{% block title %}View Doctor Findings — Nurse Portal{% endblock %}
 {% block content %}
-<style>
-  .findings-view-btn {
-    display:inline-flex;align-items:center;justify-content:center;gap:.45rem;
-    min-width:90px;padding:.55rem 1rem;border-radius:9999px;
-    background:#0D382C;color:#fff;font-size:.75rem;font-weight:700;line-height:1;
-    box-shadow:0 8px 18px -10px rgba(13,56,44,.65);
-    transition:background-color .15s ease,box-shadow .15s ease,transform .15s ease;
-  }
-  .findings-view-btn:hover {
-    background:#0E6349;box-shadow:0 10px 22px -10px rgba(13,56,44,.75);
-    transform:translateY(-1px);
-  }
-  .findings-view-btn:focus-visible {outline:2px solid #0D382C;outline-offset:3px;}
-  .findings-view-btn svg {width:1rem;height:1rem;flex:none;color:#fff;}
-  .findings-patient-avatar {
-    display:grid;place-items:center;flex:none;width:42px;height:42px;
-    border-radius:9999px;background:#E8F2EC;color:#0D382C;
-    border:1px solid #C9DED1;font-size:.8rem;font-weight:800;
-  }
-  .findings-table {min-width:720px;}
-</style>
+<div class="max-w-[1440px] mx-auto">
+  <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-ink">View Doctor Findings</h1>
+      <p class="text-sm font-medium text-muted mt-1">Patients with completed, finalized Doctor assessments.</p>
+    </div>
+    <div class="flex gap-2">
+      <a href="{% url 'nurse:dashboard' %}" class="btn-secondary btn-sm">Dashboard</a>
+    </div>
+  </div>
 
-<div class="flex flex-wrap items-end justify-between gap-3 mb-5">
-  <div>
-    <p class="text-[11px] font-bold tracking-widest uppercase text-amber-700">Nurse Portal</p>
-    <h1 class="font-display text-2xl font-bold text-ink mt-1">View Doctor Findings</h1>
-    <p class="text-sm font-medium text-muted mt-1">Patients with completed, finalized Doctor assessments.</p>
+  <div class="card mb-6">
+    <form method="GET" class="flex flex-wrap gap-2">
+      <input type="text" name="q" value="{{ q }}" placeholder="Search..." class="form-input flex-1 min-w-[180px]">
+      <button class="btn-primary btn-sm">Search</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="border-b border-line">
+            <th class="table-header">Date</th>
+            <th class="table-header">Patient</th>
+            <th class="table-header">Case</th>
+            <th class="table-header">Category</th>
+            <th class="table-header">Status</th>
+            <th class="table-header text-right">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-sage-100">
+          {% for a in assessments %}
+          <tr class="hover:bg-sage-50">
+            <td class="table-cell text-muted whitespace-nowrap">{{ a.finalized_at|date:"M d, Y h:i A" }}</td>
+            <td class="table-cell">
+              <div class="font-medium">{{ a.patient.full_name }}</div>
+              <div class="text-xs text-muted">{{ a.patient.patient_number }}</div>
+            </td>
+            <td class="table-cell font-mono text-sm">{{ a.bite_case.case_number|default:"—" }}</td>
+            <td class="table-cell">
+              <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap {% if a.category_confirmed == 'category_iii' %}bg-red-50 text-red-700 border-red-200{% elif a.category_confirmed == 'category_ii' %}bg-amber-50 text-amber-800 border-amber-200{% elif a.category_confirmed == 'category_i' %}bg-emerald-50 text-emerald-800 border-emerald-200{% else %}bg-sage-100 text-muted border-line{% endif %}" title="{{ a.get_category_confirmed_display }}">
+                {% if a.category_confirmed == 'category_i' %}Category I
+                {% elif a.category_confirmed == 'category_ii' %}Category II
+                {% elif a.category_confirmed == 'category_iii' %}Category III
+                {% else %}—{% endif %}
+              </span>
+              <div class="text-xs font-medium text-muted mt-1">{% if a.pep_indicated %}PEP{% endif %} {% if a.rig_indicated %}· RIG{% endif %} {% if a.tt_indicated %}· TT{% endif %}</div>
+            </td>
+            <td class="table-cell">
+              <span class="px-2 py-1 rounded-full text-xs font-bold bg-emerald-600 text-white">{{ a.get_status_display }}</span>
+            </td>
+            <td class="table-cell text-right">
+              <a href="{% url 'nurse:doctor_finding_detail' a.bite_case_id %}"
+                 class="btn-view"
+                 aria-label="View finalized assessment for {{ a.patient.full_name }}, case {{ a.bite_case.case_number }}">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/><circle cx="12" cy="12" r="3" stroke-width="2"/></svg>
+                View
+              </a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="text-center py-10 text-muted">No finalized Doctor assessments yet. Patients will appear here after a Doctor completes and finalizes an assessment.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if assessments.has_other_pages %}
+    <div class="flex items-center justify-between pt-4 border-t border-line mt-4">
+      <p class="text-sm text-muted">Page {{ assessments.number }} of {{ assessments.paginator.num_pages }}</p>
+      <div class="flex gap-1">
+        {% if assessments.has_previous %}<a href="?page={{ assessments.previous_page_number }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}" class="btn-secondary btn-xs">Prev</a>{% endif %}
+        {% if assessments.has_next %}<a href="?page={{ assessments.next_page_number }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}" class="btn-secondary btn-xs">Next</a>{% endif %}
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
-
-<section class="card p-0 overflow-hidden" aria-label="Finalized Doctor assessments">
-  <div class="overflow-x-auto">
-    <table class="findings-table w-full">
-      <thead>
-        <tr class="bg-sage-50">
-          <th class="table-header text-center">#</th>
-          <th class="table-header">PATIENT</th>
-          <th class="table-header">AGE/SEX</th>
-          <th class="table-header">APPROVED DATE</th>
-          <th class="table-header text-right">ACTION</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-sage-100">
-        {% for assessment in assessments %}
-        <tr class="hover:bg-sage-50/60 transition-colors">
-          <td class="table-cell text-center text-muted tabular-nums findings-row-number">
-            {{ assessments.start_index|add:forloop.counter0 }}
-          </td>
-          <td class="table-cell">
-            <div class="flex items-center gap-3 min-w-0">
-              <span class="findings-patient-avatar" aria-hidden="true">{{ assessment.patient.first_name|first|upper }}{{ assessment.patient.last_name|first|upper }}</span>
-              <div class="min-w-0">
-                <p class="font-bold text-ink">{{ assessment.patient.full_name }}</p>
-                <p class="text-xs font-mono text-muted mt-0.5">{{ assessment.patient.patient_number }}</p>
-                {% if assessment.patient.contact_number %}<p class="text-xs text-muted mt-0.5">{{ assessment.patient.contact_display }}</p>{% endif %}
-                {% if assessment.patient.barangay %}<p class="text-xs text-muted mt-0.5">{{ assessment.patient.barangay.name }}</p>{% endif %}
-              </div>
-            </div>
-          </td>
-          <td class="table-cell whitespace-nowrap">{{ assessment.patient.age }} / {{ assessment.patient.get_sex_display }}</td>
-          <td class="table-cell whitespace-nowrap">{{ assessment.finalized_at|date:"M d, Y" }}</td>
-          <td class="table-cell text-right">
-            <a href="{% url 'nurse:doctor_finding_detail' assessment.bite_case_id %}"
-               class="findings-view-btn"
-               aria-label="View finalized assessment for {{ assessment.patient.full_name }}, case {{ assessment.bite_case.case_number }}">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z"/>
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-              </svg>
-              View
-            </a>
-          </td>
-        </tr>
-        {% empty %}
-        <tr>
-          <td colspan="5" class="px-4 py-12 text-center">
-            <p class="text-sm font-semibold text-ink">No finalized Doctor assessments yet.</p>
-            <p class="text-xs text-muted mt-1">Patients will appear here after a Doctor completes and finalizes an assessment.</p>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% if assessments.has_other_pages %}
-  <nav class="flex items-center justify-between gap-3 border-t border-line px-4 py-3 text-xs" aria-label="Doctor assessment pages">
-    <span class="font-medium text-muted">Page {{ assessments.number }} of {{ assessments.paginator.num_pages }}</span>
-    <div class="flex items-center gap-3">
-      {% if assessments.has_previous %}<a class="font-bold text-emerald-800 hover:underline" href="?page={{ assessments.previous_page_number }}">Previous</a>{% endif %}
-      {% if assessments.has_next %}<a class="font-bold text-emerald-800 hover:underline" href="?page={{ assessments.next_page_number }}">Next</a>{% endif %}
-    </div>
-  </nav>
-  {% endif %}
-</section>
 {% endblock %}

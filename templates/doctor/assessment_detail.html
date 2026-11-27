@@ -628,9 +628,9 @@
       </div>
 
       <div class="abtc-clinical-block">
-        <h3 class="abtc-subhead">C. WHO Bite Category</h3>
+        <h3 class="abtc-subhead">C. What Category</h3>
         <div class="abtc-panel abtc-summary">
-          <div class="abtc-summary__row"><span>WHO Bite Category</span><strong>{{ assessment.category_label|default:"Not Recorded" }}</strong></div>
+          <div class="abtc-summary__row"><span>What Category</span><strong>{{ assessment.category_label|default:"Not Recorded" }}</strong></div>
         </div>
       </div>
 
@@ -790,7 +790,7 @@
       <div class="abtc-clinical-block">
         <h3 class="abtc-subhead">C. Bite Category</h3>
         <div class="abtc-panel abtc-summary">
-          <div class="abtc-summary__row"><span>WHO Bite Category</span><strong>{{ assessment.category_label|default:"Not Recorded" }}</strong></div>
+          <div class="abtc-summary__row"><span>What Category</span><strong>{{ assessment.category_label|default:"Not Recorded" }}</strong></div>
         </div>
       </div>
     </section>
@@ -996,7 +996,7 @@
         </div>
         <div class="ad-fields">
           <div class="ad-field ad-field--wide">
-            <p class="ad-label">WHO Bite Category</p>
+            <p class="ad-label">What Category</p>
             <div>
               <p class="ad-value {% if not assessment.category_label %}ad-empty{% endif %}">{{ assessment.category_label|default:"Not recorded" }}</p>
               {% if assessment.category_description %}

@@ -37,7 +37,7 @@
             <input type="hidden" name="type" value="{{ report_type }}">
             {% if kind != 'missed' and kind != 'completed' %}<label class="sr-only" for="followup-report-search">Search {{ title }}</label>{% endif %}
             <input id="followup-report-search" type="search" name="q" value="{{ q }}"
-                   placeholder="{% if kind == 'missed' or kind == 'completed' %}Search...{% else %}Search patient, case, dose, date, or status...{% endif %}"
+                   placeholder="Search..."
                    class="{% if kind == 'missed' or kind == 'completed' %}followup-search-input{% else %}form-input{% endif %} min-w-0 flex-1">
             <button type="submit" class="{% if kind == 'missed' or kind == 'completed' %}followup-search-button{% else %}btn-primary shrink-0{% endif %}">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>

@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load static %}
 {% block title %}Nurse Dashboard - ABTC{% endblock %}
 {% block page_title %}<span class="hidden sm:inline text-sm font-semibold text-emerald-900">Nurse Dashboard</span>{% endblock %}
 
@@ -89,36 +90,10 @@
     }
     .dash-count-chip--emerald { background: #e4f3ec; border-color: rgba(46,153,117,.3); color: #17614b; }
 
-    /* ---------- Quick action cards ---------- */
-    .dash-actions-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .85rem; }
-    .dash-quick {
-        display: flex; flex-direction: column; justify-content: space-between; gap: .65rem;
-        padding: 1rem 1.05rem; border-radius: 1.05rem;
-        background: #fdfaf4; border: 1px solid rgba(227,217,194,.9);
-        text-decoration: none; color: inherit;
-        transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease;
-    }
-    .dash-quick:hover {
-        background: #fff; border-color: #c9a227;
-        box-shadow: 0 14px 28px -22px rgba(8,32,26,.45);
-        transform: translateY(-1px);
-    }
-    .dash-quick--primary {
-        background: linear-gradient(155deg, #f3faf6 0%, #e7f5ee 100%);
-        border-color: rgba(23,97,75,.32);
-    }
-    .dash-quick--primary:hover { border-color: #17614b; }
-    .dash-quick-top { display: flex; align-items: flex-start; gap: .7rem; }
-    .dash-quick-icon {
-        width: 2.2rem; height: 2.2rem; border-radius: .7rem; flex-shrink: 0;
-        display: flex; align-items: center; justify-content: center;
-        background: #fff; color: #17614b; border: 1px solid rgba(227,217,194,.85);
-    }
-    .dash-quick--primary .dash-quick-icon { background: #0d352b; color: #fff; border-color: #0d352b; }
-    .dash-quick-icon svg { width: 1.05rem; height: 1.05rem; }
-    .dash-quick-title { font-family: 'Space Grotesk', sans-serif; font-size: .86rem; font-weight: 700; color: #08201a; margin: 0; line-height: 1.25; }
-    .dash-quick-desc { font-size: .73rem; color: #546b60; margin: .25rem 0 0; line-height: 1.4; }
-    .dash-quick-cta { font-size: .72rem; font-weight: 700; color: #17614b; display: inline-flex; align-items: center; gap: .25rem; }
+    /* ---------- Charts ---------- */
+    .dash-charts-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+    .dash-chart-box { position: relative; height: 260px; width: 100%; }
+    @media (max-width: 900px) { .dash-charts-grid { grid-template-columns: 1fr; } }
 
     /* ---------- Tables ---------- */
     .dash-table-wrap { overflow-x: auto; }
@@ -189,7 +164,9 @@
     <!-- Header -->
     <section class="dash-hero" aria-label="Nurse Portal overview">
         <div class="dash-hero-left">
-            <div class="dash-hero-mark" aria-hidden="true">Nr</div>
+            <div class="dash-hero-mark" style="background:#fff;border:1px solid #e3d9c2;padding:4px;" aria-hidden="true">
+                <img src="{% static 'images/lgu_dumingag_logo.png' %}" alt="ABTC Logo" style="width:100%;height:100%;object-fit:contain;">
+            </div>
             <div class="min-w-0">
                 <div class="dash-hero-title-row">
                     <h1 class="dash-hero-title">Nurse Portal</h1>
@@ -267,6 +244,32 @@
                 <p class="dash-stat-label">Upcoming / Low Stock</p>
                 <p class="dash-stat-value">{{ upcoming_count }}</p>
                 <p class="dash-stat-note">{% if low_stock %}{{ low_stock }} item(s) low stock{% else %}Stock OK{% endif %}</p>
+            </div>
+        </article>
+    </section>
+
+    <!-- Charts & Graphs -->
+    <section class="dash-charts-grid" aria-label="Vaccination analytics charts">
+        <article class="dash-card">
+            <div class="dash-card-head">
+                <div>
+                    <h2>Vaccination Status Overview</h2>
+                    <p>Distribution of administered, due today, upcoming, pending, and missed doses</p>
+                </div>
+            </div>
+            <div class="dash-chart-box">
+                <canvas id="nurse-dose-status-chart" aria-label="Vaccination status breakdown chart"></canvas>
+            </div>
+        </article>
+        <article class="dash-card">
+            <div class="dash-card-head">
+                <div>
+                    <h2>Doses Administered (Last 7 Days)</h2>
+                    <p>Daily completed vaccine administrations</p>
+                </div>
+            </div>
+            <div class="dash-chart-box">
+                <canvas id="nurse-daily-administered-chart" aria-label="Daily administered doses bar chart"></canvas>
             </div>
         </article>
     </section>
@@ -391,113 +394,68 @@
         </div>
     </section>
 
-    <!-- Nurse Quick Actions (8 use cases) -->
-    <section class="dash-card" aria-label="Nurse quick actions">
-        <div class="dash-card-head">
-            <div>
-                <h2>Quick Actions</h2>
-                <p>Core nurse workflows for vaccination care, monitoring, and inventory</p>
-            </div>
-        </div>
-        <div class="dash-actions-grid">
-            <a href="{% url 'patients:patient_list' %}" class="dash-quick">
-                <div class="dash-quick-top">
-                    <span class="dash-quick-icon">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                    </span>
-                    <div>
-                        <p class="dash-quick-title">View Patient Record</p>
-                        <p class="dash-quick-desc">Find a patient file — read-only. Doctor findings shown in Section 3.</p>
-                    </div>
-                </div>
-                <span class="dash-quick-cta">Open &rarr;</span>
-            </a>
-            <a href="{% url 'nurse:doctor_finding_list' %}" class="dash-quick">
-                <div class="dash-quick-top">
-                    <span class="dash-quick-icon">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                    </span>
-                    <div>
-                        <p class="dash-quick-title">View Doctor Findings</p>
-                        <p class="dash-quick-desc">View finalized Doctor assessments for assessed patients.</p>
-                    </div>
-                </div>
-                <span class="dash-quick-cta">Open &rarr;</span>
-            </a>
-            <a href="{% url 'vaccination:patient_schedule_list' %}" class="dash-quick dash-quick--primary">
-                <div class="dash-quick-top">
-                    <span class="dash-quick-icon">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                    </span>
-                    <div>
-                        <p class="dash-quick-title">Administer Vaccine</p>
-                        <p class="dash-quick-desc">Search patient schedule &rarr; open &rarr; mark dose given.</p>
-                    </div>
-                </div>
-                <span class="dash-quick-cta">Start &rarr;</span>
-            </a>
-            <a href="{% url 'vaccination:patient_schedule_list' %}" class="dash-quick">
-                <div class="dash-quick-top">
-                    <span class="dash-quick-icon">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
-                    </span>
-                    <div>
-                        <p class="dash-quick-title">Print Vaccination Schedule</p>
-                        <p class="dash-quick-desc">Open patient file &rarr; Print Sheet / PDF includes the schedule.</p>
-                    </div>
-                </div>
-                <span class="dash-quick-cta">Open &rarr;</span>
-            </a>
-            <a href="{% url 'vaccination:sms_log_list' %}" class="dash-quick">
-                <div class="dash-quick-top">
-                    <span class="dash-quick-icon">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
-                    </span>
-                    <div>
-                        <p class="dash-quick-title">Monitor SMS Reminders</p>
-                        <p class="dash-quick-desc">{{ sms_pending }} pending &middot; {{ sms_failed }} failed — sent automatically.</p>
-                    </div>
-                </div>
-                <span class="dash-quick-cta">Monitor &rarr;</span>
-            </a>
-            <a href="{% url 'vaccination:schedule_list' %}" class="dash-quick">
-                <div class="dash-quick-top">
-                    <span class="dash-quick-icon">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                    </span>
-                    <div>
-                        <p class="dash-quick-title">Update Vaccination Record</p>
-                        <p class="dash-quick-desc">Edit schedules, doses, follow-ups and observations.</p>
-                    </div>
-                </div>
-                <span class="dash-quick-cta">Open &rarr;</span>
-            </a>
-            <a href="{% url 'inventory:vaccine_list' %}" class="dash-quick">
-                <div class="dash-quick-top">
-                    <span class="dash-quick-icon">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-                    </span>
-                    <div>
-                        <p class="dash-quick-title">Manage Vaccine Inventory</p>
-                        <p class="dash-quick-desc">{% if low_stock %}{{ low_stock }} low-stock item(s) — reorder soon.{% else %}Stock levels OK.{% endif %}</p>
-                    </div>
-                </div>
-                <span class="dash-quick-cta">Manage &rarr;</span>
-            </a>
-            <a href="{% url 'reports:reports_index' %}" class="dash-quick">
-                <div class="dash-quick-top">
-                    <span class="dash-quick-icon">
-                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-                    </span>
-                    <div>
-                        <p class="dash-quick-title">Generate Reports</p>
-                        <p class="dash-quick-desc">Cases, vaccines and missed appointments.</p>
-                    </div>
-                </div>
-                <span class="dash-quick-cta">Generate &rarr;</span>
-            </a>
-        </div>
-    </section>
-
 </div>
+{{ dose_status_chart|json_script:"nurse-dose-status-data" }}
+{{ daily_administered_chart|json_script:"nurse-daily-administered-data" }}
+<script src="{% static 'vendor/chart.umd.min.js' %}"></script>
+<script>
+    (function () {
+        if (typeof Chart === 'undefined') return;
+        const statusData = JSON.parse(document.getElementById('nurse-dose-status-data').textContent || '{}');
+        const dailyData = JSON.parse(document.getElementById('nurse-daily-administered-data').textContent || '{}');
+
+        const statusCtx = document.getElementById('nurse-dose-status-chart');
+        if (statusCtx && statusData.labels) {
+            new Chart(statusCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: statusData.labels,
+                    datasets: [{
+                        data: statusData.counts,
+                        backgroundColor: ['#17614b', '#2e9975', '#2563a6', '#d97706', '#dc2626'],
+                        borderWidth: 2,
+                        borderColor: '#ffffff',
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '62%',
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { boxWidth: 11, padding: 12, font: { size: 11, weight: '600' }, color: '#25443a' },
+                        },
+                    },
+                },
+            });
+        }
+
+        const dailyCtx = document.getElementById('nurse-daily-administered-chart');
+        if (dailyCtx && dailyData.labels) {
+            new Chart(dailyCtx, {
+                type: 'bar',
+                data: {
+                    labels: dailyData.labels,
+                    datasets: [{
+                        label: 'Doses Administered',
+                        data: dailyData.counts,
+                        backgroundColor: '#17614b',
+                        borderRadius: 6,
+                        maxBarThickness: 34,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, ticks: { precision: 0, color: '#546b60', font: { size: 11 } }, grid: { color: '#f1ebe0' } },
+                        x: { ticks: { color: '#546b60', font: { size: 11 } }, grid: { display: false } },
+                    },
+                },
+            });
+        }
+    })();
+</script>
 {% endblock %}
